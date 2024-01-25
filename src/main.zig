@@ -44,5 +44,22 @@ pub fn main() !void {
     for (positions) |position| {
         const chunk = Chunk.Coords.from(position);
         std.debug.print("{}, {}, {}\n", .{ chunk.x, chunk.y, chunk.z });
+        var data_stmt = try db.prepare("SELECT data FROM chunk WHERE position = ?");
+        defer data_stmt.deinit();
+
+        const datas = try data_stmt.all([]const u8, ally, .{}, .{ .position = position });
+        defer {
+            for (datas) |data| ally.free(data);
+            ally.free(datas);
+        }
+
+        var protoscope = std.ChildProcess.init(&.{ "protoscope", "-explicit-length-prefixes" }, ally);
+        protoscope.stdin_behavior = .Pipe;
+        protoscope.stdout_behavior = .Pipe;
+        try protoscope.spawn();
+        try protoscope.stdin.?.writeAll(datas[0]);
+        protoscope.stdin.?.close();
+        var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
+        try fifo.pump(protoscope.stdout.?, std.io.getStdOut().writer());
     }
 }
