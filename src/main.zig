@@ -6,36 +6,24 @@ const Chunk = struct {
         x: u27,
         z: u27,
         y: u10,
-        fn from(position: u64) Chunk.Coords {
+        fn from(position: u64) Coords {
             return @bitCast(position);
         }
     };
 };
 
 pub fn main() !void {
-    var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
-    const gpa = general_purpose_allocator.allocator();
-    const args = try std.process.argsAlloc(gpa);
-    defer std.process.argsFree(gpa, args);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const ally = gpa.allocator();
+    const args = try std.process.argsAlloc(ally);
+    defer std.process.argsFree(ally, args);
 
-    var dbPath: [:0]u8 = undefined;
-    var found = false;
-    for (args, 0..) |arg, i| {
-        if (i == 0) {
-            continue;
-        } else if (i == 1) {
-            dbPath = arg;
-            found = true;
-        } else {
-            std.debug.print("too many arguments", .{});
-            return error.TooManyArgs;
-        }
-    }
-
-    if (!found) {
-        std.debug.print("not enough arguments", .{});
-        return error.NotEnoughArgs;
-    }
+    const dbPath = switch (args.len) {
+        0, 1 => return error.NotEnoughArgs,
+        2 => args[1],
+        else => return error.TooManyArgs,
+    };
 
     var db = try sqlite.Db.init(.{
         .mode = sqlite.Db.Mode{ .File = dbPath },
@@ -50,7 +38,8 @@ pub fn main() !void {
     var stmt = try db.prepare(query);
     defer stmt.deinit();
 
-    const positions = try stmt.all(u64, gpa, .{}, .{});
+    const positions = try stmt.all(u64, ally, .{}, .{});
+    defer ally.free(positions);
 
     for (positions) |position| {
         const chunk = Chunk.Coords.from(position);
