@@ -1,0 +1,11 @@
+.{
+    .name = "mapstory",
+    .version = "0.1.0",
+    .paths = .{ "src", "build.zig", "README.md", "LICENSE" },
+    .dependencies = .{
+        .sqlite = .{
+            .url = "https://github.com/vrischmann/zig-sqlite/archive/aa6f95b1279f633259406e67986ba5ac4e76544b.tar.gz",
+            .hash = "1220d751f09c5c18c45f0a42af71ff255e62ae73deb34567ca42e9e67c614a4daa5a",
+        },
+    },
+}
