@@ -4,8 +4,8 @@
     .paths = .{ "src", "build.zig", "README.md", "LICENSE" },
     .dependencies = .{
         .sqlite = .{
-            .url = "https://github.com/vrischmann/zig-sqlite/archive/aa6f95b1279f633259406e67986ba5ac4e76544b.tar.gz",
-            .hash = "1220d751f09c5c18c45f0a42af71ff255e62ae73deb34567ca42e9e67c614a4daa5a",
+            .url = "https://github.com/trgwii/zig-sqlite/archive/46ff878f1a580263f6b0eeb05f4d50fa8bd6439d.tar.gz",
+            .hash = "1220bcbe15d3d072d3dbb7a9912c971ce18754d0d012637aeebe7b6f0589fdcae0cd",
         },
     },
 }
