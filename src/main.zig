@@ -7,7 +7,7 @@ const Chunk = struct {
         z: u27,
         y: u10,
         fn from(position: u64) Chunk.Coords {
-            return @as(Chunk.Coords, @bitCast(position));
+            return @bitCast(position);
         }
     };
 };
