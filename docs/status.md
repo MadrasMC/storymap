@@ -29,6 +29,8 @@ const Position = packed struct(u64) {
 const position: Position = @bitcast(value);
 ```
 
+Chunk coordinates are /32 of block coordinates. So a chunk at (0, 0, 0) would contain blocks (0, 0, 0) to (31, 31, 31).
+
 The data column is a binary blob encoded as a Protobuf message. We've implemented part of the [Protobuf spec](../src/ProtoBuf.zig) to be able to parse chunks. Important to note that Protobuf messages are not tagged, so all we get is a list of fields. To get any further, we need more information on what each field is.
 
 Additional info from the Wiki [[🡕]](https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage):
