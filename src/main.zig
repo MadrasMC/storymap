@@ -1,17 +1,7 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
+const Chunk = @import("Chunk.zig");
 const ProtoBuf = @import("ProtoBuf.zig");
-
-const Chunk = struct {
-    pub const Coords = packed struct(u64) {
-        x: u27,
-        z: u27,
-        y: u10,
-        fn from(position: u64) Coords {
-            return @bitCast(position);
-        }
-    };
-};
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
