@@ -1,5 +1,6 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
+const ProtoBuf = @import("ProtoBuf.zig");
 
 const Chunk = struct {
     pub const Coords = packed struct(u64) {
@@ -53,13 +54,8 @@ pub fn main() !void {
             ally.free(datas);
         }
 
-        var protoscope = std.ChildProcess.init(&.{ "protoscope", "-explicit-length-prefixes" }, ally);
-        protoscope.stdin_behavior = .Pipe;
-        protoscope.stdout_behavior = .Pipe;
-        try protoscope.spawn();
-        try protoscope.stdin.?.writeAll(datas[0]);
-        protoscope.stdin.?.close();
-        var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
-        try fifo.pump(protoscope.stdout.?, std.io.getStdOut().writer());
+        var parser = ProtoBuf{ .buf = datas[0] };
+        while (parser.next()) |msg| msg.debugPrint();
+        break;
     }
 }
