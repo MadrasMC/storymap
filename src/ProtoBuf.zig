@@ -22,7 +22,7 @@ const ProtoBuf = @This();
 pub fn parseVarInt(self: *ProtoBuf) u64 {
     var i: usize = 0;
     var result: u64 = 0;
-    while (i <= 10) : (i += 1) {
+    while (i < 10) : (i += 1) {
         const x = self.buf[self.cur + i];
         result += @as(u64, x & 0b1111111) << @intCast(7 * i);
         if (x & (1 << 7) == 0) break;
