@@ -29,7 +29,24 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.root_module.addImport("sqlite", sqlite.module("sqlite"));
+    const sqlite_lib = b.addStaticLibrary(.{
+        .name = "sqlite",
+        .target = target,
+        .optimize = optimize,
+    });
+    sqlite_lib.linkLibC();
+    sqlite_lib.addIncludePath(sqlite.path("c"));
+    sqlite_lib.addCSourceFile(.{
+        .file = sqlite.path("c/sqlite3.c"),
+        .flags = &.{"-std=c99"},
+    });
+
+    const sqlite_mod = sqlite.module("sqlite");
+    sqlite_mod.addIncludePath(sqlite.path("c"));
+
+    exe.root_module.addImport("sqlite", sqlite_mod);
+
+    exe.linkLibrary(sqlite_lib);
 
     // links the bundled sqlite3, so leave this out if you link the system one
     exe.linkLibrary(sqlite.artifact("sqlite"));
