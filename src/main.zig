@@ -33,36 +33,43 @@ pub fn main() !void {
     });
 
     const query =
-        \\SELECT position FROM chunk ORDER BY position ASC;
+        \\SELECT position, data FROM chunk ORDER BY position ASC;
     ;
 
     var stmt = try db.prepare(query);
     defer stmt.deinit();
 
-    const positions = try stmt.all(u64, ally, .{}, .{});
-    defer ally.free(positions);
+    const chunks = try stmt.all(struct {
+        position: u64,
+        data: []const u8,
+    }, ally, .{}, .{});
+    defer ally.free(chunks);
 
     var field_sizes = [_]u64{0} ** 16;
 
-    for (positions) |position| {
-        const chunk = Chunk.Coords.from(position);
-        std.debug.print("{}, {}, {}\n", .{ chunk.x, chunk.y, chunk.z });
+    for (chunks) |c| {
+        const position = c.position;
+        const chunk = Chunk.from(position);
+
+        std.debug.print("{}, {}, {}\n", .{ chunk.position.x, chunk.position.y, chunk.position.z });
         var data_stmt = try db.prepare("SELECT data FROM chunk WHERE position = ?");
         defer data_stmt.deinit();
 
-        const datas = try data_stmt.all([]const u8, ally, .{}, .{ .position = position });
-        defer {
-            for (datas) |data| ally.free(data);
-            ally.free(datas);
-        }
+        var chunk_field_sizes = [_]u64{0} ** 16;
 
-        var parser = ProtoBuf{ .buf = datas[0] };
+        const data = c.data;
+        defer ally.free(data);
+        var parser = ProtoBuf{ .buf = data };
         while (parser.next()) |msg| {
             if (msg.data == .LEN) {
-                if (msg.data.LEN.len > field_sizes[msg.field_number - 1]) {
-                    field_sizes[msg.field_number - 1] = msg.data.LEN.len;
-                }
+                chunk_field_sizes[msg.field_number - 1] += msg.data.LEN.len;
                 // msg.debugPrint();
+            }
+        }
+
+        for (chunk_field_sizes, 0..) |size, i| {
+            if (size > field_sizes[i]) {
+                field_sizes[i] = size;
             }
         }
     }
