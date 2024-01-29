@@ -7,7 +7,5 @@ pub const Position = packed struct(u64) {
 position: Position,
 
 pub fn from(position: u64) @This() {
-    return .{
-        .position = @as(Position, @bitCast(position)),
-    };
+    return .{ .position = @bitCast(position) };
 }
