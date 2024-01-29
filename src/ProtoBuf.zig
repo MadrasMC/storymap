@@ -48,10 +48,23 @@ pub const Message = struct {
                 "{}:{s} {}\n",
                 .{ msg.field_number, @tagName(msg.data), value },
             ),
-            .LEN => |value| std.debug.print(
-                "{}:{s} ({}) {any}\n",
-                .{ msg.field_number, @tagName(msg.data), value.len, value },
-            ),
+            .LEN => |value| {
+                var hasNonAscii = false;
+                for (value) |c| if (c > 127) {
+                    hasNonAscii = true;
+                };
+                if (hasNonAscii) {
+                    std.debug.print(
+                        "{}:{s} ({}) {x}\n",
+                        .{ msg.field_number, @tagName(msg.data), value.len, value },
+                    );
+                } else {
+                    std.debug.print(
+                        "{}:{s} ({}) \"{s}\"\n",
+                        .{ msg.field_number, @tagName(msg.data), value.len, value },
+                    );
+                }
+            },
         }
     }
 };

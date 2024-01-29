@@ -42,6 +42,8 @@ pub fn main() !void {
     const positions = try stmt.all(u64, ally, .{}, .{});
     defer ally.free(positions);
 
+    var field_sizes = [_]u64{0} ** 16;
+
     for (positions) |position| {
         const chunk = Chunk.Coords.from(position);
         std.debug.print("{}, {}, {}\n", .{ chunk.x, chunk.y, chunk.z });
@@ -55,7 +57,14 @@ pub fn main() !void {
         }
 
         var parser = ProtoBuf{ .buf = datas[0] };
-        while (parser.next()) |msg| msg.debugPrint();
-        break;
+        while (parser.next()) |msg| {
+            if (msg.data == .LEN) {
+                if (msg.data.LEN.len > field_sizes[msg.field_number - 1]) {
+                    field_sizes[msg.field_number - 1] = msg.data.LEN.len;
+                }
+                // msg.debugPrint();
+            }
+        }
     }
+    for (1.., field_sizes) |i, size| if (size != 0) std.debug.print("{}: {}\n", .{ i, size });
 }
