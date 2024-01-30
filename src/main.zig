@@ -2,7 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const Chunk = @import("Chunk.zig");
 const ProtoBuf = @import("ProtoBuf.zig");
-const Entity = @import("Entity.zig");
+const BlockEntity = @import("BlockEntity.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -51,8 +51,16 @@ pub fn main() !void {
                 // msg.debugPrint();
 
                 if (msg.field_number == 8) {
-                    var entity = Entity{ .buf = msg.data.LEN };
-                    while (entity.next()) |entry| entry.debugPrint();
+                    const blockEntity = BlockEntity.from(msg.data.LEN);
+                    std.debug.print("\nentity type: {s}\npos: {d}, {d}, {d}\nblockCode: {s}\n", .{
+                        blockEntity.class,
+                        blockEntity.position.x,
+                        blockEntity.position.y,
+                        blockEntity.position.z,
+                        blockEntity.blockCode,
+                    });
+                    // std.debug.print("entity: {}\n", .{try entity.parse()});
+                    // while (entity.next()) |entry| entry.debugPrint();
                 }
             }
         }
