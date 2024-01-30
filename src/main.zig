@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const Chunk = @import("Chunk.zig");
 const ProtoBuf = @import("ProtoBuf.zig");
+const Entity = @import("Entity.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -22,8 +23,9 @@ pub fn main() !void {
         .threading_mode = .MultiThread,
     });
 
+    // hardcoded to spawn chunk 54045343012109949 (.{ 15997, 0, 16000 })
     const query =
-        \\SELECT position, data FROM chunk ORDER BY position ASC;
+        \\SELECT position, data FROM chunk WHERE position = 54045343012109949 ORDER BY position ASC;
     ;
 
     var stmt = try db.prepare(query);
@@ -35,33 +37,24 @@ pub fn main() !void {
     }, ally, .{}, .{});
     defer ally.free(chunks);
 
-    var field_sizes = [_]u64{0} ** 16;
-
     for (chunks) |c| {
         const position = c.position;
         const chunk = Chunk.from(position);
-
-        std.debug.print("{}, {}, {}\n", .{ chunk.position.x, chunk.position.y, chunk.position.z });
-        var data_stmt = try db.prepare("SELECT data FROM chunk WHERE position = ?");
-        defer data_stmt.deinit();
-
-        var chunk_field_sizes = [_]u64{0} ** 16;
+        _ = chunk;
 
         const data = c.data;
         defer ally.free(data);
+
         var parser = ProtoBuf{ .buf = data };
         while (parser.next()) |msg| {
             if (msg.data == .LEN) {
-                chunk_field_sizes[msg.field_number - 1] += msg.data.LEN.len;
                 // msg.debugPrint();
-            }
-        }
 
-        for (chunk_field_sizes, 0..) |size, i| {
-            if (size > field_sizes[i]) {
-                field_sizes[i] = size;
+                if (msg.field_number == 8) {
+                    var entity = Entity{ .buf = msg.data.LEN };
+                    while (entity.next()) |entry| entry.debugPrint();
+                }
             }
         }
     }
-    for (1.., field_sizes) |i, size| if (size != 0) std.debug.print("{}: {}\n", .{ i, size });
 }
