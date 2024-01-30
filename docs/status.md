@@ -46,3 +46,13 @@ Additional info from the Wiki [[🡕]](https://wiki.vintagestory.at/index.php/Mo
 > -   Sparse map of decor blocks. The map is indexed by both the block position and decor index. The decor index includes which face of the parent block the decor is attached to, and optionally a location on a 16x16 grid on that block face (used by caveart).
 > -   Map of modid to a byte array of custom moddata
 > -   Format version metadata
+
+From the chunks that we have dumped as ProtoBuf messages, we have a few observations:
+
+-   There are more than the 7 field types that we expect from the above list.
+-   Field type numbers are not contiguous.
+-   We guess that unused field types are from past versions of the game.
+-   Field 12 is game version ("1.19.1", etc).
+-   Field 6 and 8 can appear several times in the same chunk.
+-   Each field 8 is a block entity. We've partially parsed this to retrieve the block entity type, position, and blockCode.
+-   Based on the size alone, field 1 might be blocks.
