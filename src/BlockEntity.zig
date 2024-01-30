@@ -12,11 +12,6 @@ class: []const u8,
 position: Position,
 blockCode: []const u8,
 
-fn readU32(buf: []const u8) u32 {
-    const value = @as(*align(1) const u32, @ptrCast(buf)).*;
-    return std.mem.littleToNative(u32, value);
-}
-
 pub fn from(buf: []const u8) BlockEntity {
     var cur: usize = 0;
 
@@ -27,26 +22,22 @@ pub fn from(buf: []const u8) BlockEntity {
     // ignore "1", "4" for "posx" length, and "posx"
     cur += 1 + 1 + 4;
 
-    const posx = buf[cur .. cur + 4];
+    const posx = std.mem.readVarInt(u32, buf[cur .. cur + 4], .little);
     cur += 4;
 
     // ignore "1", "4" for "posy" length, and "posy"
     cur += 1 + 1 + 4;
 
-    const posy = buf[cur .. cur + 4];
+    const posy = std.mem.readVarInt(u32, buf[cur .. cur + 4], .little);
     cur += 4;
 
     // ignore "1", "4" for "posz" length, and "posz"
     cur += 1 + 1 + 4;
 
-    const posz = buf[cur .. cur + 4];
+    const posz = std.mem.readVarInt(u32, buf[cur .. cur + 4], .little);
     cur += 4;
 
-    const position = Position{
-        .x = readU32(posx),
-        .y = readU32(posy),
-        .z = readU32(posz),
-    };
+    const position = Position{ .x = posx, .y = posy, .z = posz };
 
     if (!std.mem.eql(u8, buf[cur .. cur + 2], ([_]u8{ 0x05, 0x09 })[0..2])) {
         std.debug.print("expected 0x05 0x09, got {x}", .{buf[cur .. cur + 2]});
