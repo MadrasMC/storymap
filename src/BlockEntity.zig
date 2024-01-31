@@ -12,8 +12,8 @@ class: []const u8,
 position: Position,
 blockCode: []const u8,
 
-inline fn readU32(buf: []const u8, index: usize) u32 {
-    return std.mem.readInt(u32, buf[index .. index + 4][0..4], .little);
+inline fn readU32(buf: []const u8) u32 {
+    return std.mem.readInt(u32, buf[0..4], .little);
 }
 
 pub fn from(buf: []const u8) BlockEntity {
@@ -26,19 +26,19 @@ pub fn from(buf: []const u8) BlockEntity {
     // ignore "1", "4" for "posx" length, and "posx"
     cur += 1 + 1 + 4;
 
-    const posx = readU32(buf, cur);
+    const posx = readU32(buf[cur..]);
     cur += 4;
 
     // ignore "1", "4" for "posy" length, and "posy"
     cur += 1 + 1 + 4;
 
-    const posy = readU32(buf, cur);
+    const posy = readU32(buf[cur..]);
     cur += 4;
 
     // ignore "1", "4" for "posz" length, and "posz"
     cur += 1 + 1 + 4;
 
-    const posz = readU32(buf, cur);
+    const posz = readU32(buf[cur..]);
     cur += 4;
 
     const position = Position{ .x = posx, .y = posy, .z = posz };
