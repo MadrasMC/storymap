@@ -44,16 +44,16 @@ pub fn from(buf: []const u8) BlockEntity {
     const position = Position{ .x = posx, .y = posy, .z = posz };
 
     if (!std.mem.eql(u8, buf[cur .. cur + 2], ([_]u8{ 0x05, 0x09 })[0..2])) {
-        std.debug.print("expected 0x05 0x09, got {x}", .{buf[cur .. cur + 2]});
-        std.process.exit(1);
+        var buffer: [1024]u8 = undefined;
+        @panic(std.fmt.bufPrint(&buffer, "expected 0x05 0x09, got {x} at pos {d}", .{ buf[cur .. cur + 2], cur }));
     }
 
     // ignore next two bytes (I don't know what this is, but it seems to be always 0x5 followed by 0x09)
     cur += 2;
 
     if (!std.mem.eql(u8, buf[cur .. cur + 9], "blockCode")) {
-        std.debug.print("expected 'blockCode', got {x}", .{buf[cur .. cur + 9]});
-        std.process.exit(1);
+        var buffer: [1024]u8 = undefined;
+        @panic(std.fmt.bufPrint(&buffer, "expected 'blockCode', got {x} at pos {d}", .{ buf[cur .. cur + 9], cur }));
     }
 
     cur += 9;
