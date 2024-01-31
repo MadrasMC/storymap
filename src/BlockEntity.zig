@@ -45,7 +45,7 @@ pub fn from(buf: []const u8) BlockEntity {
 
     if (!std.mem.eql(u8, buf[cur .. cur + 2], ([_]u8{ 0x05, 0x09 })[0..2])) {
         var buffer: [1024]u8 = undefined;
-        @panic(std.fmt.bufPrint(&buffer, "expected 0x05 0x09, got {x} at pos {d}", .{ buf[cur .. cur + 2], cur }));
+        @panic(std.fmt.bufPrint(&buffer, "expected 0x05 0x09, got {x} at pos {d}", .{ buf[cur .. cur + 2], cur }) catch unreachable);
     }
 
     // ignore next two bytes (I don't know what this is, but it seems to be always 0x5 followed by 0x09)
@@ -53,7 +53,7 @@ pub fn from(buf: []const u8) BlockEntity {
 
     if (!std.mem.eql(u8, buf[cur .. cur + 9], "blockCode")) {
         var buffer: [1024]u8 = undefined;
-        @panic(std.fmt.bufPrint(&buffer, "expected 'blockCode', got {x} at pos {d}", .{ buf[cur .. cur + 9], cur }));
+        @panic(std.fmt.bufPrint(&buffer, "expected 'blockCode', got {x} at pos {d}", .{ buf[cur .. cur + 9], cur }) catch unreachable);
     }
 
     cur += 9;
