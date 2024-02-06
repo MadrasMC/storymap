@@ -1,6 +1,8 @@
 const std = @import("std");
+const util = @import("./util.zig");
 
 const BlockEntity = @This();
+const readU32 = util.readU32;
 
 const Position = struct {
     x: u32,
