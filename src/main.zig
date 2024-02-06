@@ -8,12 +8,9 @@ const VS = @import("Compression.zig");
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
-    const ally = gpa.allocator();
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    defer arena.deinit();
-    const ally2 = arena.allocator();
-    const args = try std.process.argsAlloc(ally);
-    defer std.process.argsFree(ally, args);
+    const allocator = gpa.allocator();
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
     const dbPath = switch (args.len) {
         0, 1 => return error.NotEnoughArgs,
@@ -35,48 +32,14 @@ pub fn main() !void {
     const chunks = try stmt.all(struct {
         position: u64,
         data: []const u8,
-    }, ally2, .{}, .{});
-    defer ally2.free(chunks);
+    }, allocator, .{}, .{});
+    defer allocator.free(chunks);
 
     for (chunks) |c| {
-        const position = c.position;
-        const chunk = Chunk.from(position);
-        _ = chunk;
+        defer allocator.free(c.data);
+        const chunk = try Chunk.from(allocator, c.position, c.data);
+        defer chunk.deinit();
 
-        const data = c.data;
-        defer ally2.free(data);
-
-        var parser = ProtoBuf{ .buf = data };
-        while (parser.next()) |msg| {
-            if (msg.data == .LEN) {
-                // if (msg.field_number == 8) {
-                //     const blockEntity = BlockEntity.from(msg.data.LEN);
-                //     std.debug.print("\nentity type: {s}\npos: {d}, {d}, {d}\nblockCode: {s}\n", .{
-                //         blockEntity.class,
-                //         blockEntity.position.x,
-                //         blockEntity.position.y,
-                //         blockEntity.position.z,
-                //         blockEntity.blockCode,
-                //     });
-                // }
-
-                if (msg.field_number != 12 and msg.field_number != 8) {
-                    // std.debug.print("Field '{s}':\n", .{Chunk.fieldNames[msg.field_number]});
-                    // msg.debugPrint();
-
-                    if (msg.field_number == 1) {
-                        // compressed_blocks
-                        var blocks: [][]i32 = &.{};
-                        var refCount: i32 = 0;
-                        var decompress_arena = std.heap.ArenaAllocator.init(ally);
-                        defer decompress_arena.deinit();
-                        const decompress_allocator = decompress_arena.allocator();
-                        const numArray = try VS.Compression.DecompressCombined(decompress_allocator, msg.data.LEN, &blocks, &refCount);
-                        _ = numArray;
-                        std.debug.print("decompressed: {x}\n", .{blocks});
-                    }
-                }
-            }
-        }
+        std.debug.print("{}", .{chunk});
     }
 }
