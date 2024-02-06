@@ -28,6 +28,56 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const zstd = b.dependency("zstd", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zstd_lib = b.addStaticLibrary(.{
+        .name = "zstd",
+        .target = target,
+        .optimize = .ReleaseFast, // UB gets hit inside the lib in Debug / Safe, let's just ignore that
+    });
+    zstd_lib.linkLibC();
+    zstd_lib.addCSourceFiles(.{
+        .dependency = zstd,
+        .files = &.{
+            "lib/common/entropy_common.c",
+            "lib/common/error_private.c",
+            "lib/common/fse_decompress.c",
+            "lib/common/xxhash.c",
+            "lib/common/zstd_common.c",
+            "lib/compress/fse_compress.c",
+            "lib/compress/hist.c",
+            "lib/compress/huf_compress.c",
+            "lib/compress/zstd_compress_literals.c",
+            "lib/compress/zstd_compress_sequences.c",
+            "lib/compress/zstd_compress_superblock.c",
+            "lib/compress/zstd_compress.c",
+            "lib/compress/zstd_double_fast.c",
+            "lib/compress/zstd_fast.c",
+            "lib/compress/zstd_lazy.c",
+            "lib/compress/zstd_ldm.c",
+            "lib/compress/zstd_opt.c",
+            "lib/decompress/huf_decompress.c",
+            "lib/decompress/zstd_ddict.c",
+            "lib/decompress/zstd_decompress_block.c",
+            "lib/decompress/zstd_decompress_block.c",
+            "lib/decompress/zstd_decompress.c",
+        },
+        .flags = &.{"-DZSTD_DISABLE_ASM=1"},
+    });
+
+    const zstd_translate_c = b.addTranslateC(.{
+        .source_file = zstd.path("lib/zstd.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const zstd_mod = b.createModule(.{
+        .root_source_file = .{ .generated = &zstd_translate_c.output_file },
+        .target = target,
+        .optimize = optimize,
+    });
 
     const sqlite_lib = b.addStaticLibrary(.{
         .name = "sqlite",
@@ -45,8 +95,10 @@ pub fn build(b: *std.Build) void {
     sqlite_mod.addIncludePath(sqlite.path("c"));
 
     exe.root_module.addImport("sqlite", sqlite_mod);
+    exe.root_module.addImport("zstd", zstd_mod);
 
     exe.linkLibrary(sqlite_lib);
+    exe.linkLibrary(zstd_lib);
 
     // links the bundled sqlite3, so leave this out if you link the system one
     exe.linkLibrary(sqlite.artifact("sqlite"));
