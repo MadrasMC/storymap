@@ -71,14 +71,7 @@ pub fn main() !void {
                         var decompress_arena = std.heap.ArenaAllocator.init(ally);
                         defer decompress_arena.deinit();
                         const decompress_allocator = decompress_arena.allocator();
-                        const NewArrayStruct = struct {
-                            var allocator: std.mem.Allocator = undefined;
-                            fn newArray() ![]i32 {
-                                return @This().allocator.alloc(i32, 1024);
-                            }
-                        };
-                        NewArrayStruct.allocator = decompress_allocator;
-                        const numArray = try VS.Compression.DecompressCombined(decompress_allocator, msg.data.LEN, &blocks, &refCount, &NewArrayStruct.newArray);
+                        const numArray = try VS.Compression.DecompressCombined(decompress_allocator, msg.data.LEN, &blocks, &refCount);
                         _ = numArray;
                         std.debug.print("decompressed: {x}\n", .{blocks});
                     }

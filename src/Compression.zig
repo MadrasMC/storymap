@@ -8,22 +8,21 @@ pub const Compression = struct {
         blocksCompressed: []const u8,
         blocks: *[][]i32,
         refCount: *i32,
-        newArray: *const fn () std.mem.Allocator.Error![]i32,
-    ) ![]i32 {
+    ) !?[]i32 {
         var length1 = ArrayConvert.GetInt(blocksCompressed);
-        if (length1 == 0) return &.{};
+        if (length1 == 0) return null;
         var length2: i32 = 0;
         var output: []i32 = &.{};
         if (length1 < 0) {
             length1 *= -1;
             length2 = @divTrunc(length1, 4);
-            if (length2 == 1) return &.{};
+            if (length2 == 1) return null;
             output = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
             ArrayConvert.ByteToIntOffset(blocksCompressed, 4, output, length2);
         } else {
             var buffer: []u8 = &.{};
             length2 = @divTrunc(try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer), 4);
-            if (length2 == 1) return &.{};
+            if (length2 == 1) return null;
             output = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
             ArrayConvert.ByteToInt(buffer, output, length2);
         }
@@ -34,7 +33,7 @@ pub const Compression = struct {
         for (blocks.*) |*block| block.* = &.{};
         const data = try Compression.Compression1.Decompress(allocator, blocksCompressed, length1 + 4, @as(i32, @intCast(blocksCompressed.len)) - (length1 + 4));
         if (data.len < count * 1024 * 4) return error.InvalidData;
-        try ArrayConvert.ByteToIntArrays(data, blocks, count, newArray);
+        try ArrayConvert.ByteToIntArrays(allocator, data, blocks, count);
         refCount.* = length2;
         return output;
     }
@@ -138,9 +137,9 @@ pub const ArrayConvert = struct {
             output[index] = numPtr2[index];
         }
     }
-    pub fn ByteToIntArrays(data: []const u8, output: *[][]i32, count: i32, newArray: *const fn () std.mem.Allocator.Error![]i32) !void {
+    pub fn ByteToIntArrays(allocator: std.mem.Allocator, data: []const u8, output: *[][]i32, count: i32) !void {
         for (0..@intCast(count)) |index| {
-            if (output.*[index].len == 0) output.*[index] = try newArray();
+            if (output.*[index].len == 0) output.*[index] = try allocator.alloc(i32, 1024);
         }
         const numPtr1 = data.ptr;
         var numPtr2: [*]const i32 = @alignCast(@ptrCast(numPtr1));
@@ -165,46 +164,3 @@ pub fn decompressBuffer(allocator: std.mem.Allocator, input: []u8) !?[]u8 {
     const reader = decompressor.reader();
     return try reader.readAllAlloc(allocator, 102400);
 }
-
-// pub fn decompressCombined(
-//     /// The allocator to use for the output data. This function will not call free. Pass an arena-like allocator to avoid memory leaks.
-//     allocator: std.mem.Allocator,
-//     /// The compressed input data (blocksCompressed, liquidsCompressed, etc)
-//     dataCompressed: []u8,
-//     /// Buffer to hold decompressed data output
-//     data: *[][]i32,
-//     /// The number of palettes in the decompressed data
-//     paletteCount: *i32,
-// ) !?i32 {
-//     const length1: i32 = util.readI32(dataCompressed);
-//     if (length1 == 0) return null;
-//     var length2: i32 = undefined;
-//     var output: []i32 = undefined;
-//     if (length1 < 0) {
-//         length2 = (length1 * -1) / 4;
-//         if (length2 == 1) return null;
-//         output = try allocator.alloc(i32, util.getRoundedUpSize(length2));
-//         util.byteToInt(dataCompressed[4..], output, length2);
-//     } else {
-//         var buffer: []u8 = undefined;
-//         length2 = decompressAndSize(dataCompressed[4..length1], buffer) / 4;
-//         if (length2 == 1) return null;
-//         output = try allocator.alloc(i32, util.getRoundedUpSize(length2));
-//         util.byteToInt(dataCompressed, output, length2);
-//     }
-//     var count: i32 = 0;
-//     var length3: i32 = output.len;
-//     while (true) {
-//         length3 = length3 >> 1;
-//         if (length3 <= 0) break;
-//         count += 1;
-//     }
-//     if (data == null)
-//         data = try allocator.alloc([]i32, count);
-//     const data: []u8 = decompress(dataCompressed[length1 + 4 .. dataCompressed.Length - (length1 + 4)]);
-//     if (data.Length < count * 1024 * 4)
-//         return error.InvalidData;
-//     util.byteToIntArrays(allocator, data, data, count);
-//     paletteCount = length2;
-//     return output;
-// }
