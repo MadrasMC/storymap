@@ -14,10 +14,6 @@ class: []const u8,
 position: Position,
 blockCode: []const u8,
 
-inline fn readU32(buf: []const u8) u32 {
-    return std.mem.readInt(u32, buf[0..4], .little);
-}
-
 pub fn from(buf: []const u8) BlockEntity {
     var cur: usize = 0;
 

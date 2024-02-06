@@ -3,6 +3,7 @@ const sqlite = @import("sqlite");
 const Chunk = @import("Chunk.zig");
 const ProtoBuf = @import("ProtoBuf.zig");
 const BlockEntity = @import("BlockEntity.zig");
+const VS = @import("Compression.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -22,9 +23,6 @@ pub fn main() !void {
 
     var db = try sqlite.Db.init(.{ .mode = sqlite.Db.Mode{ .File = dbPath }, .threading_mode = .MultiThread });
     defer db.deinit();
-        .open_flags = .{ .write = true, .create = true },
-        .threading_mode = .MultiThread,
-    });
 
     // hardcoded to spawn chunk 54045343012109949 (.{ 15997, 3, 16000 })
     const query =
@@ -64,19 +62,25 @@ pub fn main() !void {
 
                 if (msg.field_number != 12 and msg.field_number != 8) {
                     // std.debug.print("Field '{s}':\n", .{Chunk.fieldNames[msg.field_number]});
-                // msg.debugPrint();
+                    // msg.debugPrint();
 
                     if (msg.field_number == 1) {
                         // compressed_blocks
-                        const bufStream = std.io.fixedBufferStream(msg.data.LEN);
-                        var decompressor = std.compress.zstd.decompressStream(ally, bufStream);
-                        defer decompressor.deinit();
-                        const reader = decompressor.reader();
-
-                        const buf = try reader.readAllAlloc(ally, 100000);
-                        defer ally.free(buf);
-
-                        std.debug.print("decompressed: {x}\n", .{buf});
+                        var blocks: [][]i32 = &.{};
+                        var refCount: i32 = 0;
+                        var decompress_arena = std.heap.ArenaAllocator.init(ally);
+                        defer decompress_arena.deinit();
+                        const decompress_allocator = decompress_arena.allocator();
+                        const NewArrayStruct = struct {
+                            var allocator: std.mem.Allocator = undefined;
+                            fn newArray() ![]i32 {
+                                return @This().allocator.alloc(i32, 1024);
+                            }
+                        };
+                        NewArrayStruct.allocator = decompress_allocator;
+                        const numArray = try VS.Compression.DecompressCombined(decompress_allocator, msg.data.LEN, &blocks, &refCount, &NewArrayStruct.newArray);
+                        _ = numArray;
+                        std.debug.print("decompressed: {x}\n", .{blocks});
                     }
                 }
             }
