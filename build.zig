@@ -69,7 +69,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const zstd_translate_c = b.addTranslateC(.{
-        .source_file = zstd.path("lib/zstd.h"),
+        .root_source_file = zstd.path("lib/zstd.h"),
         .target = target,
         .optimize = optimize,
     });
