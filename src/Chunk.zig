@@ -67,6 +67,7 @@ pub fn deinit(self: Chunk) void {
     }
     if (self.blockPalette) |blockPalette| allocator.free(blockPalette);
     if (self.liquidPalette) |liquidPalette| allocator.free(liquidPalette);
+    allocator.free(self.blockEntities);
 }
 
 pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chunk {

@@ -57,12 +57,7 @@ pub const Compression = struct {
             }).Decompress(buffer.*, compressedFrame);
         }
         pub fn GetOrCreateBuffer(allocator: std.mem.Allocator, size: usize) ![]u8 {
-            var buffer = CompressionZSTD.reusableBuffer;
-            if (buffer.len == 0) {
-                buffer = try allocator.alloc(u8, size);
-                CompressionZSTD.reusableBuffer = buffer;
-            }
-            return buffer;
+            return allocator.alloc(u8, size);
         }
         pub fn Decompress(allocator: std.mem.Allocator, fi: []const u8, offset: i32, length: i32) ![]u8 {
             var buffer: []u8 = &.{};
@@ -73,7 +68,6 @@ pub const Compression = struct {
 };
 
 pub const CompressionZSTD = struct {
-    pub var reusableBuffer: []u8 = &.{};
     pub var reusableDecompressor: ?ZStdDecompressorImpl = null;
 };
 
