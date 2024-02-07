@@ -69,3 +69,9 @@ pub fn from(buf: []const u8) BlockEntity {
         .blockCode = blockCode,
     };
 }
+
+pub fn format(value: BlockEntity, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    _ = fmt;
+    _ = options;
+    try writer.print("BlockEntity({s} ({s}) [x: {}, z: {}, y: {}])", .{ value.blockCode, value.class, value.position.x, value.position.z, value.position.y });
+}

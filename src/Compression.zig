@@ -9,75 +9,87 @@ pub const Compression = struct {
         blocks: *[][]i32,
         refCount: *i32,
     ) !?[]i32 {
-        var length1 = ArrayConvert.GetInt(blocksCompressed);
+        var length1 = util.readI32(blocksCompressed);
         if (length1 == 0) return null;
         var length2: i32 = 0;
         const output = if (length1 < 0) b: {
             length1 *= -1;
             length2 = @divTrunc(length1, 4);
             if (length2 == 1) return null;
-            const out = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
-            ArrayConvert.ByteToIntOffset(blocksCompressed, 4, out, length2);
+            const out = try allocator.alloc(i32, @intCast(length2));
+            @memcpy(out, @as(
+                [*]align(1) const i32,
+                @ptrCast(@alignCast(blocksCompressed.ptr + 4)),
+            )[0..out.len]);
             break :b out;
         } else b: {
             var buffer: []u8 = &.{};
             length2 = @divTrunc(try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer), 4);
             if (length2 == 1) return null;
-            const out = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
-            ArrayConvert.ByteToInt(buffer, out, length2);
+            const out = try allocator.alloc(i32, @intCast(length2));
+            @memcpy(out, @as([*]i32, @ptrCast(@alignCast(buffer.ptr)))[0..out.len]);
             break :b out;
         };
-        var count: i32 = 0;
+        var count: usize = 0;
         var length3 = output.len;
+        // TODO: this is likely wrong
         while ((length3 >> 1) > 0) : (length3 = length3 >> 1) count += 1;
         if (blocks.len == 0) blocks.* = try allocator.alloc([]i32, 15);
         for (blocks.*) |*block| block.* = &.{};
-        const data = try Compression.Compression1.Decompress(allocator, blocksCompressed, length1 + 4, @as(i32, @intCast(blocksCompressed.len)) - (length1 + 4));
+        const data = try Compression.Compression1.Decompress(
+            allocator,
+            blocksCompressed,
+            length1 + 4,
+            @as(i32, @intCast(blocksCompressed.len)) - (length1 + 4),
+        );
         defer allocator.free(data);
         if (data.len < count * 1024 * 4) return error.InvalidData;
-        try ArrayConvert.ByteToIntArrays(allocator, data, blocks, count);
+        var ptr: [*]const i32 = @ptrCast(@alignCast(data.ptr));
+        for (0..count) |i| if (blocks.*[i].len == 0) {
+            blocks.*[i] = try allocator.alloc(i32, 1024);
+            @memcpy(blocks.*[i], ptr[0..1024]);
+            ptr += 1024;
+        };
         refCount.* = length2;
         return output;
     }
     pub const Compression1 = struct {
-        pub fn DecompressAndSizeOffset(allocator: std.mem.Allocator, compressedData: []const u8, offset: i32, length: i32, buffer: *[]u8) !i32 {
+        pub fn DecompressAndSizeOffset(
+            allocator: std.mem.Allocator,
+            compressedData: []const u8,
+            offset: i32,
+            length: i32,
+            buffer: *[]u8,
+        ) !i32 {
             const compressedFrame = compressedData[@intCast(offset)..@intCast(offset + length)];
-            const decompressedSize = ZStdWrapper.GetDecompressedSize(compressedFrame);
-            buffer.* = try GetOrCreateBuffer(allocator, decompressedSize);
+            const decompressedSize = zstd.ZSTD_getFrameContentSize(compressedFrame.ptr, compressedFrame.len);
+            buffer.* = try allocator.alloc(u8, decompressedSize);
             const decompressor = try ZStdWrapper.CreateDecompressor(allocator);
             defer decompressor.deinit();
             return decompressor.Decompress(buffer.*, compressedFrame);
-        }
-        pub fn GetOrCreateBuffer(allocator: std.mem.Allocator, size: usize) ![]u8 {
-            return allocator.alloc(u8, size);
         }
         pub fn Decompress(allocator: std.mem.Allocator, fi: []const u8, offset: i32, length: i32) ![]u8 {
             var buffer: []u8 = &.{};
             const length1 = try DecompressAndSizeOffset(allocator, fi, offset, length, &buffer);
             defer allocator.free(buffer);
-            return ArrayConvert.ByteToByte(allocator, buffer, length1);
+            return allocator.dupe(u8, buffer[0..@intCast(length1)]);
         }
     };
 };
 
-pub const ZStdDecompressorImpl = struct {
+pub const ZStdWrapper = struct {
     allocator_ptr: *const std.mem.Allocator,
     dCtx: *zstd.ZSTD_DCtx,
-    pub fn Decompress(self: ZStdDecompressorImpl, output: []u8, input: []const u8) i32 {
+    pub fn Decompress(self: ZStdWrapper, output: []u8, input: []const u8) i32 {
         return @intCast(zstd.ZSTD_decompressDCtx(self.dCtx, output.ptr, output.len, input.ptr, input.len));
     }
-    pub fn deinit(self: ZStdDecompressorImpl) void {
+    pub fn deinit(self: ZStdWrapper) void {
         _ = zstd.ZSTD_freeDCtx(self.dCtx);
         const allocator = self.allocator_ptr.*;
         allocator.destroy(self.allocator_ptr);
     }
-};
 
-pub const ZStdWrapper = struct {
-    pub fn GetDecompressedSize(compressedFrame: []const u8) usize {
-        return zstd.ZSTD_getFrameContentSize(compressedFrame.ptr, compressedFrame.len);
-    }
-    pub fn CreateDecompressor(allocator: std.mem.Allocator) !ZStdDecompressorImpl {
+    pub fn CreateDecompressor(allocator: std.mem.Allocator) !ZStdWrapper {
         const allocator_ptr = try allocator.create(std.mem.Allocator);
         allocator_ptr.* = allocator;
         const ZstdAllocator = struct {
@@ -94,7 +106,7 @@ pub const ZStdWrapper = struct {
                 ally.free(slice);
             }
         };
-        return ZStdDecompressorImpl{
+        return .{
             .allocator_ptr = allocator_ptr,
             .dCtx = zstd.ZSTD_createDCtx_advanced(.{
                 .@"opaque" = allocator_ptr,
@@ -104,73 +116,3 @@ pub const ZStdWrapper = struct {
         };
     }
 };
-
-pub const ArrayConvert = struct {
-    pub fn GetInt(output: []const u8) i32 {
-        return util.readI32(output);
-    }
-    pub fn GetRoundedUpSize(value: i32) i32 {
-        const num1 = value - 1;
-        const num2 = if (num1 != 0) num1 else num1 >> 1;
-        const num3 = if (num2 != 0) num2 else num2 >> 2;
-        const num4 = if (num3 != 0) num3 else num3 >> 4;
-        const num5 = if (num4 != 0) num4 else num4 >> 8;
-        return (if (num5 != 0) num5 else num5 >> 16) + 1;
-    }
-    pub fn ByteToByte(allocator: std.mem.Allocator, data: []const u8, length: i32) ![]u8 {
-        const numArray = try allocator.alloc(u8, @intCast(length));
-        if (length == 0) return numArray;
-        const num = @divTrunc(length, 4) * 4;
-        var index: usize = 0;
-        while (index < num) : (index += 4) {
-            numArray[index] = data[index];
-            numArray[index + 1] = data[index + 1];
-            numArray[index + 2] = data[index + 2];
-            numArray[index + 3] = data[index + 3];
-        }
-        while (index < length) {
-            numArray[index] = data[index];
-            index += 1;
-        }
-        return numArray;
-    }
-    pub fn ByteToInt(data: []const u8, output: []i32, length: i32) void {
-        const numPtr = data.ptr;
-        for (0..@intCast(length)) |index| {
-            output[index] = @as([*]const i32, @alignCast(@ptrCast(numPtr)))[index];
-        }
-    }
-    pub fn ByteToIntOffset(data: []const u8, offset: i32, output: []i32, length: i32) void {
-        const numPtr1 = data.ptr;
-        const numPtr2: [*]align(1) const i32 = @alignCast(@ptrCast(numPtr1 + @as(usize, @intCast(@divTrunc(offset, 4) * 4))));
-        for (0..@intCast(length)) |index| {
-            output[index] = numPtr2[index];
-        }
-    }
-    pub fn ByteToIntArrays(allocator: std.mem.Allocator, data: []const u8, output: *[][]i32, count: i32) !void {
-        for (0..@intCast(count)) |index| {
-            if (output.*[index].len == 0) output.*[index] = try allocator.alloc(i32, 1024);
-        }
-        const numPtr1 = data.ptr;
-        var numPtr2: [*]const i32 = @alignCast(@ptrCast(numPtr1));
-        for (0..@intCast(count)) |index1| {
-            const numArray = output.*[index1];
-            var index2: usize = 0;
-            while (index2 < numArray.len) : (index2 += 4) {
-                numArray[index2] = numPtr2[0];
-                numArray[index2 + 1] = numPtr2[1];
-                numArray[index2 + 2] = numPtr2[2];
-                numArray[index2 + 3] = numPtr2[3];
-                numPtr2 += 4;
-            }
-        }
-    }
-};
-
-pub fn decompressBuffer(allocator: std.mem.Allocator, input: []u8) !?[]u8 {
-    const bufStream = std.io.fixedBufferStream(input);
-    var decompressor = std.compress.zstd.decompressStream(allocator, bufStream);
-    defer decompressor.deinit();
-    const reader = decompressor.reader();
-    return try reader.readAllAlloc(allocator, 102400);
-}

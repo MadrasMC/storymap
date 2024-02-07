@@ -46,7 +46,7 @@ allocator: std.mem.Allocator,
 position: Position,
 blocks: ?[][]const i32 = null,
 blockPalette: ?[]const i32 = null,
-liqids: ?[][]const i32 = null,
+liquids: ?[][]const i32 = null,
 liquidPalette: ?[]const i32 = null,
 blockEntities: []BlockEntity,
 
@@ -59,11 +59,11 @@ pub fn deinit(self: Chunk) void {
         }
         allocator.free(blocks);
     }
-    if (self.liqids) |liqids| {
-        for (liqids) |row| {
+    if (self.liquids) |liquids| {
+        for (liquids) |row| {
             allocator.free(row);
         }
-        allocator.free(liqids);
+        allocator.free(liquids);
     }
     if (self.blockPalette) |blockPalette| allocator.free(blockPalette);
     if (self.liquidPalette) |liquidPalette| allocator.free(liquidPalette);
@@ -74,7 +74,7 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
     var _blocks: ?[][]i32 = null;
     var _blockPalette: ?[]const i32 = null;
 
-    var _liqids: ?[][]i32 = null;
+    var _liquids: ?[][]i32 = null;
     var _liquidPalette: ?[]const i32 = null;
 
     var blockEntitiesArray = std.ArrayList(BlockEntity).init(allocator);
@@ -97,7 +97,7 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
                         _blocks = dataBits;
                         _blockPalette = palette;
                     } else {
-                        _liqids = dataBits;
+                        _liquids = dataBits;
                         _liquidPalette = palette;
                     }
                 },
@@ -119,8 +119,33 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
         .position = @bitCast(position),
         .blocks = _blocks,
         .blockPalette = _blockPalette,
-        .liqids = _liqids,
+        .liquids = _liquids,
         .liquidPalette = _liquidPalette,
         .blockEntities = try blockEntitiesArray.toOwnedSlice(),
     };
+}
+
+pub fn format(value: Chunk, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    _ = fmt;
+    _ = options;
+    try writer.print("Chunk(x: {[x]}, z: {[z]}, y: {[y]}):\n", value.position);
+    if (value.blocks) |blocks| {
+        try writer.print("Blocks:\n", .{});
+        for (blocks, 0..) |block, i| if (block.len != 0) {
+            try writer.print("{}: {any}\n", .{ i, block });
+        };
+    }
+    try writer.print("Block palette: {any}\n\n", .{value.blockPalette});
+    _ = value.blockPalette;
+    if (value.liquids) |liquids| {
+        try writer.print("Liquids:\n", .{});
+        for (liquids, 0..) |block, i| if (block.len != 0) {
+            try writer.print("{}: {any}\n", .{ i, block });
+        };
+    }
+    try writer.print("Liquid palette: {any}\n\n", .{value.liquidPalette});
+    try writer.print("Block entities:\n", .{});
+    for (value.blockEntities) |blockEntity| {
+        try writer.print("{}\n", .{blockEntity});
+    }
 }
