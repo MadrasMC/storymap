@@ -12,22 +12,23 @@ pub const Compression = struct {
         var length1 = ArrayConvert.GetInt(blocksCompressed);
         if (length1 == 0) return null;
         var length2: i32 = 0;
-        var output: ?[]i32 = null;
-        if (length1 < 0) {
+        const output = if (length1 < 0) b: {
             length1 *= -1;
             length2 = @divTrunc(length1, 4);
             if (length2 == 1) return null;
-            output = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
-            ArrayConvert.ByteToIntOffset(blocksCompressed, 4, output.?, length2);
-        } else {
+            const out = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
+            ArrayConvert.ByteToIntOffset(blocksCompressed, 4, out, length2);
+            break :b out;
+        } else b: {
             var buffer: []u8 = &.{};
             length2 = @divTrunc(try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer), 4);
             if (length2 == 1) return null;
-            output = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
-            ArrayConvert.ByteToInt(buffer, output.?, length2);
-        }
+            const out = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
+            ArrayConvert.ByteToInt(buffer, out, length2);
+            break :b out;
+        };
         var count: i32 = 0;
-        var length3 = output.?.len;
+        var length3 = output.len;
         while ((length3 >> 1) > 0) : (length3 = length3 >> 1) count += 1;
         if (blocks.len == 0) blocks.* = try allocator.alloc([]i32, 15);
         for (blocks.*) |*block| block.* = &.{};
@@ -36,7 +37,7 @@ pub const Compression = struct {
         if (data.len < count * 1024 * 4) return error.InvalidData;
         try ArrayConvert.ByteToIntArrays(allocator, data, blocks, count);
         refCount.* = length2;
-        return output.?;
+        return output;
     }
     pub const Compression1 = struct {
         pub fn DecompressAndSizeOffset(allocator: std.mem.Allocator, compressedData: []const u8, offset: i32, length: i32, buffer: *[]u8) !i32 {
