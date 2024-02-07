@@ -37,7 +37,7 @@ pub const Position = packed struct(u64) {
     z: u27,
     y: u10,
 
-    pub fn position64(self: Chunk) u64 {
+    pub fn position64(self: Position) u64 {
         return @bitCast(self);
     }
 };

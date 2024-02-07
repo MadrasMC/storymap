@@ -9,22 +9,45 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
 
-    const dbPath = switch (args.len) {
-        0, 1 => return error.NotEnoughArgs,
-        2 => args[1],
-        else => return error.TooManyArgs,
-    };
+    // const args = try std.process.argsAlloc(allocator);
+    // defer std.process.argsFree(allocator, args);
+
+    // const dbPath = switch (args.len) {
+    //     0, 1 => return error.NotEnoughArgs,
+    //     2 => args[1],
+    //     else => return error.TooManyArgs,
+    // };
+
+    const dbPath = "sample.vcdbs";
+    // const dbPath = "content/sample-one-block-spawn.vcdbs";
 
     var db = try sqlite.Db.init(.{ .mode = sqlite.Db.Mode{ .File = dbPath }, .threading_mode = .MultiThread });
     defer db.deinit();
 
-    // hardcoded to spawn chunk 54045343012109949 (.{ 15997, 3, 16000 })
-    const query =
-        \\SELECT position, data FROM chunk WHERE position = 54045343012109949 ORDER BY position ASC;
-    ;
+    const positions = comptime [_]u64{
+        // spawn chunk of sample.vcdbs
+        Chunk.Position.position64(.{ .x = 15997, .y = 3, .z = 16000 }),
+
+        // empty chunk in sample-one-block-spawn.vcdbs
+        // Chunk.Position.position64(.{ .x = 15995, .y = 5, .z = 15999 }),
+
+        // chunk with one block in sample-one-block-spawn.vcdbs
+        // Chunk.Position.position64(.{ .x = 15995, .y = 4, .z = 15999 }),
+    };
+
+    comptime var query: []const u8 = "SELECT position, data FROM chunk";
+
+    comptime {
+        if (positions.len > 0) {
+            query = std.fmt.comptimePrint("{s} WHERE position = {d}", .{ query, positions[0] });
+            for (positions[1..]) |p| {
+                query = std.fmt.comptimePrint("{s} OR position = {d}", .{ query, p });
+            }
+        }
+
+        query = std.fmt.comptimePrint("{s} ORDER BY position ASC;", .{query});
+    }
 
     var stmt = try db.prepare(query);
     defer stmt.deinit();
