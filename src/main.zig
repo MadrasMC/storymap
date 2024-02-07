@@ -63,6 +63,6 @@ pub fn main() !void {
         const chunk = try Chunk.from(allocator, c.position, c.data);
         defer chunk.deinit();
 
-        std.debug.print("{}", .{chunk});
+        std.debug.print("{}\n", .{chunk});
     }
 }

@@ -84,31 +84,20 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
         if (msg.data == .LEN) {
             switch (msg.field_number) {
                 1, 16 => {
-                    var decompress_arena = std.heap.ArenaAllocator.init(allocator);
-                    defer decompress_arena.deinit();
-                    const decompress_allocator = decompress_arena.allocator();
-
                     var dataBits: [][]i32 = &.{};
                     var refCount: i32 = 0;
-                    var palette = try Compression.DecompressCombined(
-                        decompress_allocator,
+                    const palette = try Compression.DecompressCombined(
+                        allocator,
                         msg.data.LEN,
                         &dataBits,
                         &refCount,
                     );
 
-                    // dupe with outer allocator
-                    const dupedData = try allocator.alloc([]i32, dataBits.len);
-                    for (dataBits, dupedData) |bit, *dupe| {
-                        dupe.* = try allocator.dupe(i32, bit);
-                    }
-                    if (palette) |p| palette = try allocator.dupe(i32, p);
-
                     if (msg.field_number == 1) {
-                        _blocks = dupedData;
+                        _blocks = dataBits;
                         _blockPalette = palette;
                     } else {
-                        _liqids = dupedData;
+                        _liqids = dataBits;
                         _liquidPalette = palette;
                     }
                 },

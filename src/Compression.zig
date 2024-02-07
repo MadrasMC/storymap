@@ -12,49 +12,40 @@ pub const Compression = struct {
         var length1 = ArrayConvert.GetInt(blocksCompressed);
         if (length1 == 0) return null;
         var length2: i32 = 0;
-        var output: []i32 = &.{};
+        var output: ?[]i32 = null;
         if (length1 < 0) {
             length1 *= -1;
             length2 = @divTrunc(length1, 4);
             if (length2 == 1) return null;
             output = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
-            ArrayConvert.ByteToIntOffset(blocksCompressed, 4, output, length2);
+            ArrayConvert.ByteToIntOffset(blocksCompressed, 4, output.?, length2);
         } else {
             var buffer: []u8 = &.{};
             length2 = @divTrunc(try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer), 4);
             if (length2 == 1) return null;
             output = try allocator.alloc(i32, @intCast(ArrayConvert.GetRoundedUpSize(length2)));
-            ArrayConvert.ByteToInt(buffer, output, length2);
+            ArrayConvert.ByteToInt(buffer, output.?, length2);
         }
         var count: i32 = 0;
-        var length3 = output.len;
+        var length3 = output.?.len;
         while ((length3 >> 1) > 0) : (length3 = length3 >> 1) count += 1;
         if (blocks.len == 0) blocks.* = try allocator.alloc([]i32, 15);
         for (blocks.*) |*block| block.* = &.{};
         const data = try Compression.Compression1.Decompress(allocator, blocksCompressed, length1 + 4, @as(i32, @intCast(blocksCompressed.len)) - (length1 + 4));
+        defer allocator.free(data);
         if (data.len < count * 1024 * 4) return error.InvalidData;
         try ArrayConvert.ByteToIntArrays(allocator, data, blocks, count);
         refCount.* = length2;
-        return output;
+        return output.?;
     }
     pub const Compression1 = struct {
-        pub fn DecompressAndSize(compressedData: []const u8, buffer: *[]u8) !i32 {
-            const compressedFrame = compressedData;
-            const decompressedSize = ZStdWrapper.GetDecompressedSize(compressedFrame);
-            buffer.* = GetOrCreateBuffer(decompressedSize);
-            return (if (CompressionZSTD.reusableDecompressor) |decompressor| decompressor else b: {
-                CompressionZSTD.reusableDecompressor = ZStdWrapper.CreateDecompressor();
-                break :b CompressionZSTD.reusableDecompressor;
-            }).Decompress(buffer, compressedFrame);
-        }
         pub fn DecompressAndSizeOffset(allocator: std.mem.Allocator, compressedData: []const u8, offset: i32, length: i32, buffer: *[]u8) !i32 {
             const compressedFrame = compressedData[@intCast(offset)..@intCast(offset + length)];
             const decompressedSize = ZStdWrapper.GetDecompressedSize(compressedFrame);
             buffer.* = try GetOrCreateBuffer(allocator, decompressedSize);
-            return (if (CompressionZSTD.reusableDecompressor) |decompressor| decompressor else b: {
-                CompressionZSTD.reusableDecompressor = ZStdWrapper.CreateDecompressor();
-                break :b CompressionZSTD.reusableDecompressor.?;
-            }).Decompress(buffer.*, compressedFrame);
+            const decompressor = try ZStdWrapper.CreateDecompressor(allocator);
+            defer decompressor.deinit();
+            return decompressor.Decompress(buffer.*, compressedFrame);
         }
         pub fn GetOrCreateBuffer(allocator: std.mem.Allocator, size: usize) ![]u8 {
             return allocator.alloc(u8, size);
@@ -62,19 +53,22 @@ pub const Compression = struct {
         pub fn Decompress(allocator: std.mem.Allocator, fi: []const u8, offset: i32, length: i32) ![]u8 {
             var buffer: []u8 = &.{};
             const length1 = try DecompressAndSizeOffset(allocator, fi, offset, length, &buffer);
+            defer allocator.free(buffer);
             return ArrayConvert.ByteToByte(allocator, buffer, length1);
         }
     };
 };
 
-pub const CompressionZSTD = struct {
-    pub var reusableDecompressor: ?ZStdDecompressorImpl = null;
-};
-
 pub const ZStdDecompressorImpl = struct {
+    allocator_ptr: *const std.mem.Allocator,
     dCtx: *zstd.ZSTD_DCtx,
     pub fn Decompress(self: ZStdDecompressorImpl, output: []u8, input: []const u8) i32 {
         return @intCast(zstd.ZSTD_decompressDCtx(self.dCtx, output.ptr, output.len, input.ptr, input.len));
+    }
+    pub fn deinit(self: ZStdDecompressorImpl) void {
+        _ = zstd.ZSTD_freeDCtx(self.dCtx);
+        const allocator = self.allocator_ptr.*;
+        allocator.destroy(self.allocator_ptr);
     }
 };
 
@@ -82,9 +76,30 @@ pub const ZStdWrapper = struct {
     pub fn GetDecompressedSize(compressedFrame: []const u8) usize {
         return zstd.ZSTD_getFrameContentSize(compressedFrame.ptr, compressedFrame.len);
     }
-    pub fn CreateDecompressor() ZStdDecompressorImpl {
+    pub fn CreateDecompressor(allocator: std.mem.Allocator) !ZStdDecompressorImpl {
+        const allocator_ptr = try allocator.create(std.mem.Allocator);
+        allocator_ptr.* = allocator;
+        const ZstdAllocator = struct {
+            fn alloc(ctx: ?*anyopaque, size: usize) callconv(.C) ?*anyopaque {
+                const ally: *const std.mem.Allocator = @ptrCast(@alignCast(ctx.?));
+                const slice = ally.alignedAlloc(u8, 16, size + 16) catch return null;
+                @as(*usize, @ptrCast(slice.ptr)).* = slice.len;
+                return slice.ptr + 16;
+            }
+            fn free(ctx: ?*anyopaque, ptr: ?*anyopaque) callconv(.C) void {
+                const ally: *const std.mem.Allocator = @ptrCast(@alignCast(ctx.?));
+                const base = @as([*]u8, @ptrCast(ptr.?)) - 16;
+                const slice = base[0..@as(*const usize, @ptrCast(@alignCast(base))).*];
+                ally.free(slice);
+            }
+        };
         return ZStdDecompressorImpl{
-            .dCtx = zstd.ZSTD_createDCtx().?,
+            .allocator_ptr = allocator_ptr,
+            .dCtx = zstd.ZSTD_createDCtx_advanced(.{
+                .@"opaque" = allocator_ptr,
+                .customAlloc = ZstdAllocator.alloc,
+                .customFree = ZstdAllocator.free,
+            }).?,
         };
     }
 };

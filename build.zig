@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    zstd_translate_c.defineCMacroRaw("ZSTD_STATIC_LINKING_ONLY");
     const zstd_mod = b.createModule(.{
         .root_source_file = .{ .generated = &zstd_translate_c.output_file },
         .target = target,
