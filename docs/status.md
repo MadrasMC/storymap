@@ -17,7 +17,7 @@
 
 This is likely the only table we want to read. It contains `position` and `data` columns.
 
-Position is an u64 which parses into chunk coordinates with a Zig packed struct of the definition:
+`position` is a u64 which parses into chunk coordinates with a Zig packed struct of the definition:
 
 ```zig
 const Position = packed struct(u64) {
@@ -33,7 +33,7 @@ Chunk coordinates are /32 of block coordinates. So a chunk at (0, 0, 0) would co
 
 Chunk coordinates are absolute, and not relative to spawn. In-game coordinates are shifted by half the world size to make the spawn point the center of the world.
 
-The data column is a binary blob encoded as a Protobuf message. We've implemented part of the [Protobuf spec](../src/ProtoBuf.zig) to be able to parse chunks. Important to note that Protobuf messages are not tagged, so all we get is a list of fields. To get any further, we need more information on what each field is.
+The `data` column is a binary blob encoded as a Protobuf message. We've implemented part of the [Protobuf spec](../src/ProtoBuf.zig) to be able to parse chunks. Important to note that Protobuf messages are not tagged, so all we get is a list of fields. To get any further, we need more information on what each field is.
 
 Additional info from the Wiki [[🡕]](https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage):
 
@@ -49,10 +49,12 @@ Additional info from the Wiki [[🡕]](https://wiki.vintagestory.at/index.php/Mo
 
 From the chunks that we have dumped as ProtoBuf messages, we have a few observations:
 
--   There are more than the 7 field types that we expect from the above list.
--   Field type numbers are not contiguous.
+-   There are actually 8 field types, rather than the 7 we'd expect from the above list.
+-   Field type numbers are not contiguous. They are: 1, 2, 3, 6, 8, 12, 14, 16.
 -   We guess that unused field types are from past versions of the game.
+-   Field 6 and 8 can appear 0 or many times in the same chunk.
+-   Every other field type appears exactly once, even if it's empty.
 -   Field 12 is game version ("1.19.1", etc).
--   Field 6 and 8 can appear several times in the same chunk.
--   Each field 8 is a block entity. We've partially parsed this to retrieve the block entity type, position, and blockCode.
+-   Each field 8 is a block entity. We've partially parsed this enough to retrieve the block entity type, position, and blockCode. The rest seems like it could be moddata we do not need to parse.
 -   Based on the size alone, field 1 might be blocks.
+-   Changing one solid block in a chunk changes fields 1, 2, and 3.
