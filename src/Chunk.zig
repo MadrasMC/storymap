@@ -85,7 +85,7 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
             switch (msg.field_number) {
                 1, 16 => {
                     var dataBits: [][]i32 = &.{};
-                    var refCount: i32 = 0;
+                    var refCount: usize = 0;
                     const palette = try Compression.DecompressCombined(
                         allocator,
                         msg.data.LEN,

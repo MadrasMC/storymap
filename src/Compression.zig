@@ -7,14 +7,14 @@ pub const Compression = struct {
         allocator: std.mem.Allocator,
         blocksCompressed: []const u8,
         blocks: *[][]i32,
-        refCount: *i32,
+        refCount: *usize,
     ) !?[]i32 {
         var length1 = util.readI32(blocksCompressed);
         if (length1 == 0) return null;
-        var length2: i32 = 0;
+        var length2: usize = 0;
         const output = if (length1 < 0) b: {
             length1 *= -1;
-            length2 = @divTrunc(length1, 4);
+            length2 = @intCast(@divTrunc(length1, 4));
             if (length2 == 1) return null;
             const out = try allocator.alloc(i32, @intCast(length2));
             @memcpy(out, @as(
@@ -24,9 +24,9 @@ pub const Compression = struct {
             break :b out;
         } else b: {
             var buffer: []u8 = &.{};
-            length2 = @divTrunc(try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer), 4);
+            length2 = try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer) / 4;
             if (length2 == 1) return null;
-            const out = try allocator.alloc(i32, @intCast(length2));
+            const out = try allocator.alloc(i32, length2);
             @memcpy(out, @as([*]i32, @ptrCast(@alignCast(buffer.ptr)))[0..out.len]);
             break :b out;
         };
@@ -60,7 +60,7 @@ pub const Compression = struct {
             offset: i32,
             length: i32,
             buffer: *[]u8,
-        ) !i32 {
+        ) !usize {
             const compressedFrame = compressedData[@intCast(offset)..@intCast(offset + length)];
             const decompressedSize = zstd.ZSTD_getFrameContentSize(compressedFrame.ptr, compressedFrame.len);
             buffer.* = try allocator.alloc(u8, decompressedSize);
@@ -80,8 +80,8 @@ pub const Compression = struct {
 pub const ZStdWrapper = struct {
     allocator_ptr: *const std.mem.Allocator,
     dCtx: *zstd.ZSTD_DCtx,
-    pub fn Decompress(self: ZStdWrapper, output: []u8, input: []const u8) i32 {
-        return @intCast(zstd.ZSTD_decompressDCtx(self.dCtx, output.ptr, output.len, input.ptr, input.len));
+    pub fn Decompress(self: ZStdWrapper, output: []u8, input: []const u8) usize {
+        return zstd.ZSTD_decompressDCtx(self.dCtx, output.ptr, output.len, input.ptr, input.len);
     }
     pub fn deinit(self: ZStdWrapper) void {
         _ = zstd.ZSTD_freeDCtx(self.dCtx);
