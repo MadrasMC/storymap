@@ -2,6 +2,17 @@ const std = @import("std");
 const util = @import("./util.zig");
 const zstd = @import("zstd");
 
+pub const ArrayConvert = struct {
+    pub fn GetRoundedUpSize(value: usize) usize {
+        const num1 = value - 1;
+        const num2 = num1 | num1 >> 1;
+        const num3 = num2 | num2 >> 2;
+        const num4 = num3 | num3 >> 4;
+        const num5 = num4 | num4 >> 8;
+        return (num5 | num5 >> 16) + 1;
+    }
+};
+
 pub const Compression = struct {
     pub fn DecompressCombined(
         allocator: std.mem.Allocator,
@@ -16,7 +27,7 @@ pub const Compression = struct {
             length1 *= -1;
             length2 = @intCast(@divTrunc(length1, 4));
             if (length2 == 1) return null;
-            const out = try allocator.alloc(i32, @intCast(length2));
+            const out = try allocator.alloc(i32, ArrayConvert.GetRoundedUpSize(length2));
             @memcpy(out, @as(
                 [*]align(1) const i32,
                 @ptrCast(@alignCast(blocksCompressed.ptr + 4)),
@@ -26,14 +37,13 @@ pub const Compression = struct {
             var buffer: []u8 = &.{};
             length2 = try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer) / 4;
             if (length2 == 1) return null;
-            const out = try allocator.alloc(i32, length2);
+            const out = try allocator.alloc(i32, ArrayConvert.GetRoundedUpSize(length2));
             @memcpy(out, @as([*]i32, @ptrCast(@alignCast(buffer.ptr)))[0..out.len]);
             break :b out;
         };
         var count: usize = 0;
         var length3 = output.len;
-        // TODO: this is likely wrong
-        while ((length3 >> 1) > 0) : (length3 = length3 >> 1) count += 1;
+        while ((length3 >> 1) > 0) : (length3 >>= 1) count += 1;
         if (blocks.len == 0) blocks.* = try allocator.alloc([]i32, 15);
         for (blocks.*) |*block| block.* = &.{};
         const data = try Compression.Compression1.Decompress(
