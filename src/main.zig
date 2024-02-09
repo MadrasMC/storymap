@@ -1,5 +1,6 @@
 const std = @import("std");
-const sqlite = @import("sqlite");
+const DB = @import("sqlite.zig");
+const s = @import("sqlite3");
 const Chunk = @import("Chunk.zig");
 const ProtoBuf = @import("ProtoBuf.zig");
 const BlockEntity = @import("BlockEntity.zig");
@@ -22,7 +23,7 @@ pub fn main() !void {
     const dbPath = "sample.vcdbs";
     // const dbPath = "content/sample-one-block-spawn.vcdbs";
 
-    var db = try sqlite.Db.init(.{ .mode = sqlite.Db.Mode{ .File = dbPath }, .threading_mode = .MultiThread });
+    const db = try DB.init(dbPath, .{ .readonly = true });
     defer db.deinit();
 
     const positions = comptime [_]u64{
@@ -49,18 +50,14 @@ pub fn main() !void {
         query = std.fmt.comptimePrint("{s} ORDER BY position ASC;", .{query});
     }
 
-    var stmt = try db.prepare(query);
-    defer stmt.deinit();
+    const stmt = try db.prepare(query);
+    defer stmt.finalize();
 
-    const chunks = try stmt.all(struct {
-        position: u64,
-        data: []const u8,
-    }, allocator, .{}, .{});
-    defer allocator.free(chunks);
+    while (stmt.step()) {
+        const position = stmt.column(u64, 0);
+        const data = stmt.column([]const u8, 1);
 
-    for (chunks) |c| {
-        defer allocator.free(c.data);
-        const chunk = try Chunk.from(allocator, c.position, c.data);
+        const chunk = try Chunk.from(allocator, position, data);
         defer chunk.deinit();
 
         std.debug.print("{}\n", .{chunk});

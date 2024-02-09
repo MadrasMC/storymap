@@ -24,10 +24,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const sqlite = b.dependency("sqlite", .{
-        .target = target,
-        .optimize = optimize,
-    });
     const zstd = b.dependency("zstd", .{
         .target = target,
         .optimize = optimize,
@@ -80,29 +76,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const sqlite_lib = b.addStaticLibrary(.{
-        .name = "sqlite",
+    const sqlite3 = b.dependency("sqlite3", .{
         .target = target,
         .optimize = optimize,
     });
-    sqlite_lib.linkLibC();
-    sqlite_lib.addIncludePath(sqlite.path("c"));
-    sqlite_lib.addCSourceFile(.{
-        .file = sqlite.path("c/sqlite3.c"),
-        .flags = &.{"-std=c99"},
-    });
+    exe.root_module.addImport("sqlite3", sqlite3.module("sqlite3"));
+    exe.linkLibrary(sqlite3.artifact("sqlite3"));
 
-    const sqlite_mod = sqlite.module("sqlite");
-    sqlite_mod.addIncludePath(sqlite.path("c"));
-
-    exe.root_module.addImport("sqlite", sqlite_mod);
     exe.root_module.addImport("zstd", zstd_mod);
 
-    exe.linkLibrary(sqlite_lib);
     exe.linkLibrary(zstd_lib);
-
-    // links the bundled sqlite3, so leave this out if you link the system one
-    exe.linkLibrary(sqlite.artifact("sqlite"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

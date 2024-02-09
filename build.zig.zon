@@ -3,13 +3,13 @@
     .version = "0.1.0",
     .paths = .{ "src", "build.zig", "README.md", "LICENSE" },
     .dependencies = .{
-        .sqlite = .{
-            .url = "https://github.com/trgwii/zig-sqlite/archive/46ff878f1a580263f6b0eeb05f4d50fa8bd6439d.tar.gz",
-            .hash = "1220bcbe15d3d072d3dbb7a9912c971ce18754d0d012637aeebe7b6f0589fdcae0cd",
-        },
         .zstd = .{
             .url = "https://github.com/facebook/zstd/archive/refs/tags/v1.5.5.tar.gz",
             .hash = "122080def5adee28587f8aaa31f0f33133897c9ed88f4ecda1c9eef649d29df5c568",
+        },
+        .sqlite3 = .{
+            .url = "https://github.com/trgwii/sqlite3-zig/archive/refs/tags/3.45.1.tar.gz",
+            .hash = "12206fd5d357edb612d33481fb80939d41a7d02d08bc0555bdcfde7a7ed596b2c276",
         },
     },
 }
