@@ -76,6 +76,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const stb = b.dependency("stb", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const sqlite3 = b.dependency("sqlite3", .{
         .target = target,
         .optimize = optimize,
@@ -84,6 +89,7 @@ pub fn build(b: *std.Build) void {
     exe.linkLibrary(sqlite3.artifact("sqlite3"));
 
     exe.root_module.addImport("zstd", zstd_mod);
+    exe.root_module.addIncludePath(stb.path("."));
 
     exe.linkLibrary(zstd_lib);
 

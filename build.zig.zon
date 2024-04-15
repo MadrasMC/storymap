@@ -11,5 +11,9 @@
             .url = "https://github.com/trgwii/sqlite3-zig/archive/refs/tags/3.45.1.tar.gz",
             .hash = "12206fd5d357edb612d33481fb80939d41a7d02d08bc0555bdcfde7a7ed596b2c276",
         },
+        .stb = .{
+            .url = "https://github.com/nothings/stb/archive/ae721c50eaf761660b4f90cc590453cdb0c2acd0.tar.gz",
+            .hash = "1220619c06a947cfacce985293ff16994db6058f2369d3c2ffcf9da60d7caa8b2f9b",
+        },
     },
 }

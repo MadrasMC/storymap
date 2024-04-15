@@ -40,6 +40,9 @@ pub const Position = packed struct(u64) {
     pub fn position64(self: Position) u64 {
         return @bitCast(self);
     }
+    pub fn eql(self: Position, other: Position) bool {
+        return self.position64() == other.position64();
+    }
 };
 
 allocator: std.mem.Allocator,
@@ -129,23 +132,84 @@ pub fn format(value: Chunk, comptime fmt: []const u8, options: std.fmt.FormatOpt
     _ = fmt;
     _ = options;
     try writer.print("Chunk(x: {[x]}, z: {[z]}, y: {[y]}):\n", value.position);
-    if (value.blocks) |blocks| {
-        try writer.print("Blocks:\n", .{});
-        for (blocks, 0..) |block, i| if (block.len != 0) {
-            try writer.print("{}: {any}\n", .{ i, block });
-        };
-    }
-    try writer.print("Block palette: {any}\n\n", .{value.blockPalette});
-    _ = value.blockPalette;
-    if (value.liquids) |liquids| {
-        try writer.print("Liquids:\n", .{});
-        for (liquids, 0..) |block, i| if (block.len != 0) {
-            try writer.print("{}: {any}\n", .{ i, block });
-        };
-    }
+    try value.formatBlocks(writer);
+    try value.formatBlockPalette(writer);
+    try value.formatLiquids(writer);
     try writer.print("Liquid palette: {any}\n\n", .{value.liquidPalette});
     try writer.print("Block entities:\n", .{});
     for (value.blockEntities) |blockEntity| {
         try writer.print("{}\n", .{blockEntity});
     }
+}
+
+pub fn formatBlocks(value: Chunk, writer: anytype) !void {
+    if (value.blocks) |blocks| {
+        try writer.print("Blocks ({}):\n", .{blocks.len});
+        for (blocks, 0..) |block, i| if (block.len != 0) {
+            try writer.print("{} ({}): {{ ", .{ i, block.len });
+            var same: usize = 0;
+            var first = true;
+            for (block) |b| {
+                if (b == 0) {
+                    same += 1;
+                } else {
+                    if (same > 1) {
+                        try writer.print("{s}\x1b[30m{} x \x1b[32m0\x1b[0m", .{ if (first) "" else ", ", same });
+                        first = false;
+                        same = 0;
+                    }
+                    try writer.print("{s}\x1b[32m{}\x1b[0m", .{ if (first) "" else ", ", b });
+                    first = false;
+                }
+            }
+            if (same > 1) {
+                try writer.print("{s}\x1b[30m{} x \x1b[32m0\x1b[0m", .{ if (first) "" else ", ", same });
+                first = false;
+                same = 0;
+            }
+            try writer.print(" }}\n", .{});
+        };
+    }
+}
+
+pub fn formatLiquids(value: Chunk, writer: anytype) !void {
+    if (value.liquids) |liquids| {
+        try writer.print("Liquids ({}):\n", .{liquids.len});
+        for (liquids, 0..) |block, i| if (block.len != 0) {
+            try writer.print("{} ({}): {{ ", .{ i, block.len });
+            var same: usize = 0;
+            var first = true;
+            for (block) |b| {
+                if (b == 0) {
+                    same += 1;
+                } else {
+                    if (same > 1) {
+                        try writer.print("{s}\x1b[30m{} x \x1b[32m0\x1b[0m", .{ if (first) "" else ", ", same });
+                        first = false;
+                        same = 0;
+                    }
+                    try writer.print("{s}\x1b[32m{}\x1b[0m", .{ if (first) "" else ", ", b });
+                    first = false;
+                }
+            }
+            if (same > 1) {
+                try writer.print("{s}\x1b[30m{} x \x1b[32m0\x1b[0m", .{ if (first) "" else ", ", same });
+                first = false;
+                same = 0;
+            }
+            try writer.print(" }}\n", .{});
+        };
+    }
+}
+
+pub fn formatBlockPalette(value: Chunk, writer: anytype) !void {
+    try writer.print("Block palette: ", .{});
+    try writer.print("{{ ", .{});
+    var first = true;
+    if (value.blockPalette) |palette| for (palette) |p| {
+        try writer.print("{s}\x1b[32m{}\x1b[0m", .{ if (first) "" else ", ", p });
+        first = false;
+    };
+    try writer.print(" }}", .{});
+    try writer.print("\n\n", .{});
 }

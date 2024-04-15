@@ -36,6 +36,7 @@ pub const Compression = struct {
         } else b: {
             var buffer: []u8 = &.{};
             length2 = try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer) / 4;
+            defer allocator.free(buffer);
             if (length2 == 1) return null;
             const out = try allocator.alloc(i32, ArrayConvert.GetRoundedUpSize(length2));
             @memcpy(out, @as([*]i32, @ptrCast(@alignCast(buffer.ptr)))[0..out.len]);
