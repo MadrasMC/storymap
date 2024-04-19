@@ -10,6 +10,7 @@ pub const MagicNumbers = struct {
     .ServerChunkSize = 32,
 };
 
+// NOTE: To keep in sync with the server per game version
 pub const fieldNames = [_][]const u8{
     "<unused>",
     "compressed_blocks",

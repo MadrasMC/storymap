@@ -27,26 +27,11 @@ pub fn main() !void {
     //     else => return error.TooManyArgs,
     // };
 
-    const dbPath = "sample.vcdbs";
-    // const dbPath = "content/sample-one-block-spawn.vcdbs";
+    // const dbPath = "sample.vcdbs";
+    const dbPath = "content/sample-one-block-spawn.vcdbs";
 
     const db = try DB.init(dbPath, .{ .readonly = true });
     defer db.deinit();
-
-    const image = .{
-        .width = 9,
-        .height = 9,
-    };
-
-    var positions = [_]u64{0} ** (image.height * image.width * 11);
-
-    for (16005 - image.height / 2..16005 + image.height / 2 + 1) |x| {
-        for (16004 - image.width / 2..16004 + image.width / 2 + 1) |z| {
-            for (0..11) |y| {
-                positions[(x - (16005 - image.height / 2)) * (z - (16004 - image.width / 2)) * y] = Chunk.Position.position64(.{ .x = @truncate(x), .y = @truncate(y), .z = @truncate(z) });
-            }
-        }
-    }
 
     // spawn chunk of sample.vcdbs
     _ = Chunk.Position.position64(.{ .x = 15997, .y = 3, .z = 16000 });
@@ -72,7 +57,49 @@ pub fn main() !void {
     const stmt = try db.prepare(query);
     defer stmt.finalize();
 
-    var pixel_data = [_]u32{0xFF000000} ** (1024 * image.width * image.height);
+    const image = .{
+        .width = 9,
+        .height = 9,
+    };
+
+    const centre = .{
+        .x = 15996,
+        .y = 7,
+        .z = 15995,
+    };
+
+    const chunk_start = Chunk.Position{
+        .x = centre.x - image.height / 2,
+        .y = 0,
+        .z = centre.z - image.width / 2,
+    };
+
+    const chunk_end = Chunk.Position{
+        .x = centre.x + image.height / 2,
+        .y = 10,
+        .z = centre.z + image.width / 2,
+    };
+
+    std.debug.print("\nRange: ({}, {}, {}) to ({}, {}, {})\n", .{ chunk_start.x, chunk_start.y, chunk_start.z, chunk_end.x, chunk_end.y, chunk_end.z });
+
+    var positions = [_]u128{0} ** (image.height * image.width * 11);
+
+    for (chunk_start.x..chunk_end.x) |x| {
+        for (chunk_end.z..chunk_end.z) |z| {
+            for (0..11) |y| {
+                positions[(x - (chunk_start.x)) * (z - (chunk_start.z)) * y] = Chunk.Position.position64(.{ .x = @truncate(x), .y = @truncate(y), .z = @truncate(z) });
+            }
+        }
+    }
+
+    var pixel_data: [(image.height) * 32][(image.width) * 32]u32 = undefined;
+    for (&pixel_data) |*z| for (z) |*x| {
+        x.* = 0xFF000000;
+    };
+
+    var highest_chunk = Chunk.Position{ .x = 0, .y = 0, .z = 0 };
+    var lowest_chunk = Chunk.Position{ .x = 0, .y = 0, .z = 0 };
+    var highest_y: u64 = 0;
 
     while (stmt.step()) {
         const position = stmt.column(u64, 0);
@@ -81,32 +108,75 @@ pub fn main() !void {
         const chunk = try Chunk.from(allocator, position, data);
         defer chunk.deinit();
 
+        if (chunk.position.x > highest_chunk.x and chunk.position.z > highest_chunk.z and chunk.position.y > highest_chunk.y) {
+            highest_chunk = chunk.position;
+        }
+
+        if (chunk.position.x < lowest_chunk.x and chunk.position.z < lowest_chunk.z and chunk.position.y < lowest_chunk.y) {
+            lowest_chunk = chunk.position;
+        }
+
         // std.debug.print("{}\n", .{chunk});
 
-        if (within(chunk.position.x, 16005 - image.height / 2, 16005 + image.height / 2) and
-            within(chunk.position.z, 16004 - image.width / 2, 16004 + image.width / 2))
+        if (within(chunk.position.x, chunk_start.x, chunk_end.x) and
+            within(chunk.position.z, chunk_start.z, chunk_end.z))
         {
             if (chunk.blocks) |blocks| if (blocks.len > 0) for (blocks, 0..) |layer, height| for (layer, 0..) |block, i| {
-                const O = .{
-                    .x = @as(u32, chunk.position.x) - (16005 - image.height / 2),
-                    .z = @as(u32, chunk.position.z) - (16004 - image.width / 2),
-                    .y = @as(u32, chunk.position.y),
+                if (block == 0) continue;
+
+                const Chunk64 = struct {
+                    x: u64,
+                    z: u64,
+                    y: u64,
                 };
-                const pixel = &pixel_data[(O.x * 32 * 32 * image.width) + (O.z * 32) + ((i / 32) * 32 * image.width) + (i % 32)];
-                const brightnessF: f64 = @as(f64, @floatFromInt((O.y + 1) * (height + 1))) / 25;
-                const C = .{
-                    .r = 0,
-                    .g = 8,
-                    .b = 16,
+
+                // chunk position within the image
+                const chunk_normalised = Chunk64{
+                    .x = chunk.position.x - chunk_start.x,
+                    .z = chunk.position.z - chunk_start.z,
+                    .y = chunk.position.y,
                 };
+
+                // block coords within this chunk
+                const chunk_block = Chunk64{
+                    .x = (i % 32),
+                    .z = (i / 32),
+                    .y = height,
+                };
+
+                // block coords within the image
+                const img_block = Chunk64{
+                    .x = chunk_normalised.x * 32 + chunk_block.x,
+                    .z = chunk_normalised.z * 32 + chunk_block.z,
+                    .y = chunk_normalised.y * 32 + chunk_block.y,
+                };
+
+                if (img_block.y > highest_y) {
+                    highest_y = img_block.y;
+                }
+
+                const pixel = &pixel_data[img_block.z][img_block.x];
+
+                const shift = .{
+                    .r = 0, //  0000XX; shift left by 0 bits
+                    .g = 8, //  00XX00; shift left by 8 bits
+                    .b = 16, // XX0000; shift left by 16 bits
+                };
+
+                // 132 is the highest non-air block we know of, so divide by it to get a value between 0 and 1
+                const brightnessF: f64 = @as(f64, @floatFromInt(img_block.y)) / 132;
                 const brightness: u8 = @intFromFloat(brightnessF * 255);
-                const new_color = 0xFF000000 + (@as(u32, brightness) << C.g);
-                if (block != 0 and @as(u8, @intCast((pixel.* >> C.g) & 0xFF)) < brightness) {
+                const new_color = 0xFF000000 + (@as(u32, brightness) << shift.g);
+                if (block != 0 and @as(u8, @intCast((pixel.* >> shift.g) & 0xFF)) < brightness) {
                     pixel.* = new_color;
                 }
             };
         }
     }
+
+    std.debug.print("Highest chunk: ({}, {}, {})\n", .{ highest_chunk.x, highest_chunk.y, highest_chunk.z });
+    std.debug.print("Lowest chunk: ({}, {}, {})\n", .{ lowest_chunk.x, lowest_chunk.y, lowest_chunk.z });
+    std.debug.print("Highest y: {}\n", .{highest_y});
 
     var filename: [128]u8 = undefined;
     _ = try std.fmt.bufPrintZ(&filename, "out.png", .{});
