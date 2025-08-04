@@ -16,12 +16,14 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "mapstory",
+        .name = "storymap",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const zstd = b.dependency("zstd", .{
@@ -29,10 +31,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const zstd_lib = b.addStaticLibrary(.{
+    const zstd_lib = b.addLibrary(.{
         .name = "zstd",
-        .target = target,
-        .optimize = .ReleaseFast, // UB gets hit inside the lib in Debug / Safe, let's just ignore that
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = .ReleaseFast, // UB gets hit inside the lib in Debug / Safe, let's just ignore that
+        }),
     });
     zstd_lib.linkLibC();
     zstd_lib.addCSourceFiles(.{
@@ -71,7 +75,7 @@ pub fn build(b: *std.Build) void {
     });
     zstd_translate_c.defineCMacroRaw("ZSTD_STATIC_LINKING_ONLY");
     const zstd_mod = b.createModule(.{
-        .root_source_file = .{ .generated = &zstd_translate_c.output_file },
+        .root_source_file = .{ .generated = .{ .file = &zstd_translate_c.output_file } },
         .target = target,
         .optimize = optimize,
     });
@@ -124,9 +128,11 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);

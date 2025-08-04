@@ -5,11 +5,6 @@ const Protobuf = @import("./ProtoBuf.zig");
 const Compression = @import("./Compression.zig").Compression;
 const BlockEntity = @import("./BlockEntity.zig");
 
-// these should really be read from "servermagicnumbers.json" in the server's Data directory
-pub const MagicNumbers = struct {
-    .ServerChunkSize = 32,
-};
-
 // NOTE: To keep in sync with the server per game version
 pub const fieldNames = [_][]const u8{
     "<unused>",
@@ -48,9 +43,9 @@ pub const Position = packed struct(u64) {
 
 allocator: std.mem.Allocator,
 position: Position,
-blocks: ?[][]const i32 = null,
+blocks: ?[]const []const i32 = null,
 blockPalette: ?[]const i32 = null,
-liquids: ?[][]const i32 = null,
+liquids: ?[]const []const i32 = null,
 liquidPalette: ?[]const i32 = null,
 blockEntities: []BlockEntity,
 

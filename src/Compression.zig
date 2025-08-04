@@ -104,13 +104,13 @@ pub const ZStdWrapper = struct {
         const allocator_ptr = try allocator.create(std.mem.Allocator);
         allocator_ptr.* = allocator;
         const ZstdAllocator = struct {
-            fn alloc(ctx: ?*anyopaque, size: usize) callconv(.C) ?*anyopaque {
+            fn alloc(ctx: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
                 const ally: *const std.mem.Allocator = @ptrCast(@alignCast(ctx.?));
-                const slice = ally.alignedAlloc(u8, 16, size + 16) catch return null;
+                const slice = ally.alignedAlloc(u8, .@"16", size + 16) catch return null;
                 @as(*usize, @ptrCast(slice.ptr)).* = slice.len;
                 return slice.ptr + 16;
             }
-            fn free(ctx: ?*anyopaque, ptr: ?*anyopaque) callconv(.C) void {
+            fn free(ctx: ?*anyopaque, ptr: ?*anyopaque) callconv(.c) void {
                 const ally: *const std.mem.Allocator = @ptrCast(@alignCast(ctx.?));
                 const base = @as([*]u8, @ptrCast(ptr.?)) - 16;
                 const slice = base[0..@as(*const usize, @ptrCast(@alignCast(base))).*];

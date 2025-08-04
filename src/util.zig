@@ -31,4 +31,3 @@ pub fn byteToIntArrays(allocator: std.mem.Allocator, data: []const u8, output: [
         }
     }
 }
-

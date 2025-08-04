@@ -1,4 +1,4 @@
-# mapstory
+# storymap
 
 High Performance Vintage Story Map Renderer ⚡️
 
