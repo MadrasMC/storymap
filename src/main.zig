@@ -26,11 +26,20 @@ pub fn main(init: std.process.Init) !void {
     const dbPath = args[1];
     const outPath = if (args.len == 3) args[2] else "out.png";
 
-    const db = DB.init(dbPath, .{ .readonly = true }) catch |err| {
+    // Never write next to the save: it may be in the game's own Saves folder.
+    const db = DB.initImmutable(allocator, dbPath) catch |err| {
         std.debug.print("storymap: can't open {s} ({s})\n", .{ dbPath, @errorName(err) });
         std.process.exit(1);
     };
     defer db.deinit();
+
+    // The immutable open ignores the save's -wal file. A non-empty one holds changes the
+    // game hasn't written into the save yet, because it's still running or it crashed.
+    const walPath = try std.mem.concat(allocator, u8, &.{ dbPath, "-wal" });
+    defer allocator.free(walPath);
+    if (std.Io.Dir.cwd().statFile(init.io, walPath, .{})) |wal| {
+        if (wal.size > 0) std.debug.print("storymap: {s} has unsaved changes (is the game running?); they won't be on the map\n", .{dbPath});
+    } else |_| {}
 
     // spawn chunk of sample.vcdbs
     _ = Chunk.Position.position64(.{ .x = 15997, .y = 3, .z = 16000 });
@@ -126,4 +135,5 @@ test {
     _ = ProtoBuf;
     _ = VS;
     _ = Chunk;
+    _ = DB;
 }
