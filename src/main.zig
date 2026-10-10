@@ -7,22 +7,29 @@ const BlockEntity = @import("BlockEntity.zig");
 const VS = @import("Compression.zig");
 const stb = @import("stb_image_write");
 
+const usage =
+    \\usage: storymap <save.vcdbs> [output.png]
+    \\
+    \\Renders a top-down heightmap of a Vintage Story save to output.png,
+    \\or out.png when no output path is given.
+    \\
+;
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
-    // const args = try std.process.argsAlloc(allocator);
-    // defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len < 2 or args.len > 3) {
+        std.debug.print(usage, .{});
+        std.process.exit(2);
+    }
+    const dbPath = args[1];
+    const outPath = if (args.len == 3) args[2] else "out.png";
 
-    // const dbPath = switch (args.len) {
-    //     0, 1 => return error.NotEnoughArgs,
-    //     2 => args[1],
-    //     else => return error.TooManyArgs,
-    // };
-
-    // const dbPath = "sample.vcdbs";
-    const dbPath = "content/sample-one-block-spawn.vcdbs";
-
-    const db = try DB.init(dbPath, .{ .readonly = true });
+    const db = DB.init(dbPath, .{ .readonly = true }) catch |err| {
+        std.debug.print("storymap: can't open {s} ({s})\n", .{ dbPath, @errorName(err) });
+        std.process.exit(1);
+    };
     defer db.deinit();
 
     // spawn chunk of sample.vcdbs
@@ -36,11 +43,15 @@ pub fn main(init: std.process.Init) !void {
 
     // The image covers every chunk in the save. Chunk x is the low 27 bits of
     // `position` and z the next 27 (see Chunk.Position).
-    const bounds = try db.prepare(
+    const bounds = db.prepare(
         \\SELECT MIN(position & 134217727), MAX(position & 134217727),
         \\       MIN((position >> 27) & 134217727), MAX((position >> 27) & 134217727)
         \\FROM chunk;
-    );
+    ) catch |err| {
+        // SQLite opens any file lazily, so this first query is where a wrong file shows up.
+        std.debug.print("storymap: {s} isn't a Vintage Story save ({s})\n", .{ dbPath, @errorName(err) });
+        std.process.exit(1);
+    };
     defer bounds.finalize();
     if (!bounds.step()) return error.NoChunks;
     const min_x: usize = @intCast(bounds.column(u64, 0));
@@ -106,7 +117,7 @@ pub fn main(init: std.process.Init) !void {
         pixel.* = 0xFF000000 | (shade << 16) | (shade << 8) | shade;
     }
 
-    if (stb.stbi_write_png("out.png", @intCast(width), @intCast(height), 4, pixels.ptr, @intCast(width * @sizeOf(u32))) == 0) {
+    if (stb.stbi_write_png(outPath, @intCast(width), @intCast(height), 4, pixels.ptr, @intCast(width * @sizeOf(u32))) == 0) {
         return error.WritePngFailed;
     }
 }

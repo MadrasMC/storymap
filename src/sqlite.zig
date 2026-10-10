@@ -34,6 +34,7 @@ pub const OpenFlags = packed struct(c_int) {
 pub const OpenError = error{
     misuse,
     nomem,
+    cantopen,
 };
 
 pub fn init(filename: [*:0]const u8, flags: OpenFlags) !DB {
@@ -47,6 +48,7 @@ pub fn init(filename: [*:0]const u8, flags: OpenFlags) !DB {
         c.SQLITE_OK => .{ .db = db.? },
         c.SQLITE_NOMEM => OpenError.nomem,
         c.SQLITE_MISUSE => OpenError.misuse,
+        c.SQLITE_CANTOPEN => OpenError.cantopen,
         else => |rc| std.debug.panic(
             \\[sqlite3_open_v2]: Unexpected result code: {}
             \\  (See https://sqlite.org/rescode.html)
@@ -95,6 +97,7 @@ pub const PrepareError = error{
     toobig,
     misuse,
     locked_sharedcache,
+    notadb,
 };
 
 pub fn prepare(self: DB, sql: []const u8) PrepareError!Stmt {
@@ -113,6 +116,7 @@ pub fn prepare(self: DB, sql: []const u8) PrepareError!Stmt {
         c.SQLITE_TOOBIG => PrepareError.toobig,
         c.SQLITE_MISUSE => PrepareError.misuse,
         c.SQLITE_LOCKED_SHAREDCACHE => PrepareError.locked_sharedcache,
+        c.SQLITE_NOTADB => PrepareError.notadb,
         else => |rc| std.debug.panic(
             \\[sqlite3_prepare_v2]: Unexpected result code: {}
             \\  (See https://sqlite.org/rescode.html)
