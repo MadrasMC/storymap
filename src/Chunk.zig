@@ -76,7 +76,8 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
     var _liquids: ?[][]i32 = null;
     var _liquidPalette: ?[]const i32 = null;
 
-    var blockEntitiesArray = std.ArrayList(BlockEntity).init(allocator);
+    var blockEntitiesArray: std.ArrayList(BlockEntity) = .empty;
+    errdefer blockEntitiesArray.deinit(allocator);
 
     var parser = Protobuf{ .buf = data };
     while (parser.next()) |msg| {
@@ -101,7 +102,7 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
                     }
                 },
                 8 => {
-                    try blockEntitiesArray.append(BlockEntity.from(msg.data.LEN));
+                    try blockEntitiesArray.append(allocator, BlockEntity.from(msg.data.LEN));
                 },
                 12 => {
                     // version, ignore
@@ -120,13 +121,11 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
         .blockPalette = _blockPalette,
         .liquids = _liquids,
         .liquidPalette = _liquidPalette,
-        .blockEntities = try blockEntitiesArray.toOwnedSlice(),
+        .blockEntities = try blockEntitiesArray.toOwnedSlice(allocator),
     };
 }
 
-pub fn format(value: Chunk, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-    _ = fmt;
-    _ = options;
+pub fn format(value: Chunk, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     try writer.print("Chunk(x: {[x]}, z: {[z]}, y: {[y]}):\n", value.position);
     try value.formatBlocks(writer);
     try value.formatBlockPalette(writer);
@@ -138,7 +137,7 @@ pub fn format(value: Chunk, comptime fmt: []const u8, options: std.fmt.FormatOpt
     }
 }
 
-pub fn formatBlocks(value: Chunk, writer: anytype) !void {
+pub fn formatBlocks(value: Chunk, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     if (value.blocks) |blocks| {
         try writer.print("Blocks ({}):\n", .{blocks.len});
         for (blocks, 0..) |block, i| if (block.len != 0) {
@@ -168,7 +167,7 @@ pub fn formatBlocks(value: Chunk, writer: anytype) !void {
     }
 }
 
-pub fn formatLiquids(value: Chunk, writer: anytype) !void {
+pub fn formatLiquids(value: Chunk, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     if (value.liquids) |liquids| {
         try writer.print("Liquids ({}):\n", .{liquids.len});
         for (liquids, 0..) |block, i| if (block.len != 0) {
@@ -198,7 +197,7 @@ pub fn formatLiquids(value: Chunk, writer: anytype) !void {
     }
 }
 
-pub fn formatBlockPalette(value: Chunk, writer: anytype) !void {
+pub fn formatBlockPalette(value: Chunk, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     try writer.print("Block palette: ", .{});
     try writer.print("{{ ", .{});
     var first = true;

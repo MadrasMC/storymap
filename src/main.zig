@@ -5,18 +5,10 @@ const Chunk = @import("Chunk.zig");
 const ProtoBuf = @import("ProtoBuf.zig");
 const BlockEntity = @import("BlockEntity.zig");
 const VS = @import("Compression.zig");
-const stb = @cImport({
-    @cDefine("STB_IMAGE_IMPLEMENTATION", {});
-    @cInclude("stb_image.h");
-    @cDefine("STB_IMAGE_WRITE_IMPLEMENTATION", {});
-    @cDefine("STB_IMAGE_WRITE_STATIC", {});
-    @cInclude("stb_image_write.h");
-});
+const stb = @import("stb_image_write");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     // const args = try std.process.argsAlloc(allocator);
     // defer std.process.argsFree(allocator, args);
@@ -82,7 +74,7 @@ pub fn main() !void {
 
     std.debug.print("\nRange: ({}, {}, {}) to ({}, {}, {})\n", .{ chunk_start.x, chunk_start.y, chunk_start.z, chunk_end.x, chunk_end.y, chunk_end.z });
 
-    var positions = [_]u128{0} ** (image.height * image.width * 11);
+    var positions: [image.height * image.width * 11]u128 = @splat(0);
 
     for (chunk_start.x..chunk_end.x) |x| {
         for (chunk_end.z..chunk_end.z) |z| {
@@ -116,7 +108,7 @@ pub fn main() !void {
             lowest_chunk = chunk.position;
         }
 
-        // std.debug.print("{}\n", .{chunk});
+        // std.debug.print("{f}\n", .{chunk});
 
         if (within(chunk.position.x, chunk_start.x, chunk_end.x) and
             within(chunk.position.z, chunk_start.z, chunk_end.z))
@@ -178,11 +170,13 @@ pub fn main() !void {
     std.debug.print("Lowest chunk: ({}, {}, {})\n", .{ lowest_chunk.x, lowest_chunk.y, lowest_chunk.z });
     std.debug.print("Highest y: {}\n", .{highest_y});
 
-    var filename: [128]u8 = undefined;
-    _ = try std.fmt.bufPrintZ(&filename, "out.png", .{});
-    std.debug.assert(stb.stbi_write_png(&filename, 32 * image.width, 32 * image.width, 4, &pixel_data, 32 * image.width * @sizeOf(u32)) != 0);
+    std.debug.assert(stb.stbi_write_png("out.png", 32 * image.width, 32 * image.width, 4, &pixel_data, 32 * image.width * @sizeOf(u32)) != 0);
 }
 
 fn within(x: anytype, min: anytype, max: anytype) bool {
     return x >= min and x <= max;
+}
+
+test {
+    _ = ProtoBuf;
 }

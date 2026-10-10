@@ -112,8 +112,8 @@ pub const ZStdWrapper = struct {
             }
             fn free(ctx: ?*anyopaque, ptr: ?*anyopaque) callconv(.c) void {
                 const ally: *const std.mem.Allocator = @ptrCast(@alignCast(ctx.?));
-                const base = @as([*]u8, @ptrCast(ptr.?)) - 16;
-                const slice = base[0..@as(*const usize, @ptrCast(@alignCast(base))).*];
+                const base: [*]align(16) u8 = @alignCast(@as([*]u8, @ptrCast(ptr.?)) - 16);
+                const slice = base[0..@as(*const usize, @ptrCast(base)).*];
                 ally.free(slice);
             }
         };

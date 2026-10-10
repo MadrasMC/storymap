@@ -2,19 +2,20 @@
     .name = .storymap,
     .fingerprint = 0x5fb12fbd82e2c8a3,
     .version = "0.1.0",
+    .minimum_zig_version = "0.17.0",
     .paths = .{ "src", "build.zig", "README.md", "LICENSE" },
     .dependencies = .{
         .zstd = .{
             .url = "https://github.com/facebook/zstd/archive/refs/tags/v1.5.5.zip",
-            .hash = "122098744a00a7030c2cb95cfaa148240e28499ca1a6ebde1279837ffef527cca7b7",
+            .hash = "N-V-__8AAA5beQCYdEoApwMMLLlc-qFIJA4oSZyhpuveEnmD",
         },
         .sqlite3 = .{
-            .url = "https://github.com/trgwii/sqlite3-zig/archive/refs/tags/3.50.4.tar.gz",
-            .hash = "1220a463102429634d02499e31e6531cfb1d32f644feb6170ea262fe794e2293a39c",
+            .url = "https://sqlite.org/2025/sqlite-amalgamation-3500400.zip",
+            .hash = "N-V-__8AAHCbqABM_X5RTjbDBDBWErxZE8tJzmtEnLOLRHGx",
         },
         .stb = .{
             .url = "https://github.com/nothings/stb/archive/ae721c50eaf761660b4f90cc590453cdb0c2acd0.tar.gz",
-            .hash = "1220619c06a947cfacce985293ff16994db6058f2369d3c2ffcf9da60d7caa8b2f9b",
+            .hash = "N-V-__8AADb7TQBhnAapR8-szphSk_8WmU22BY8jadPC_8-d",
         },
     },
 }
