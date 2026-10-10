@@ -1,75 +1,44 @@
+//! One block entity (a chunk's field 8 entry): its class name, then a tree attribute.
+//! See docs/save-format/README.md §5.
 const BlockEntity = @This();
 
 const std = @import("std");
-const util = @import("./util.zig");
-
-const readU32 = util.readU32;
+const TreeAttribute = @import("TreeAttribute.zig");
 
 const Position = struct {
-    x: u32,
-    y: u32,
-    z: u32,
+    x: i32,
+    y: i32,
+    z: i32,
 };
 
 class: []const u8,
+/// Absolute block coordinates.
 position: Position,
 blockCode: []const u8,
+attributes: TreeAttribute,
 
-pub fn from(buf: []const u8) BlockEntity {
-    var cur: usize = 0;
-
-    const classLen = buf[0];
-    const class = buf[1 .. 1 + classLen];
-    cur = 1 + classLen;
-
-    // ignore "1", "4" for "posx" length, and "posx"
-    cur += 1 + 1 + 4;
-
-    const posx = readU32(buf[cur..]);
-    cur += 4;
-
-    // ignore "1", "4" for "posy" length, and "posy"
-    cur += 1 + 1 + 4;
-
-    const posy = readU32(buf[cur..]);
-    cur += 4;
-
-    // ignore "1", "4" for "posz" length, and "posz"
-    cur += 1 + 1 + 4;
-
-    const posz = readU32(buf[cur..]);
-    cur += 4;
-
-    const position = Position{ .x = posx, .y = posy, .z = posz };
-
-    if (!std.mem.eql(u8, buf[cur .. cur + 2], ([_]u8{ 0x05, 0x09 })[0..2])) {
-        var buffer: [1024]u8 = undefined;
-        @panic(std.fmt.bufPrint(&buffer, "expected 0x05 0x09, got {x} at pos {d}", .{ buf[cur .. cur + 2], cur }) catch unreachable);
-    }
-
-    // ignore next two bytes (I don't know what this is, but it seems to be always 0x5 followed by 0x09)
-    cur += 2;
-
-    if (!std.mem.eql(u8, buf[cur .. cur + 9], "blockCode")) {
-        var buffer: [1024]u8 = undefined;
-        @panic(std.fmt.bufPrint(&buffer, "expected 'blockCode', got {x} at pos {d}", .{ buf[cur .. cur + 9], cur }) catch unreachable);
-    }
-
-    cur += 9;
-
-    const blockCodeLen = buf[cur];
-    cur += 1;
-
-    const blockCode = buf[cur .. cur + blockCodeLen];
-    cur += blockCodeLen;
-
+/// Everything is copied into `arena`, so the result outlives `bytes`.
+pub fn parse(arena: std.mem.Allocator, bytes: []const u8) !BlockEntity {
+    var reader: TreeAttribute.Reader = .{ .bytes = bytes };
+    const class = try reader.string(arena);
+    const attributes = try TreeAttribute.parse(arena, &reader);
+    if (reader.pos != bytes.len) return error.TrailingData;
     return .{
         .class = class,
-        .position = position,
-        .blockCode = blockCode,
+        .position = .{
+            .x = attributes.getInt("posx") orelse return error.MissingPosition,
+            .y = attributes.getInt("posy") orelse return error.MissingPosition,
+            .z = attributes.getInt("posz") orelse return error.MissingPosition,
+        },
+        .blockCode = attributes.getString("blockCode") orelse return error.MissingBlockCode,
+        .attributes = attributes,
     };
 }
 
 pub fn format(value: BlockEntity, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     try writer.print("BlockEntity({s} ({s}) [x: {}, z: {}, y: {}])", .{ value.blockCode, value.class, value.position.x, value.position.z, value.position.y });
+}
+
+test {
+    _ = TreeAttribute;
 }

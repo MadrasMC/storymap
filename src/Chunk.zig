@@ -49,6 +49,8 @@ blockPalette: ?[]const i32 = null,
 liquids: ?[]const []const i32 = null,
 liquidPalette: ?[]const i32 = null,
 blockEntities: []BlockEntity,
+/// Owns `blockEntities` and everything in them.
+blockEntityArena: std.heap.ArenaAllocator,
 
 /// Returns the block id at chunk-local (x, y, z). 0 is air.
 ///
@@ -67,6 +69,10 @@ pub fn getBlock(self: Chunk, x: u5, y: u5, z: u5) i32 {
     return palette[index];
 }
 
+test {
+    _ = BlockEntity;
+}
+
 test getBlock {
     // palette index 3 (0b11) at (1, 2, 3): block 2145, word 67, bit 1, set in both planes
     // palette index 2 (0b10) at (0, 0, 0): block 0, word 0, bit 0, set in plane 1 only
@@ -81,6 +87,7 @@ test getBlock {
         .blocks = &.{ &plane0, &plane1 },
         .blockPalette = &.{ 0, 5, 7, 9 },
         .blockEntities = &.{},
+        .blockEntityArena = .init(std.testing.allocator),
     };
     try std.testing.expectEqual(9, chunk.getBlock(1, 2, 3));
     try std.testing.expectEqual(7, chunk.getBlock(0, 0, 0));
@@ -104,7 +111,7 @@ pub fn deinit(self: Chunk) void {
     }
     if (self.blockPalette) |blockPalette| allocator.free(blockPalette);
     if (self.liquidPalette) |liquidPalette| allocator.free(liquidPalette);
-    allocator.free(self.blockEntities);
+    self.blockEntityArena.deinit();
 }
 
 pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chunk {
@@ -114,8 +121,10 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
     var _liquids: ?[][]i32 = null;
     var _liquidPalette: ?[]const i32 = null;
 
+    var blockEntityArena: std.heap.ArenaAllocator = .init(allocator);
+    errdefer blockEntityArena.deinit();
+    const arena = blockEntityArena.allocator();
     var blockEntitiesArray: std.ArrayList(BlockEntity) = .empty;
-    errdefer blockEntitiesArray.deinit(allocator);
 
     var parser = Protobuf{ .buf = data };
     while (parser.next()) |msg| {
@@ -140,7 +149,13 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
                     }
                 },
                 8 => {
-                    try blockEntitiesArray.append(allocator, BlockEntity.from(msg.data.LEN));
+                    // One unreadable block entity shouldn't stop the whole map.
+                    const blockEntity = BlockEntity.parse(arena, msg.data.LEN) catch |err| {
+                        const pos: Position = @bitCast(position);
+                        std.log.warn("chunk ({}, {}, {}): skipping a block entity ({s})", .{ pos.x, pos.y, pos.z, @errorName(err) });
+                        continue;
+                    };
+                    try blockEntitiesArray.append(arena, blockEntity);
                 },
                 12 => {
                     // version, ignore
@@ -159,7 +174,8 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
         .blockPalette = _blockPalette,
         .liquids = _liquids,
         .liquidPalette = _liquidPalette,
-        .blockEntities = try blockEntitiesArray.toOwnedSlice(allocator),
+        .blockEntities = try blockEntitiesArray.toOwnedSlice(arena),
+        .blockEntityArena = blockEntityArena,
     };
 }
 

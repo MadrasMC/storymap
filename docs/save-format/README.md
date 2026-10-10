@@ -187,7 +187,7 @@ A tree is a list of entries `[u8 type id][string key][value]`, ended by a single
 | 15 | long array | `i32 count`, `i64`s |
 | 16 | bool array | `i32 count`, `u8`s |
 
-Every block entity in the sample starts with `posx`, `posy`, `posz` (int, absolute block coordinates) and `blockCode` (string). storymap's [`src/BlockEntity.zig`](../../src/BlockEntity.zig) currently reads just those by hard-coded offsets.
+Every block entity in the sample starts with `posx`, `posy`, `posz` (int, absolute block coordinates) and `blockCode` (string). storymap parses the full format in [`src/TreeAttribute.zig`](../../src/TreeAttribute.zig) and [`src/BlockEntity.zig`](../../src/BlockEntity.zig); parsing the sample with it gives the same counts as the Python check above.
 
 Classes in the sample: MicroBlock 8,343 · Generic 4,364 · BerryBush 632 · GenericTypedContainer 370 · Crate 274 · GroundStorage 184 · Tapestry 59 · Chisel 39 · TorchHolder 33 · LocustNest 29 · Transient 24 · Mycelium 23 · Firepit 19 · Trough 15 · Bed 12 · Forge 8 · PlantContainer 8 · DynamicTreeBranch 4 · CoalPile 3 · DisplayCase 2 · Lantern 2.
 
@@ -222,7 +222,7 @@ Cuboid packing, 16 × 16 × 16 voxels per block (from `ToUint`/`FromUint`):
 
 ### Ground storage
 
-`GroundStorage` (items placed on the ground) holds an `inventory` tree with `qslots` and `slots`; the slots contain item stacks (type 7). *(Verified (1.19): key names only. Source: [vssurvivalmod `BlockEntity/BEGroundStorage.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/BlockEntity/BEGroundStorage.cs), not yet read.)*
+`GroundStorage` (items placed on the ground) holds an `inventory` tree with `qslots` and `slots`; the slots contain item stacks (type 7). *(Verified (1.19): the 184 ground storage entities hold 244 item stacks, all parsed with the format above; what the stack ids mean isn't decoded. Source: [vssurvivalmod `BlockEntity/BEGroundStorage.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/BlockEntity/BEGroundStorage.cs), not yet read.)*
 
 ## 6. Map chunks
 
