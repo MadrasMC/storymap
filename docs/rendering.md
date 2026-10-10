@@ -34,6 +34,33 @@ Where they live *(Verified (1.22.7): a fresh Windows install)*:
 - **Game install** (`%APPDATA%\Vintagestory` on Windows): `assets/<domain>/` with one folder per domain, `creative`, `game` and `survival`, each containing `blocktypes/`, `shapes/`, `textures/` and more. `assets/version-1.22.7.txt` names the version. The install's own `Mods/` folder holds only the built-in code (`VSSurvivalMod.dll`, `VSEssentials.dll`, `VSCreativeMod.dll`) and a `do_not_add_mods_here.txt`.
 - **Data folder** (`%APPDATA%\VintagestoryData`): `Saves/`, and `Mods/` with user mods as zip files (e.g. `primitivesurvival_5.1.4.zip`). How a mod zip lays out its assets is still to be checked. There's also a `Maps/` folder with one small `.db` file per world, probably the client's world-map cache; not looked into.
 
+### What the renderer needs from them
+
+*(Verified (1.22.7): a read-only survey of the install and of `primitivesurvival_5.1.4.zip`.)*
+
+The base game's `assets/` is 838 MB, mostly music (489 MB), world generation (70 MB), language files (39 MB) and sounds (35 MB), none of which a map needs. What block rendering touches:
+
+| Folder | Size | Why |
+| --- | --- | --- |
+| `blocktypes/`, `itemtypes/` | 3 MB | Block and item definitions: shape, textures, variants, colour maps, `drawtype`. Items matter for ground storage and containers. |
+| `shapes/` | 143 MB (block 70, entity 62, item 11) | Block and item models. 50 base-game block and item types reference `entity/` shapes or textures (boat figureheads, armour stands, fish), so `entity/` can't simply be skipped. |
+| `textures/` | 54 MB (block 21, gui 18, entity 11, item 2, environment 1) | Block, item and entity textures; `environment/` holds the climate and season tint maps. `gui/` and `icons/` aren't needed. |
+| `worldproperties/` | under 1 MB | Variant lists that block types load by name, e.g. `variantgroups: [{ code: "rock", loadFromProperties: "block/rockwithdeposit" }]` in `survival/blocktypes/stone/rock.json`. |
+| `config/colormaps.json` | small | Maps colour map names used by block types (`climatePlantTint`, `seasonalGrass`, …) to textures in `textures/environment/`. Some block types also name separate `climateColorMapForMap` / `seasonColorMapForMap`, presumably for the world map. |
+| `patches/` | small | JSON edits applied to other assets at load time. The base game's are gameplay settings; mods use them to change base-game blocks. |
+
+**The JSON isn't standard JSON.** Asset files use unquoted keys and trailing commas, so a strict JSON parser (like Zig's `std.json`) rejects them; the renderer needs a lenient reader.
+
+**Variant syntax:** block types generate one block per variant combination. Properties can be keyed by variant pattern (`texturesByType: { "rock-*": … }`, regex keys like `"@rock-(claystone|sandstone)"`), use `{rock}`-style placeholders, and a texture path ending in `*` means "all numbered alternates" (e.g. `block/stone/rock/{rock}*`).
+
+### Mods
+
+A mod is a zip in the data folder's `Mods/`, e.g. `primitivesurvival_5.1.4.zip`:
+
+- `modinfo.json` at the top: `modid`, `name`, `version`, `type` (`code` here, so it also ships `primitivesurvival.dll`).
+- `assets/<modid>/` with the same folder names as the base game (`blocktypes`, `shapes`, `textures`, `patches`, …), plus `compatibility/`, assets that apply only when another mod is present.
+- Files in other domains, e.g. `assets/game/textures/` and `assets/game/lang/`, which override or add to the base game's assets.
+
 ## Block entities that change how things look
 
 From the sample save (class counts in [`save-format/README.md` §5](save-format/README.md#5-block-entities-field-8)):
