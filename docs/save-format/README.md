@@ -7,7 +7,7 @@ The text reference for how a Vintage Story `.vcdbs` save is laid out, as far as 
 | Version | Status |
 | --- | --- |
 | 1.19.1, 1.19.2 | **Verified** against a sample save written by both versions (6,880 chunks: 4,928 by 1.19.1, 1,952 by 1.19.2). |
-| 1.22.7 (current) | **Not verified against a save.** Claims marked **Source** come from the 1.22.7 code, so they describe 1.22.7 unless also marked verified on 1.19. |
+| 1.22.7 (current) | **Verified** against a new world (6,224 chunks, all written by 1.22.7): schema, positions, chunk fields, block and liquid decoding, and the block entity format. That world has no chiseled blocks or ground storage, so those are verified on 1.19 only. Claims marked **Source** also come from the 1.22.7 code. |
 
 Version-specific differences are noted inline, in the section they affect, as **1.19:** / **1.22:** notes. If a later version changes the format so much that inline notes stop being readable, split that version into its own file.
 
@@ -16,15 +16,18 @@ Version-specific differences are noted inline, in the section they affect, as **
 Every section says where its information comes from:
 
 - **Verified (1.19):** checked against the sample save `content/sample-one-block-spawn.vcdbs` (not in the repo; `content/` is git-ignored), with how it was checked.
+- **Verified (1.22.7):** checked against `content/gloomy-cave-valley-1.22.7.vcdbs`, a copy of a fresh 1.22.7 world (also not in the repo).
 - **Source:** read in Vintage Story's open-source code on GitHub ([vsapi](https://github.com/anegostudios/vsapi), [vssurvivalmod](https://github.com/anegostudios/vssurvivalmod), [vsessentialsmod](https://github.com/anegostudios/vsessentialsmod)). Links are pinned to the commits read on 2026-10-10, each repository's "Updated to Version 1.22.7" commit: vsapi `63d33f7`, vssurvivalmod `849fa8c`, vsessentialsmod `06673b6`. Pin new links to a commit or tag too, never `master`. The chunk storage code itself is in the closed engine library and isn't available.
 - **Wiki:** the [Vintage Story wiki](https://wiki.vintagestory.at/).
 - **Unverified:** an observation or guess that hasn't been confirmed.
 
 ## 1. The save file
 
-A `.vcdbs` file is an SQLite database. Saves live in the game's data directory under `Saves/`. *(Unverified: from the original project notes.)*
+A `.vcdbs` file is an SQLite database. Saves live in the game's data folder under `Saves/`; on Windows that's `%APPDATA%\VintagestoryData\Saves`. *(Verified (1.22.7): a fresh Windows install.)*
 
-Schema, verbatim *(Verified (1.19): `sqlite_master` of the sample save)*:
+Saves use SQLite's [write-ahead log](https://www.sqlite.org/wal.html): bytes 18 and 19 of the file header are 2 in both test saves. In that mode even a read-only connection creates `-shm` and `-wal` files next to the database, so a tool that opens a save in place writes into the game's `Saves` folder. Read a copy, or open the file with SQLite's `immutable=1` URI parameter, which creates nothing. *(Verified (1.19, 1.22.7): read-only opens of the copies created both files; `immutable=1` didn't.)*
+
+Schema, verbatim *(Verified (1.19, 1.22.7): identical `sqlite_master` in both saves)*:
 
 ```sql
 CREATE TABLE chunk (position integer PRIMARY KEY, data BLOB)
@@ -45,6 +48,8 @@ CREATE INDEX index_playeruid on playerdata(playeruid)
 | `playerdata` | 1 | Per-player data. Not decoded. |
 
 `sqlite_sequence` is SQLite's own table for `AUTOINCREMENT`, not game data.
+
+**1.22.7:** the new world has 6,224 chunks, 778 map chunks, 32 map regions, and one row each in `gamedata` and `playerdata`.
 
 ## 2. Positions
 
@@ -68,7 +73,9 @@ const Position = packed struct(u64) {
 - SQLite integers are signed, so a chunk with y ≥ 512 (top bit set) is stored as a negative number. *(Inferred from SQLite's integer type; the sample has no chunks that high, max y = 7.)*
 - Coordinates are absolute. The game shows coordinates shifted from these. *(Unverified: the original notes say the shift is half the world size, centring spawn; not confirmed.)*
 
-`mapchunk.position` uses the same packing with y = 0, one row per chunk column. *(Verified (1.19): the 860 `mapchunk` positions are exactly the 860 distinct (x, z) columns in `chunk`.)*
+`mapchunk.position` uses the same packing with y = 0, one row per chunk column. *(Verified (1.19): the 860 `mapchunk` positions are exactly the 860 distinct (x, z) columns in `chunk`. Verified (1.22.7): likewise, 778 and 778.)*
+
+**1.22.7:** the new world's chunks form two separate areas: a 15 × 15-column square centred on chunk (16000, 16000), which is block (512,000, 512,000), the middle of a 1,024,000-block world; and a round area around the player, centred about 2,600 blocks east and 3,600 blocks south of it. *(Observed. Why the square exists isn't confirmed; possibly the game generates the world centre before choosing a spawn point.)*
 
 `mapregion.position` decodes to x 997–1001, z 998–1001 with the same packing, consistent with one region per 16 × 16 chunk columns (chunk x 15979–16010 ÷ 16). *(Inferred from the sample; the exact mapping isn't confirmed.)*
 
@@ -92,11 +99,13 @@ Field names come from the `fieldNames` list in [`src/Chunk.zig`](../../src/Chunk
 | 13 | varint | `empty` | 1,528 | Unknown |
 | 14 | bytes | `decors` | 6,880 | Unknown |
 | 15 | varint | `saved_compression_version` | 6,880 | Unknown |
-| 16 | bytes | `compressed_liquids` | 6,880 | Same format as field 1 (§4). Decodes without errors in every chunk; contents not yet checked. |
+| 16 | bytes | `compressed_liquids` | 6,880 | **Liquids**, same format as field 1 (§4). Above a deep lake bed in the 1.22.7 world, chunks y 0–3 have the liquid palette `[0, 2966]`; 2966 is probably water, but IDs aren't named yet. |
 | 17 | varint | `blocks_placed` | 8 | Unknown |
 | 18 | varint | `blocks_removed` | 2 | Unknown |
 
 *(Verified (1.19): counts and wire types from scanning every chunk in the sample.)*
+
+**1.22.7:** the same field numbers with the same wire types. Field 12 is `1.22.7` in every chunk; field 15 is 2 in every chunk of both saves. Field 14 appears in only 350 of 6,224 chunks (every chunk in 1.19), and fields 17 and 18 don't appear. *(Verified (1.22.7).)*
 
 The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities, entities, decor, mod data and format version metadata. *([Wiki: Chunk Data Storage](https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage))*
 
@@ -189,7 +198,9 @@ A tree is a list of entries `[u8 type id][string key][value]`, ended by a single
 
 Every block entity in the sample starts with `posx`, `posy`, `posz` (int, absolute block coordinates) and `blockCode` (string). storymap parses the full format in [`src/TreeAttribute.zig`](../../src/TreeAttribute.zig) and [`src/BlockEntity.zig`](../../src/BlockEntity.zig); parsing the sample with it gives the same counts as the Python check above.
 
-Classes in the sample: MicroBlock 8,343 · Generic 4,364 · BerryBush 632 · GenericTypedContainer 370 · Crate 274 · GroundStorage 184 · Tapestry 59 · Chisel 39 · TorchHolder 33 · LocustNest 29 · Transient 24 · Mycelium 23 · Firepit 19 · Trough 15 · Bed 12 · Forge 8 · PlantContainer 8 · DynamicTreeBranch 4 · CoalPile 3 · DisplayCase 2 · Lantern 2.
+Classes in the 1.19 sample: MicroBlock 8,343 · Generic 4,364 · BerryBush 632 · GenericTypedContainer 370 · Crate 274 · GroundStorage 184 · Tapestry 59 · Chisel 39 · TorchHolder 33 · LocustNest 29 · Transient 24 · Mycelium 23 · Firepit 19 · Trough 15 · Bed 12 · Forge 8 · PlantContainer 8 · DynamicTreeBranch 4 · CoalPile 3 · DisplayCase 2 · Lantern 2.
+
+**1.22.7:** all 684 block entities in the new world parse with the same format, in both the Python check and storymap's Zig parser. Classes: WildFruitingBush 628 · Mycelium 43 · DynamicTreeBranch 10 · DynamicTreeFoliage 2 · Beehive 1. `WildFruitingBush` takes over from 1.19's `BerryBush`, which the 1.22.7 code still registers from a `Legacy/` folder for old saves. *(Source: [`Systems/Core.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Core.cs#L797) registers `BerryBush` and, [further down](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Core.cs#L922), `WildFruitingBush`; [`Legacy/BlockEntity/BEBerryBush.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Legacy/BlockEntity/BEBerryBush.cs).)*
 
 ### Chiseled blocks (MicroBlock, Chisel)
 
@@ -231,8 +242,9 @@ Cuboid packing, 16 × 16 × 16 voxels per block (from `ToUint`/`FromUint`):
 ## 7. Open questions
 
 - **Block ID → block code mapping.** Palettes and chiseled-block materials hold numeric IDs. The mapping is probably in `gamedata`. Everything that needs names, colours or models depends on it.
-- **Liquids (field 16).** Decodes, but its contents haven't been checked.
+- **Liquid IDs.** Field 16 holds liquids, but which ID is which liquid needs the ID mapping above.
 - **Other chunk fields:** light (2, 3), entities (5, 6), field 10, decor (14), and the small varint fields.
 - **`mapchunk`, `mapregion`, `gamedata`, `playerdata`:** not decoded.
 - **In-game coordinates:** the offset from absolute coordinates isn't confirmed.
-- **1.22.7:** none of this has been checked against a current save.
+- **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; a world with ruins or a placed chiseled block, and items on the ground, would cover them.
+- **Mods.** How modded blocks appear in palettes and `gamedata` needs a world created with a mod enabled.

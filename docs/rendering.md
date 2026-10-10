@@ -27,7 +27,12 @@ Blocks are defined by data files, not code *(Wiki)*:
 - **Shapes:** JSON in `shapes/`, normally made with the official Model Creator: boxes with per-face texture references, rotations and nested children. *([Wiki: Asset Type – Shapes](https://wiki.vintagestory.at/Modding:Asset_Type_-_Shapes))*
 - **Textures:** PNG in `textures/`, referenced from block types and shapes by name. *([Wiki: Asset Type – Textures](https://wiki.vintagestory.at/Modding:Asset_Type_-_Textures))*
 
-These are the game developers' copyrighted assets, so storymap never ships them: every user points storymap at their own game install (and mods) and storymap extracts what it needs. That's also the only way modded blocks render correctly. Where exactly the assets sit in an install and in mods is still to be confirmed against a real install.
+These are the game developers' copyrighted assets, so storymap never ships them: every user points storymap at their own game install (and mods) and storymap extracts what it needs. That's also the only way modded blocks render correctly.
+
+Where they live *(Verified (1.22.7): a fresh Windows install)*:
+
+- **Game install** (`%APPDATA%\Vintagestory` on Windows): `assets/<domain>/` with one folder per domain, `creative`, `game` and `survival`, each containing `blocktypes/`, `shapes/`, `textures/` and more. `assets/version-1.22.7.txt` names the version. The install's own `Mods/` folder holds only the built-in code (`VSSurvivalMod.dll`, `VSEssentials.dll`, `VSCreativeMod.dll`) and a `do_not_add_mods_here.txt`.
+- **Data folder** (`%APPDATA%\VintagestoryData`): `Saves/`, and `Mods/` with user mods as zip files (e.g. `primitivesurvival_5.1.4.zip`). How a mod zip lays out its assets is still to be checked. There's also a `Maps/` folder with one small `.db` file per world, probably the client's world-map cache; not looked into.
 
 ## Block entities that change how things look
 

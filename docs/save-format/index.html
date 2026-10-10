@@ -438,7 +438,6 @@
 	.cuboid-grid div { border-radius: 1px; background: var(--zero); }
 
 	.source { font-size: var(--t-small); color: var(--muted); margin: var(--s4) 0 0; }
-	.version.pending { color: var(--muted); border-style: dashed; font-weight: 400; }
 
 	ul.list { padding-left: var(--s5); margin: 0; }
 	ul.list li { margin-bottom: var(--s2); max-width: 42rem; }
@@ -469,7 +468,7 @@
 	<header>
 		<h1>Vintage Story save format</h1>
 		<p class="lede">How a <code>.vcdbs</code> save stores the world's blocks, from a database row down to a single block. The full text reference, with sources for every claim, is <a href="README.md">README.md</a>.</p>
-		<div class="versions"><span class="label">verified with</span><span class="version">1.19.1</span><span class="version">1.19.2</span><span class="label" style="margin-left: var(--s3)">not yet checked</span><span class="version pending">1.22.7</span></div>
+		<div class="versions"><span class="label">verified with</span><span class="version">1.19.1</span><span class="version">1.19.2</span><span class="version">1.22.7</span></div>
 	</header>
 
 	<section id="save">
@@ -483,7 +482,8 @@
 			<span class="chip">playerdata</span>
 		</div>
 		<p>The world is cut into <b>chunks</b>: cubes of 32 × 32 × 32 blocks. Each chunk is one row of the <code>chunk</code> table, with two columns: <code>position</code> (where the cube is) and <code>data</code> (what's inside it). <code>mapchunk</code> has one row per column of chunks, and <code>mapregion</code> one per 16 × 16 columns.</p>
-		<p class="source">Sources: table schema from a 1.19 save · table descriptions from the <a href="https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept">wiki</a> · <a href="README.md#1-the-save-file">README §1</a></p>
+		<p>Saves use SQLite's write-ahead log, so even read-only access creates <code>-shm</code> and <code>-wal</code> files next to the save. Read a copy, or open it with SQLite's <code>immutable=1</code> option.</p>
+		<p class="source">Sources: table schema from 1.19 and 1.22.7 saves · <a href="https://www.sqlite.org/wal.html">SQLite: write-ahead log</a> · table descriptions from the <a href="https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept">wiki</a> · <a href="README.md#1-the-save-file">README §1</a></p>
 	</section>
 
 	<section id="position">
@@ -531,7 +531,7 @@
 					<tr><td>13</td><td><code>empty</code></td><td><span class="tag">unknown</span></td></tr>
 					<tr><td>14</td><td><code>decors</code></td><td><span class="tag">unknown</span></td></tr>
 					<tr><td>15</td><td><code>saved_compression_version</code></td><td><span class="tag">unknown</span></td></tr>
-					<tr><td>16</td><td><code>compressed_liquids</code></td><td><span class="tag partial">same as 1 · unchecked</span></td></tr>
+					<tr><td>16</td><td><code>compressed_liquids</code></td><td><span class="tag ok">liquids, same as 1</span></td></tr>
 					<tr><td>17</td><td><code>blocks_placed</code></td><td><span class="tag">unknown</span></td></tr>
 					<tr><td>18</td><td><code>blocks_removed</code></td><td><span class="tag">unknown</span></td></tr>
 				</tbody>
@@ -715,7 +715,7 @@
 			</div>
 		</div>
 		<p class="muted">Lighter cells are higher in the top view and nearer in the front view. The default value is a real chiseled block from the sample save: "Aged polished rock (Granite)", four boxes of one material.</p>
-		<p class="source">Sources: all 14,447 block entities of a 1.19 save parse with this format · 1.22.7 code: <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree/TreeAttribute.cs">vsapi TreeAttribute.cs</a> and <a href="https://github.com/anegostudios/vsapi/tree/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree">attribute classes</a> · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Collectible/ItemStack.cs">ItemStack.cs</a> · <a href="https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Microblock/BEMicroBlock.cs">vssurvivalmod BEMicroBlock.cs</a> · <a href="README.md#5-block-entities-field-8">README §5</a></p>
+		<p class="source">Sources: every block entity of a 1.19 save (14,447) and a 1.22.7 save (684) parses with this format; chiseled blocks only appear in the 1.19 one · 1.22.7 code: <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree/TreeAttribute.cs">vsapi TreeAttribute.cs</a> and <a href="https://github.com/anegostudios/vsapi/tree/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree">attribute classes</a> · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Collectible/ItemStack.cs">ItemStack.cs</a> · <a href="https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Microblock/BEMicroBlock.cs">vssurvivalmod BEMicroBlock.cs</a> · <a href="README.md#5-block-entities-field-8">README §5</a></p>
 	</section>
 
 	<section id="map">
@@ -740,11 +740,11 @@
 		<h2><span class="num">11</span><span>Still unknown</span></h2>
 		<ul class="list">
 			<li><b>Block names.</b> Palettes and chiseled-block materials hold numeric IDs like <code>6769</code>. The mapping to block codes is probably in <code>gamedata</code>.</li>
-			<li><b>Liquids.</b> Field 16 decodes, but its contents haven't been checked.</li>
 			<li><b>The other fields.</b> Light (2, 3), entities (5, 6), field 10, decor (14) and the small number fields.</li>
 			<li><b>The other tables.</b> <code>mapchunk</code>, <code>mapregion</code>, <code>gamedata</code> and <code>playerdata</code> haven't been decoded.</li>
 			<li><b>In-game coordinates.</b> The game shows coordinates shifted from these absolute ones; the exact offset hasn't been confirmed.</li>
-			<li><b>Newer versions.</b> Nothing here has been checked against a 1.22 save yet.</li>
+			<li><b>Chiseled blocks on 1.22.</b> The 1.22.7 test world has none yet.</li>
+			<li><b>Mods.</b> How modded blocks appear in a save hasn't been checked.</li>
 		</ul>
 		<p class="source">Source: <a href="README.md#7-open-questions">README §7</a></p>
 	</section>
