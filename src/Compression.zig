@@ -13,6 +13,22 @@ pub const ArrayConvert = struct {
     }
 };
 
+/// Reads `count` little-endian palette entries into an array rounded up to a power of two.
+/// The unused tail is zeroed (air), so stray bit-plane indices can't read garbage.
+fn readPalette(allocator: std.mem.Allocator, bytes: []const u8, count: usize) ![]i32 {
+    const palette = try allocator.alloc(i32, ArrayConvert.GetRoundedUpSize(count));
+    for (palette[0..count], 0..) |*entry, i| entry.* = util.readI32(bytes[i * 4 ..]);
+    @memset(palette[count..], 0);
+    return palette;
+}
+
+test "readPalette zero-pads to a power of two" {
+    const bytes = [_]u8{ 0, 0, 0, 0, 5, 0, 0, 0, 7, 0, 0, 0 };
+    const palette = try readPalette(std.testing.allocator, &bytes, 3);
+    defer std.testing.allocator.free(palette);
+    try std.testing.expectEqualSlices(i32, &.{ 0, 5, 7, 0 }, palette);
+}
+
 pub const Compression = struct {
     pub fn DecompressCombined(
         allocator: std.mem.Allocator,
@@ -26,22 +42,16 @@ pub const Compression = struct {
         const output = if (length1 < 0) b: {
             length1 *= -1;
             length2 = @intCast(@divTrunc(length1, 4));
-            if (length2 == 1) return null;
-            const out = try allocator.alloc(i32, ArrayConvert.GetRoundedUpSize(length2));
-            @memcpy(out, @as(
-                [*]align(1) const i32,
-                @ptrCast(@alignCast(blocksCompressed.ptr + 4)),
-            )[0..out.len]);
-            break :b out;
+            if (length2 <= 1) return null;
+            break :b try readPalette(allocator, blocksCompressed[4..][0..@intCast(length1)], length2);
         } else b: {
             var buffer: []u8 = &.{};
             length2 = try Compression.Compression1.DecompressAndSizeOffset(allocator, blocksCompressed, 4, length1, &buffer) / 4;
             defer allocator.free(buffer);
-            if (length2 == 1) return null;
-            const out = try allocator.alloc(i32, ArrayConvert.GetRoundedUpSize(length2));
-            @memcpy(out, @as([*]i32, @ptrCast(@alignCast(buffer.ptr)))[0..out.len]);
-            break :b out;
+            if (length2 <= 1) return null;
+            break :b try readPalette(allocator, buffer, length2);
         };
+        errdefer allocator.free(output);
         var count: usize = 0;
         var length3 = output.len;
         while ((length3 >> 1) > 0) : (length3 >>= 1) count += 1;

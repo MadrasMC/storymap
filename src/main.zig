@@ -179,4 +179,5 @@ fn within(x: anytype, min: anytype, max: anytype) bool {
 
 test {
     _ = ProtoBuf;
+    _ = VS;
 }
