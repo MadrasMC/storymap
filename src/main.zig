@@ -5,13 +5,16 @@ const Chunk = @import("Chunk.zig");
 const ProtoBuf = @import("ProtoBuf.zig");
 const BlockEntity = @import("BlockEntity.zig");
 const VS = @import("Compression.zig");
+const extract = @import("extract.zig");
 const stb = @import("stb_image_write");
 
 const usage =
     \\usage: storymap <save.vcdbs> [output.png]
+    \\       storymap extract-assets <output folder> [--game <folder>] [--data <folder>]
     \\
     \\Renders a top-down heightmap of a Vintage Story save to output.png,
     \\or out.png when no output path is given.
+    \\Run extract-assets without arguments for its options.
     \\
 ;
 
@@ -19,6 +22,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "extract-assets")) return extract.run(init, args[2..]);
     if (args.len < 2 or args.len > 3) {
         std.debug.print(usage, .{});
         std.process.exit(2);
@@ -136,4 +140,5 @@ test {
     _ = VS;
     _ = Chunk;
     _ = DB;
+    _ = extract;
 }
