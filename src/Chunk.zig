@@ -43,11 +43,49 @@ pub const Position = packed struct(u64) {
 
 allocator: std.mem.Allocator,
 position: Position,
+/// Bit planes, not layers: see `getBlock`.
 blocks: ?[]const []const i32 = null,
 blockPalette: ?[]const i32 = null,
 liquids: ?[]const []const i32 = null,
 liquidPalette: ?[]const i32 = null,
 blockEntities: []BlockEntity,
+
+/// Returns the block id at chunk-local (x, y, z). 0 is air.
+///
+/// Blocks are numbered x first, then z, then y. Each block's palette index is split
+/// into bits, and bit `b` of every block is stored together in `blocks[b]`: a bit plane
+/// of 32768 bits packed into 1024 i32s.
+pub fn getBlock(self: Chunk, x: u5, y: u5, z: u5) i32 {
+    const palette = self.blockPalette orelse return 0;
+    const planes = self.blocks orelse return 0;
+    const n = (@as(usize, y) * 32 + z) * 32 + x;
+    var index: usize = 0;
+    for (planes[0..std.math.log2_int(usize, palette.len)], 0..) |plane, b| {
+        const bit: usize = @intCast((plane[n / 32] >> @intCast(n % 32)) & 1);
+        index |= bit << @intCast(b);
+    }
+    return palette[index];
+}
+
+test getBlock {
+    // palette index 3 (0b11) at (1, 2, 3): block 2145, word 67, bit 1, set in both planes
+    // palette index 2 (0b10) at (0, 0, 0): block 0, word 0, bit 0, set in plane 1 only
+    var plane0: [1024]i32 = @splat(0);
+    var plane1: [1024]i32 = @splat(0);
+    plane0[67] = 0b10;
+    plane1[67] = 0b10;
+    plane1[0] = 0b1;
+    const chunk: Chunk = .{
+        .allocator = std.testing.allocator,
+        .position = @bitCast(@as(u64, 0)),
+        .blocks = &.{ &plane0, &plane1 },
+        .blockPalette = &.{ 0, 5, 7, 9 },
+        .blockEntities = &.{},
+    };
+    try std.testing.expectEqual(9, chunk.getBlock(1, 2, 3));
+    try std.testing.expectEqual(7, chunk.getBlock(0, 0, 0));
+    try std.testing.expectEqual(0, chunk.getBlock(1, 0, 0));
+}
 
 pub fn deinit(self: Chunk) void {
     const allocator = self.allocator;
