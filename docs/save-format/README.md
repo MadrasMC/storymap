@@ -25,7 +25,7 @@ Every section says where its information comes from:
 
 A `.vcdbs` file is an SQLite database. Saves live in the game's data folder under `Saves/`; on Windows that's `%APPDATA%\VintagestoryData\Saves`. *(Verified (1.22.7): a fresh Windows install.)*
 
-Saves use SQLite's [write-ahead log](https://www.sqlite.org/wal.html): bytes 18 and 19 of the file header are 2 in both test saves. In that mode even a read-only connection creates `-shm` and `-wal` files next to the database, so a tool that opens a save in place writes into the game's `Saves` folder. Read a copy, or open the file with SQLite's `immutable=1` URI parameter, which creates nothing. *(Verified (1.19, 1.22.7): read-only opens of the copies created both files; `immutable=1` didn't.)*
+Saves use SQLite's [write-ahead log](https://www.sqlite.org/wal.html): bytes 18 and 19 of the file header are 2 in both test saves. In that mode even a read-only connection creates `-shm` and `-wal` files next to the database, so a tool that opens a save in place writes into the game's `Saves` folder. Read a copy, or open the file with SQLite's [`immutable=1`](https://www.sqlite.org/uri.html) URI parameter, which creates nothing; storymap does the latter. The catch: an immutable open ignores the `-wal` file, and while the game is running (or after a crash) that file holds changes not yet written into the save. A non-empty `-wal` next to a save means a map of it may be missing recent changes. *(Verified (1.19, 1.22.7): read-only opens of the copies created both files; `immutable=1` didn't, also with spaces, `%` and non-ASCII characters in the file name.)*
 
 Schema, verbatim *(Verified (1.19, 1.22.7): identical `sqlite_master` in both saves)*:
 
@@ -75,7 +75,7 @@ const Position = packed struct(u64) {
 
 `mapchunk.position` uses the same packing with y = 0, one row per chunk column. *(Verified (1.19): the 860 `mapchunk` positions are exactly the 860 distinct (x, z) columns in `chunk`. Verified (1.22.7): likewise, 778 and 778.)*
 
-**1.22.7:** the new world's chunks form two separate areas: a 15 × 15-column square centred on chunk (16000, 16000), which is block (512,000, 512,000), the middle of a 1,024,000-block world; and a round area around the player, centred about 2,600 blocks east and 3,600 blocks south of it. *(Observed. Why the square exists isn't confirmed; possibly the game generates the world centre before choosing a spawn point.)*
+**1.22.7:** the new world's chunks form two separate areas: a 15 × 15-column square centred on chunk (16000, 16000), which is block (512,000, 512,000), the middle of a 1,024,000-block world; and a round area centred on the player at block (514,605, 120, 515,605), chunk (16081, 3, 16112), 2,605 blocks east and 3,606 blocks south of the centre. The player didn't move after spawning, so the square was generated without a player near it; possibly the game generates the default spawn at the world centre, finds it unsuitable and spawns the player elsewhere. *(Observed: the player's position is the only triple of doubles in the world's coordinate range in `playerdata`, stored three times; the player format itself isn't decoded. The explanation is unverified.)*
 
 `mapregion.position` decodes to x 997–1001, z 998–1001 with the same packing, consistent with one region per 16 × 16 chunk columns (chunk x 15979–16010 ÷ 16). *(Inferred from the sample; the exact mapping isn't confirmed.)*
 
