@@ -39,9 +39,9 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     }
     const out = outPath orelse fail(2, usage, .{});
 
-    const game = gamePath orelse findFolder(io, arena, init.environ_map, .game) orelse
+    const game = gamePath orelse findFolder(arena, io, init.environ_map, .game) orelse
         fail(1, "storymap: couldn't find Vintage Story; pass its install folder with --game\n", .{});
-    const data = dataPath orelse findFolder(io, arena, init.environ_map, .data);
+    const data = dataPath orelse findFolder(arena, io, init.environ_map, .data);
 
     var gameDir = Dir.cwd().openDir(io, game, .{}) catch |err|
         fail(1, "storymap: can't open the game folder {s} ({s})\n", .{ game, @errorName(err) });
@@ -51,7 +51,7 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     defer assetsDir.close(io);
 
     // Refuse to write into (or over) the folders we're reading from.
-    const cwd = try realPath(io, arena, Dir.cwd());
+    const cwd = try realPath(arena, io, Dir.cwd());
     const outAbs = try std.fs.path.resolveAlloc(arena, &.{ cwd, out });
     for ([_]?[]const u8{ game, data }) |source| {
         const sourceAbs = try std.fs.path.resolveAlloc(arena, &.{ cwd, source orelse continue });
@@ -62,14 +62,14 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     var outDir = try openEmptyOutput(io, out);
     defer outDir.close(io);
 
-    const version = try findVersion(io, arena, assetsDir);
+    const version = try findVersion(arena, io, assetsDir) orelse "(unknown version)";
     var outAssets = try outDir.createDirPathOpen(io, "game/assets", .{});
     defer outAssets.close(io);
-    const assetFiles = try copyAssets(io, init.gpa, assetsDir, outAssets);
+    const assetFiles = try copyAssets(init.gpa, io, assetsDir, outAssets);
 
     var mods: usize = 0;
     if (data) |dataFolder| {
-        mods = try copyMods(io, init.gpa, dataFolder, outDir);
+        mods = try copyMods(init.gpa, io, dataFolder, outDir);
     } else {
         std.debug.print("storymap: no data folder found, so no mods copied; pass it with --data\n", .{});
     }
@@ -130,7 +130,7 @@ test actionFor {
     inline for (cases) |case| try std.testing.expectEqual(case[2], actionFor(case[0], case[1]));
 }
 
-fn copyAssets(io: Io, gpa: std.mem.Allocator, assetsDir: Dir, outAssets: Dir) !usize {
+fn copyAssets(gpa: std.mem.Allocator, io: Io, assetsDir: Dir, outAssets: Dir) !usize {
     var walker = try assetsDir.walkSelectively(gpa);
     defer walker.deinit();
     var parts: std.ArrayList([]const u8) = .empty;
@@ -153,7 +153,7 @@ fn copyAssets(io: Io, gpa: std.mem.Allocator, assetsDir: Dir, outAssets: Dir) !u
 }
 
 /// Copies every mod zip and mod folder in `<data>/Mods`, whole. Returns how many.
-fn copyMods(io: Io, gpa: std.mem.Allocator, dataFolder: []const u8, outDir: Dir) !usize {
+fn copyMods(gpa: std.mem.Allocator, io: Io, dataFolder: []const u8, outDir: Dir) !usize {
     var modsDir = Dir.cwd().openDir(io, dataFolder, .{}) catch |err|
         fail(1, "storymap: can't open the data folder {s} ({s})\n", .{ dataFolder, @errorName(err) });
     defer modsDir.close(io);
@@ -166,7 +166,7 @@ fn copyMods(io: Io, gpa: std.mem.Allocator, dataFolder: []const u8, outDir: Dir)
     var it = source.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind == .directory) {
-            try copyTree(io, gpa, source, entry.name, outMods);
+            try copyTree(gpa, io, source, entry.name, outMods);
             mods += 1;
         } else if (std.ascii.endsWithIgnoreCase(entry.name, ".zip")) {
             try source.copyFile(entry.name, outMods, entry.name, io, .{});
@@ -179,7 +179,7 @@ fn copyMods(io: Io, gpa: std.mem.Allocator, dataFolder: []const u8, outDir: Dir)
     return mods;
 }
 
-fn copyTree(io: Io, gpa: std.mem.Allocator, parent: Dir, name: []const u8, outParent: Dir) !void {
+fn copyTree(gpa: std.mem.Allocator, io: Io, parent: Dir, name: []const u8, outParent: Dir) !void {
     var dir = try parent.openDir(io, name, .{ .iterate = true });
     defer dir.close(io);
     var outDir = try outParent.createDirPathOpen(io, name, .{});
@@ -206,14 +206,14 @@ fn openEmptyOutput(io: Io, path: []const u8) !Dir {
     }
 }
 
-/// The game version, from the name of assets/version-<version>.txt.
-fn findVersion(io: Io, arena: std.mem.Allocator, assetsDir: Dir) ![]const u8 {
+/// The game version, from the name of assets/version-<version>.txt, or null without one.
+fn findVersion(allocator: std.mem.Allocator, io: Io, assetsDir: Dir) !?[]const u8 {
     var it = assetsDir.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind == .file and std.mem.startsWith(u8, entry.name, "version-") and std.mem.endsWith(u8, entry.name, ".txt"))
-            return arena.dupe(u8, entry.name["version-".len .. entry.name.len - ".txt".len]);
+            return try allocator.dupe(u8, entry.name["version-".len .. entry.name.len - ".txt".len]);
     }
-    return "(unknown version)";
+    return null;
 }
 
 const Folder = enum { game, data };
@@ -221,7 +221,7 @@ const Folder = enum { game, data };
 /// The first standard location that exists. The Windows paths are verified on a 1.22.7
 /// install; the Linux data folders come from https://wiki.vintagestory.at/VintagestoryData_folder
 /// and the Linux game folders from forum reports, unverified.
-fn findFolder(io: Io, arena: std.mem.Allocator, env: *const std.process.Environ.Map, folder: Folder) ?[]const u8 {
+fn findFolder(arena: std.mem.Allocator, io: Io, env: *const std.process.Environ.Map, folder: Folder) ?[]const u8 {
     var candidates: std.ArrayList([]const u8) = .empty;
     const join = std.fs.path.join;
     if (builtin.os.tag == .windows) {
@@ -248,10 +248,10 @@ fn findFolder(io: Io, arena: std.mem.Allocator, env: *const std.process.Environ.
     return null;
 }
 
-fn realPath(io: Io, arena: std.mem.Allocator, dir: Dir) ![]const u8 {
+fn realPath(allocator: std.mem.Allocator, io: Io, dir: Dir) ![]const u8 {
     var buffer: [Dir.max_path_bytes]u8 = undefined;
     const len = try dir.realPath(io, &buffer);
-    return arena.dupe(u8, buffer[0..len]);
+    return allocator.dupe(u8, buffer[0..len]);
 }
 
 /// Whether `path` is `parent` or inside it. Both must be absolute and normalised.
