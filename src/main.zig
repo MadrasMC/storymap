@@ -6,6 +6,7 @@ const ProtoBuf = @import("ProtoBuf.zig");
 const BlockEntity = @import("BlockEntity.zig");
 const VS = @import("Compression.zig");
 const extract = @import("extract.zig");
+const GameData = @import("GameData.zig");
 const stb = @import("stb_image_write");
 
 const usage =
@@ -67,6 +68,13 @@ pub fn main(init: std.process.Init) !void {
     };
     defer bounds.finalize();
     if (!bounds.step()) return error.NoChunks;
+
+    // Which block code each numeric block ID stands for, in this save.
+    const gameData = GameData.read(allocator, db) catch |err| {
+        std.debug.print("storymap: can't read the block list in {s} ({s})\n", .{ dbPath, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer gameData.deinit();
     const min_x: usize = @intCast(bounds.column(u64, 0));
     const max_x: usize = @intCast(bounds.column(u64, 1));
     const min_z: usize = @intCast(bounds.column(u64, 2));
@@ -80,6 +88,10 @@ pub fn main(init: std.process.Init) !void {
     const top = try allocator.alloc(?u16, width * height);
     defer allocator.free(top);
     @memset(top, null);
+    // The block ID at that height.
+    const topBlock = try allocator.alloc(i32, width * height);
+    defer allocator.free(topBlock);
+    @memset(topBlock, 0);
 
     const stmt = try db.prepare("SELECT position, data FROM chunk;");
     defer stmt.finalize();
@@ -96,13 +108,17 @@ pub fn main(init: std.process.Init) !void {
         const up = (chunk.position.z - min_z) * 32;
 
         for (0..32) |z| for (0..32) |x| {
-            const column = &top[(up + z) * width + left + x];
+            const index = (up + z) * width + left + x;
             // Walk down from the top of the chunk and stop at the first solid block.
             for (0..32) |i| {
                 const y = 31 - i;
-                if (chunk.getBlock(@intCast(x), @intCast(y), @intCast(z)) == 0) continue;
+                const block = chunk.getBlock(@intCast(x), @intCast(y), @intCast(z));
+                if (block == 0) continue;
                 const world_y: u16 = @intCast(@as(usize, chunk.position.y) * 32 + y);
-                if (column.* == null or column.*.? < world_y) column.* = world_y;
+                if (top[index] == null or top[index].? < world_y) {
+                    top[index] = world_y;
+                    topBlock[index] = block;
+                }
                 break;
             }
         };
@@ -116,6 +132,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     std.debug.print("{}x{} blocks, surface y {}..{}\n", .{ width, height, lowest, highest });
+    try printSurfaceBlocks(allocator, gameData, top, topBlock);
 
     // Greyscale by height. The lowest surface is dark grey rather than black, so it
     // stays distinguishable from columns with no blocks at all.
@@ -135,7 +152,38 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
+/// The five most common top blocks, by name.
+fn printSurfaceBlocks(allocator: std.mem.Allocator, gameData: GameData, top: []const ?u16, topBlock: []const i32) !void {
+    var counts: std.AutoArrayHashMapUnmanaged(i32, usize) = .empty;
+    defer counts.deinit(allocator);
+    var columns: usize = 0;
+    for (top, topBlock) |column, block| if (column != null) {
+        const entry = try counts.getOrPutValue(allocator, block, 0);
+        entry.value_ptr.* += 1;
+        columns += 1;
+    };
+    const Context = struct {
+        values: []const usize,
+        pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+            return ctx.values[a] > ctx.values[b];
+        }
+    };
+    counts.sort(Context{ .values = counts.values() });
+
+    std.debug.print("most common surface blocks:", .{});
+    for (counts.keys()[0..@min(5, counts.count())], counts.values()[0..@min(5, counts.count())], 0..) |block, count, i| {
+        const percent = count * 100 / columns;
+        if (gameData.blockCode(block)) |code| {
+            std.debug.print("{s} {s} {}%", .{ if (i == 0) "" else ",", code, percent });
+        } else {
+            std.debug.print("{s} #{} {}%", .{ if (i == 0) "" else ",", block, percent });
+        }
+    }
+    std.debug.print("\n", .{});
+}
+
 test {
+    _ = GameData;
     _ = ProtoBuf;
     _ = VS;
     _ = Chunk;

@@ -41,11 +41,17 @@ pub const Message = struct {
     data: union(enum) {
         VARINT: u64,
         LEN: []const u8,
+        I64: u64,
+        I32: u32,
     },
     pub fn debugPrint(msg: Message) void {
         switch (msg.data) {
             .VARINT => |value| std.debug.print(
                 "{}:{s} {}\n",
+                .{ msg.field_number, @tagName(msg.data), value },
+            ),
+            inline .I64, .I32 => |value| std.debug.print(
+                "{}:{s} 0x{x}\n",
                 .{ msg.field_number, @tagName(msg.data), value },
             ),
             .LEN => |value| {
@@ -84,13 +90,16 @@ pub fn next(self: *ProtoBuf) ?Message {
             self.cur += len;
             return .{ .field_number = tag.field_number, .data = .{ .LEN = value } };
         },
-        .I64, .I32 => {
-            var buf: [32]u8 = undefined;
-            @panic(std.fmt.bufPrint(
-                &buf,
-                "TODO: Unimplemented: {s}\n",
-                .{@tagName(tag.wire_type)},
-            ) catch unreachable);
+        // Fixed-width values (double, float, fixed32/64); `gamedata` has a few.
+        .I64 => {
+            const value = std.mem.readInt(u64, self.buf[self.cur..][0..8], .little);
+            self.cur += 8;
+            return .{ .field_number = tag.field_number, .data = .{ .I64 = value } };
+        },
+        .I32 => {
+            const value = std.mem.readInt(u32, self.buf[self.cur..][0..4], .little);
+            self.cur += 4;
+            return .{ .field_number = tag.field_number, .data = .{ .I32 = value } };
         },
         .SGROUP, .EGROUP => {
             var buf: [32]u8 = undefined;
