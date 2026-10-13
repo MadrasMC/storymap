@@ -28,13 +28,13 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
     var itemCodes: ?[]const ?[]const u8 = null;
 
     var parser: ProtoBuf = .{ .buf = data };
-    while (parser.next()) |msg| {
+    while (try parser.next()) |msg| {
         // Field 11 holds named data entries: { 1: key, 2: value }.
         if (msg.field_number != 11 or msg.data != .LEN) continue;
         var key: []const u8 = "";
         var value: []const u8 = "";
         var entry: ProtoBuf = .{ .buf = msg.data.LEN };
-        while (entry.next()) |part| {
+        while (try entry.next()) |part| {
             if (part.data != .LEN) continue;
             switch (part.field_number) {
                 1 => key = part.data.LEN,
@@ -75,12 +75,12 @@ fn parseIdMapping(arena: std.mem.Allocator, bytes: []const u8) ![]?[]const u8 {
     var pairs: std.ArrayList(Pair) = .empty;
     var maxId: u64 = 0;
     var parser: ProtoBuf = .{ .buf = bytes };
-    while (parser.next()) |msg| {
+    while (try parser.next()) |msg| {
         if (msg.field_number != 1 or msg.data != .LEN) continue;
         // Protobuf may leave out an id of 0, its default.
         var pair: Pair = .{ .id = 0, .code = "" };
         var entry: ProtoBuf = .{ .buf = msg.data.LEN };
-        while (entry.next()) |part| switch (part.field_number) {
+        while (try entry.next()) |part| switch (part.field_number) {
             1 => if (part.data == .VARINT) {
                 pair.id = part.data.VARINT;
             },

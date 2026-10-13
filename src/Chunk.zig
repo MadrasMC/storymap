@@ -127,7 +127,7 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
     var blockEntitiesArray: std.ArrayList(BlockEntity) = .empty;
 
     var parser = Protobuf{ .buf = data };
-    while (parser.next()) |msg| {
+    while (try parser.next()) |msg| {
         if (msg.data == .LEN) {
             switch (msg.field_number) {
                 1, 16 => {
