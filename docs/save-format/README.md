@@ -75,7 +75,7 @@ const Position = packed struct(u64) {
 
 `mapchunk.position` uses the same packing with y = 0, one row per chunk column. *(Verified (1.19): the 860 `mapchunk` positions are exactly the 860 distinct (x, z) columns in `chunk`. Verified (1.22.7): likewise, 778 and 778.)*
 
-**1.22.7:** the new world's chunks form two separate areas: a 15 × 15-column square centred on chunk (16000, 16000), which is block (512,000, 512,000), the middle of a 1,024,000-block world; and a round area centred on the player at block (514,605, 120, 515,605), chunk (16081, 3, 16112), 2,605 blocks east and 3,606 blocks south of the centre. The player didn't move after spawning, so the square was generated without a player near it; possibly the game generates the default spawn at the world centre, finds it unsuitable and spawns the player elsewhere. *(Observed: the player's position is the only triple of doubles in the world's coordinate range in `playerdata`, stored three times; the player format itself isn't decoded. The explanation is unverified.)*
+**1.22.7:** the new world's chunks form two separate areas: a 15 × 15-column square centred on chunk (16000, 16000), which is block (512,000, 512,000), the middle of a 1,024,000-block world; and a round area centred on the player at block (514,605, 120, 515,605), chunk (16081, 3, 16112), 2,605 blocks east and 3,606 blocks south of the centre. The player didn't move after spawning. The world's `spawnRadius` is 5,000 (§6), so the game places a new player up to 5,000 blocks from the centre; this one is about 4,450 blocks away. The square is presumably generated at the default spawn point before the game picks the actual one. *(Observed: the player's position is the only triple of doubles in the world's coordinate range in `playerdata`, stored three times; the player format itself isn't decoded. The spawn radius is verified; why the square is generated isn't.)*
 
 `mapregion.position` decodes to x 997–1001, z 998–1001 with the same packing, consistent with one region per 16 × 16 chunk columns (chunk x 15979–16010 ÷ 16). *(Inferred from the sample; the exact mapping isn't confirmed.)*
 
@@ -99,7 +99,7 @@ Field names come from the `fieldNames` list in [`src/Chunk.zig`](../../src/Chunk
 | 13 | varint | `empty` | 1,528 | Unknown |
 | 14 | bytes | `decors` | 6,880 | Unknown |
 | 15 | varint | `saved_compression_version` | 6,880 | Unknown |
-| 16 | bytes | `compressed_liquids` | 6,880 | **Liquids**, same format as field 1 (§4). Above a deep lake bed in the 1.22.7 world, chunks y 0–3 have the liquid palette `[0, 2966]`; 2966 is probably water, but IDs aren't named yet. |
+| 16 | bytes | `compressed_liquids` | 6,880 | **Liquids**, same format as field 1 (§4). Above a deep lake bed in the 1.22.7 world, chunks y 0–3 have the liquid palette `[0, 2966]`; 2966 is `water-still-7` (§6). |
 | 17 | varint | `blocks_placed` | 8 | Unknown |
 | 18 | varint | `blocks_removed` | 2 | Unknown |
 
@@ -208,7 +208,7 @@ Chiseled blocks are `BlockEntityMicroBlock` *(Source: [vssurvivalmod `Systems/Mi
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `materials` | int array | Block IDs, same ID space as chunk palettes. Older saves may store block codes as a string array; the source handles that, including a fallback for pre-1.13 codes. |
+| `materials` | int array | Block IDs, same ID space as chunk palettes (§6); all 9,309 in the 1.19 sample have codes. Older saves may store block codes as a string array; the source handles that, including a fallback for pre-1.13 codes. In the sample, a block named "Aged polished rock (Granite)" has the material `polishedrockold-full-andesite`; possibly world generation swapped a ruin's rock for the local one without renaming it. *(Unverified.)* |
 | `cuboids` | int array | Boxes, one packed `u32` each (below). |
 | `rotation` | int | `(rotationY + 360) << 10`. |
 | `decorIds`, `decorRot` | int array, int | Decor on the block's faces. |
@@ -235,16 +235,58 @@ Cuboid packing, 16 × 16 × 16 voxels per block (from `ToUint`/`FromUint`):
 
 `GroundStorage` (items placed on the ground) holds an `inventory` tree with `qslots` and `slots`; the slots contain item stacks (type 7). *(Verified (1.19): the 184 ground storage entities hold 244 item stacks, all parsed with the format above; what the stack ids mean isn't decoded. Source: [vssurvivalmod `BlockEntity/BEGroundStorage.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/BlockEntity/BEGroundStorage.cs), not yet read.)*
 
-## 6. Map chunks
+## 6. Game data
+
+`gamedata` has a single row whose `data` is one Protobuf message. *(Verified (1.19, 1.22.7): it parses completely in both saves.)* The file has no field names; the meanings below come from the values, and the uncertain ones say so.
+
+| # | Wire type | 1.22.7 value (1.19 sample) | Meaning |
+| --- | --- | --- | --- |
+| 1, 2, 3 | varint | 1,024,000 · 256 · 1,024,000 | World size in blocks: x, height, z |
+| 11 | bytes, repeated | 23 entries | Named data entries `{ 1: key, 2: value }`, including the block and item IDs (below) |
+| 13 | bytes | `Gloomy Cave Valley` | World name |
+| 17 | bytes | `2026-10-10T22:25:37.6821955+05:30` | A timestamp, probably the last save |
+| 18 | bytes | `1.22.7` (`1.19.1`) | Probably the version the world was created in |
+| 21 | bytes | `1.22.7` (`1.19.2`) | Probably the version that last saved it; the sample's chunks were written by both |
+| 22 | bytes | a player name | Unknown |
+| 29 | bytes | `homosapiens` (`surviveandbuild`) | Play style |
+| 30 | bytes | `standard` | World type |
+| 31 | bytes | a tree attribute | World configuration (below) |
+| 34 | bytes | a UUID | Same as the file name of the world's map cache in the data folder's `Maps/` |
+| 36 | bytes, repeated | 48 entries `{ 1: name, 2: 1 }`, e.g. `game:v1.12clayplanters` | Names that are keys in the game's `config/remaps.json`; probably remaps already applied to this world |
+
+The other fields are small numbers or fixed-width floats (field 25 is 24.0, field 35 is 0.5) and are unknown.
+
+### Block and item IDs
+
+The field-11 entry with key `BlockIDs` maps every block ID to its block code. Its value is a list of entries `{ 1: id (varint), 2: code (string) }`; both saves write id 0 explicitly, though Protobuf would allow leaving it out. `ItemIDs` has the same format for items, starting at id 1. *(Verified (1.19, 1.22.7).)*
+
+| ID | 1.22.7 world | 1.19 sample |
+| --- | --- | --- |
+| 0 | `air` | `air` |
+| 1 | `mantle` | `mantle` |
+| 164 | `creativeblock-2` | `creativeblock-12` (the sample's single placed block) |
+| 2966 | `water-still-7` (the deep lake in §3) | `slantedroofingcornerinner-fireclay-south-snow` |
+| 6769 | | `rock-granite` |
+
+- **IDs are per save.** The same number means different blocks in different saves, so a reader must use each save's own list.
+- **Sizes:** 14,091 block codes and 4,468 item codes in the 1.22.7 world; 9,312 and 3,318 in the 1.19 sample. Block IDs run from 0 with no gaps.
+- **Completeness:** every ID in every solid and liquid palette (41,648 entries in the 1.22.7 world, 52,856 in the 1.19 sample) and every chiseled-block material (9,309 in the sample) has a code. *(Verified with storymap's [`src/GameData.zig`](../../src/GameData.zig).)*
+- **No domain prefixes:** codes are written without one (`rock-granite`, not `game:rock-granite`) in both saves. Neither world has mods, so how modded codes appear is still open.
+
+The other field-11 keys (`worldeditworkspaces`, `ambient`, `temporalStormData`, `riftweather`, …) aren't decoded.
+
+### World configuration
+
+Field 31 is a tree attribute (§5) whose values are all strings, e.g. `gameMode: "survival"`, `startingClimate: "temperate"`, `seasons: "enabled"`, `spawnRadius: "5000"`. *(Verified (1.19, 1.22.7): it parses with storymap's tree attribute format.)* `spawnRadius` is 50 in the 1.19 sample and 5000 in the 1.22.7 world, which explains where their players spawned (§2).
+
+## 7. Map chunks
 
 `mapchunk.data` averages ~17 KB per row in the sample and isn't decoded. The game's world map reads a per-column `RainHeightMap` from map chunks *(Source: [vsessentialsmod `ChunkMapLayer.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs))*, so the stored rows probably include it; if so, a top-down map wouldn't need to scan blocks. *(Unverified.)*
 
-## 7. Open questions
+## 8. Open questions
 
-- **Block ID → block code mapping.** Palettes and chiseled-block materials hold numeric IDs. The mapping is probably in `gamedata`. Everything that needs names, colours or models depends on it.
-- **Liquid IDs.** Field 16 holds liquids, but which ID is which liquid needs the ID mapping above.
 - **Other chunk fields:** light (2, 3), entities (5, 6), field 10, decor (14), and the small varint fields.
-- **`mapchunk`, `mapregion`, `gamedata`, `playerdata`:** not decoded.
+- **`mapchunk`, `mapregion`, `playerdata`:** not decoded. **`gamedata`:** only the ID lists and world configuration are decoded.
 - **In-game coordinates:** the offset from absolute coordinates isn't confirmed.
 - **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; a world with ruins or a placed chiseled block, and items on the ground, would cover them.
-- **Mods.** How modded blocks appear in palettes and `gamedata` needs a world created with a mod enabled.
+- **Mods.** How modded blocks appear in palettes and `gamedata` (with a domain prefix or without) needs a world created with a mod enabled.

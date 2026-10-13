@@ -718,8 +718,25 @@
 		<p class="source">Sources: every block entity of a 1.19 save (14,447) and a 1.22.7 save (684) parses with this format; chiseled blocks only appear in the 1.19 one · 1.22.7 code: <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree/TreeAttribute.cs">vsapi TreeAttribute.cs</a> and <a href="https://github.com/anegostudios/vsapi/tree/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree">attribute classes</a> · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Collectible/ItemStack.cs">ItemStack.cs</a> · <a href="https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Microblock/BEMicroBlock.cs">vssurvivalmod BEMicroBlock.cs</a> · <a href="README.md#5-block-entities-field-8">README §5</a></p>
 	</section>
 
+	<section id="block-names">
+		<h2><span class="num">10</span><span>Block names: the gamedata table</span></h2>
+		<p>Palettes and chiseled blocks only hold numeric block IDs. The names are in the save's single <code>gamedata</code> row, another Protobuf message. One of its entries, <code>BlockIDs</code>, lists every ID with its block code; <code>ItemIDs</code> does the same for items.</p>
+		<div class="table-wrap">
+			<table>
+				<thead><tr><th>ID</th><th>1.22.7 world</th><th>1.19 sample</th></tr></thead>
+				<tbody>
+					<tr><td>0</td><td><code>air</code></td><td><code>air</code></td></tr>
+					<tr><td>1</td><td><code>mantle</code></td><td><code>mantle</code></td></tr>
+					<tr><td>164</td><td><code>creativeblock-2</code></td><td><code>creativeblock-12</code></td></tr>
+				</tbody>
+			</table>
+		</div>
+		<p style="margin-top: var(--s4)">The same number means different blocks in different saves: 2966 is <code>water-still-7</code> in the 1.22.7 world but a snowy fireclay roof corner in the 1.19 sample. So every save has to be read with its own list. The same row also holds the world's settings, such as how far from the centre new players spawn.</p>
+		<p class="source">Sources: every block ID in both saves has a code · <a href="../../src/GameData.zig">src/GameData.zig</a> · <a href="README.md#6-game-data">README §6</a></p>
+	</section>
+
 	<section id="map">
-		<h2><span class="num">10</span><span>Using it: a top-down map</span></h2>
+		<h2><span class="num">11</span><span>Using it: a top-down map</span></h2>
 		<p>A simple map needs only the top block of each column. Scan each column down from the top until something isn't air, and colour the pixel by that height. Columns with no blocks at all stay black. Click cells in the side view to add or remove blocks.</p>
 		<div class="panel toy">
 			<div>
@@ -737,16 +754,15 @@
 	</section>
 
 	<section id="unknown">
-		<h2><span class="num">11</span><span>Still unknown</span></h2>
+		<h2><span class="num">12</span><span>Still unknown</span></h2>
 		<ul class="list">
-			<li><b>Block names.</b> Palettes and chiseled-block materials hold numeric IDs like <code>6769</code>. The mapping to block codes is probably in <code>gamedata</code>.</li>
 			<li><b>The other fields.</b> Light (2, 3), entities (5, 6), field 10, decor (14) and the small number fields.</li>
 			<li><b>The other tables.</b> <code>mapchunk</code>, <code>mapregion</code>, <code>gamedata</code> and <code>playerdata</code> haven't been decoded.</li>
 			<li><b>In-game coordinates.</b> The game shows coordinates shifted from these absolute ones; the exact offset hasn't been confirmed.</li>
 			<li><b>Chiseled blocks on 1.22.</b> The 1.22.7 test world has none yet.</li>
 			<li><b>Mods.</b> How modded blocks appear in a save hasn't been checked.</li>
 		</ul>
-		<p class="source">Source: <a href="README.md#7-open-questions">README §7</a></p>
+		<p class="source">Source: <a href="README.md#8-open-questions">README §8</a></p>
 	</section>
 </main>
 
