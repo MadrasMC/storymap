@@ -97,7 +97,15 @@ pub fn main(init: std.process.Init) !void {
     defer stmt.finalize();
 
     while (stmt.step()) {
-        const chunk = try Chunk.from(allocator, stmt.column(u64, 0), stmt.column([]const u8, 1));
+        // One undecodable chunk shouldn't stop the whole map.
+        const chunk = Chunk.from(allocator, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => {
+                const pos: Chunk.Position = @bitCast(stmt.column(u64, 0));
+                std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
+                continue;
+            },
+        };
         defer chunk.deinit();
 
         // std.debug.print("{f}\n", .{chunk});

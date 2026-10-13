@@ -113,7 +113,7 @@ The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities
 
 ## 4. Blocks: fields 1 and 16
 
-*(Verified (1.19) unless noted: decoding the one-block chunk at chunk (15995, 4, 15999) finds exactly one non-air block, palette ID 164, at local (5, 7, 18); decoding the whole save renders a continuous heightmap. Decompression code: [`src/Compression.zig`](../../src/Compression.zig), a port of the game's own C# routine, judging by its names. Read side: `Chunk.getBlock` in [`src/Chunk.zig`](../../src/Chunk.zig), commit `f9dc6e3`.)*
+*(Verified (1.19) unless noted: decoding the one-block chunk at chunk (15995, 4, 15999) finds exactly one non-air block, palette ID 164, at local (5, 7, 18); decoding the whole save renders a continuous heightmap. Decoding code: [`src/Compression.zig`](../../src/Compression.zig), originally a port of the game's own C# routine. Read side: `Chunk.getBlock` in [`src/Chunk.zig`](../../src/Chunk.zig), commit `f9dc6e3`.)*
 
 ### Layout
 

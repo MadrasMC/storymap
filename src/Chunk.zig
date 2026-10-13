@@ -2,7 +2,7 @@ const Chunk = @This();
 
 const std = @import("std");
 const Protobuf = @import("./ProtoBuf.zig");
-const Compression = @import("./Compression.zig").Compression;
+const Compression = @import("./Compression.zig");
 const BlockEntity = @import("./BlockEntity.zig");
 
 // NOTE: To keep in sync with the server per game version
@@ -115,11 +115,10 @@ pub fn deinit(self: Chunk) void {
 }
 
 pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chunk {
-    var _blocks: ?[][]i32 = null;
-    var _blockPalette: ?[]const i32 = null;
-
-    var _liquids: ?[][]i32 = null;
-    var _liquidPalette: ?[]const i32 = null;
+    var blockLayer: ?Compression.Layer = null;
+    errdefer if (blockLayer) |layer| layer.deinit(allocator);
+    var liquidLayer: ?Compression.Layer = null;
+    errdefer if (liquidLayer) |layer| layer.deinit(allocator);
 
     var blockEntityArena: std.heap.ArenaAllocator = .init(allocator);
     errdefer blockEntityArena.deinit();
@@ -131,22 +130,11 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
         if (msg.data == .LEN) {
             switch (msg.field_number) {
                 1, 16 => {
-                    var dataBits: [][]i32 = &.{};
-                    var refCount: usize = 0;
-                    const palette = try Compression.DecompressCombined(
-                        allocator,
-                        msg.data.LEN,
-                        &dataBits,
-                        &refCount,
-                    );
-
-                    if (msg.field_number == 1) {
-                        _blocks = dataBits;
-                        _blockPalette = palette;
-                    } else {
-                        _liquids = dataBits;
-                        _liquidPalette = palette;
-                    }
+                    const layer = try Compression.decodeLayer(allocator, msg.data.LEN);
+                    const slot = if (msg.field_number == 1) &blockLayer else &liquidLayer;
+                    // A repeated field replaces the earlier one.
+                    if (slot.*) |old| old.deinit(allocator);
+                    slot.* = layer;
                 },
                 8 => {
                     // One unreadable block entity shouldn't stop the whole map.
@@ -170,10 +158,10 @@ pub fn from(allocator: std.mem.Allocator, position: u64, data: []const u8) !Chun
     return Chunk{
         .allocator = allocator,
         .position = @bitCast(position),
-        .blocks = _blocks,
-        .blockPalette = _blockPalette,
-        .liquids = _liquids,
-        .liquidPalette = _liquidPalette,
+        .blocks = if (blockLayer) |layer| layer.planes else null,
+        .blockPalette = if (blockLayer) |layer| layer.palette else null,
+        .liquids = if (liquidLayer) |layer| layer.planes else null,
+        .liquidPalette = if (liquidLayer) |layer| layer.palette else null,
         .blockEntities = try blockEntitiesArray.toOwnedSlice(arena),
         .blockEntityArena = blockEntityArena,
     };
