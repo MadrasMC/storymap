@@ -93,44 +93,31 @@ pub fn main(init: std.process.Init) !void {
     defer allocator.free(topBlock);
     @memset(topBlock, 0);
 
-    const stmt = try db.prepare("SELECT position, data FROM chunk;");
-    defer stmt.finalize();
-
-    while (stmt.step()) {
-        // One undecodable chunk shouldn't stop the whole map.
-        const chunk = Chunk.from(allocator, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => {
-                const pos: Chunk.Position = @bitCast(stmt.column(u64, 0));
-                std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
-                continue;
-            },
+    // Decode and scan on every core. Each worker opens its own connection and takes whole
+    // chunk columns, so every pixel is written by exactly one thread and needs no locking.
+    const workers = std.Thread.getCpuCount() catch 1;
+    const jobs = try allocator.alloc(ScanJob, workers);
+    defer allocator.free(jobs);
+    const threads = try allocator.alloc(?std.Thread, workers);
+    defer allocator.free(threads);
+    for (jobs, threads, 0..) |*job, *thread, worker| {
+        job.* = .{
+            .allocator = allocator,
+            .dbPath = dbPath,
+            .worker = worker,
+            .workers = workers,
+            .minX = min_x,
+            .minZ = min_z,
+            .width = width,
+            .top = top,
+            .topBlock = topBlock,
         };
-        defer chunk.deinit();
-
-        // std.debug.print("{f}\n", .{chunk});
-
-        if (chunk.blockPalette == null) continue; // all air
-
-        const left = (chunk.position.x - min_x) * 32;
-        const up = (chunk.position.z - min_z) * 32;
-
-        for (0..32) |z| for (0..32) |x| {
-            const index = (up + z) * width + left + x;
-            // Walk down from the top of the chunk and stop at the first solid block.
-            for (0..32) |i| {
-                const y = 31 - i;
-                const block = chunk.getBlock(@intCast(x), @intCast(y), @intCast(z));
-                if (block == 0) continue;
-                const world_y: u16 = @intCast(@as(usize, chunk.position.y) * 32 + y);
-                if (top[index] == null or top[index].? < world_y) {
-                    top[index] = world_y;
-                    topBlock[index] = block;
-                }
-                break;
-            }
-        };
+        // If a thread can't be started, that share of the work runs here instead.
+        thread.* = std.Thread.spawn(.{}, scanColumns, .{job}) catch null;
+        if (thread.* == null) scanColumns(job);
     }
+    for (threads) |thread| if (thread) |t| t.join();
+    for (jobs) |job| if (job.err) |err| return err;
 
     var lowest: u16 = std.math.maxInt(u16);
     var highest: u16 = 0;
@@ -157,6 +144,73 @@ pub fn main(init: std.process.Init) !void {
 
     if (stb.stbi_write_png(outPath, @intCast(width), @intCast(height), 4, pixels.ptr, @intCast(width * @sizeOf(u32))) == 0) {
         return error.WritePngFailed;
+    }
+}
+
+/// One worker's share of the chunks: the columns whose position (without its y bits)
+/// leaves `worker` when divided by `workers`.
+const ScanJob = struct {
+    allocator: std.mem.Allocator,
+    dbPath: []const u8,
+    worker: usize,
+    workers: usize,
+    minX: usize,
+    minZ: usize,
+    width: usize,
+    /// Shared with the other workers; this one only writes its own columns.
+    top: []?u16,
+    topBlock: []i32,
+    err: ?anyerror = null,
+};
+
+fn scanColumns(job: *ScanJob) void {
+    scanColumnsOrFail(job) catch |err| {
+        job.err = err;
+    };
+}
+
+fn scanColumnsOrFail(job: *ScanJob) !void {
+    const allocator = job.allocator;
+    const db = try DB.initImmutable(allocator, job.dbPath);
+    defer db.deinit();
+    // 2^54 - 1 keeps x and z and drops y, so all chunks of a column go to the same worker.
+    const sql = try std.fmt.allocPrint(allocator, "SELECT position, data FROM chunk WHERE (position & 18014398509481983) % {d} = {d};", .{ job.workers, job.worker });
+    defer allocator.free(sql);
+    const stmt = try db.prepare(sql);
+    defer stmt.finalize();
+
+    while (stmt.step()) {
+        // One undecodable chunk shouldn't stop the whole map.
+        const chunk = Chunk.from(allocator, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => {
+                const pos: Chunk.Position = @bitCast(stmt.column(u64, 0));
+                std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
+                continue;
+            },
+        };
+        defer chunk.deinit();
+
+        if (chunk.blockPalette == null) continue; // all air
+
+        const left = (chunk.position.x - job.minX) * 32;
+        const up = (chunk.position.z - job.minZ) * 32;
+
+        for (0..32) |z| for (0..32) |x| {
+            const index = (up + z) * job.width + left + x;
+            // Walk down from the top of the chunk and stop at the first solid block.
+            for (0..32) |i| {
+                const y = 31 - i;
+                const block = chunk.getBlock(@intCast(x), @intCast(y), @intCast(z));
+                if (block == 0) continue;
+                const world_y: u16 = @intCast(@as(usize, chunk.position.y) * 32 + y);
+                if (job.top[index] == null or job.top[index].? < world_y) {
+                    job.top[index] = world_y;
+                    job.topBlock[index] = block;
+                }
+                break;
+            }
+        };
     }
 }
 
