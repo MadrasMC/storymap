@@ -72,3 +72,19 @@ From the sample save (class counts in [`save-format/README.md` §5](save-format/
 ## Isometric reference
 
 [Mapcrafter](https://github.com/mapcrafter/mapcrafter) renders Minecraft worlds as isometric tiles for a web map. It's the model for storymap's isometric output; its approach hasn't been studied in detail here yet.
+
+## Performance
+
+*(Measured 2026-10-14 on a 14-thread Windows machine, median of 5–7 runs; scripts in the session scratchpad, not the repo.)*
+
+Where a render's time goes, ReleaseFast, the 1.22.7 world (6,224 chunks, a 3,232 × 4,224 image):
+
+| Stage | Time |
+| --- | --- |
+| Reading and decoding all chunks, plus the block list | 0.12 s |
+| Finding each column's top block | 0.07 s |
+| Turning heights into pixels and writing the PNG (stb) | 0.38 s |
+
+- **The PNG dominates large maps.** It grows with map area, while decoding grows with the number of chunks.
+- **Reusing one zstd decompression context** instead of creating one per layer would save at most ~0.05 s of kernel time per render, so it isn't done. (A stress test with millions of tiny inputs and the leak-checking allocator spent 83% of its time creating contexts, but that's not the rendering workload.)
+- **Decoding runs on every core**, one SQLite connection per worker, each worker taking whole chunk columns. On these small test worlds it barely helps in ReleaseFast (decode and scan 0.19 s → 0.16 s), because starting threads and connections is a fixed cost; in Debug the 1.19 sample renders 2.5× faster (2.56 s → 1.02 s). The gain should grow with world size, which hasn't been measured on a large world yet.
