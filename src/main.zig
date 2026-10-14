@@ -179,19 +179,22 @@ fn scanColumnsOrFail(job: *ScanJob) !void {
     const stmt = try db.prepare(sql);
     defer stmt.finalize();
 
+    // Allocated once and reused for every chunk: decoding itself doesn't allocate.
+    var decoder: Chunk.Decoder = try .init(allocator, Chunk.Decoder.defaultBlockEntityBytes);
+    defer decoder.deinit(allocator);
+    const chunk = try allocator.create(Chunk);
+    defer allocator.destroy(chunk);
+    chunk.* = .{};
+
     while (stmt.step()) {
         // One undecodable chunk shouldn't stop the whole map.
-        const chunk = Chunk.from(allocator, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => {
-                const pos: Chunk.Position = @bitCast(stmt.column(u64, 0));
-                std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
-                continue;
-            },
+        decoder.decode(chunk, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch |err| {
+            const pos = chunk.position;
+            std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
+            continue;
         };
-        defer chunk.deinit();
 
-        if (chunk.blockPalette == null) continue; // all air
+        if (chunk.blocks.bits == 0) continue; // all air
 
         const left = (chunk.position.x - job.minX) * 32;
         const up = (chunk.position.z - job.minZ) * 32;
