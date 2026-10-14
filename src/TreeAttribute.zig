@@ -65,14 +65,43 @@ pub fn getIntArray(self: TreeAttribute, key: []const u8) ?[]const i32 {
 /// Reads one tree from the start of `reader`'s remaining bytes. Everything is copied into
 /// `arena`, so the result outlives the input (SQLite reuses a row's buffer on the next step).
 pub fn parse(arena: std.mem.Allocator, reader: *Reader) Error!TreeAttribute {
-    var entries: std.ArrayList(Entry) = .empty;
+    // Entries are collected on the stack and copied into the arena once, at the exact size:
+    // a list grown inside an arena leaves every outgrown copy behind. Only a tree with more
+    // entries than the stack holds grows in the arena.
+    var stack: [32]Entry = undefined;
+    var count: usize = 0;
+    var spill: std.ArrayList(Entry) = .empty;
     while (true) {
         const typeId = try reader.byte();
         if (typeId == 0) break;
         const key = try reader.string(arena);
-        try entries.append(arena, .{ .key = key, .value = try parseValue(arena, reader, typeId) });
+        const entry: Entry = .{ .key = key, .value = try parseValue(arena, reader, typeId) };
+        if (count < stack.len) {
+            stack[count] = entry;
+            count += 1;
+        } else {
+            if (spill.items.len == 0) try spill.appendSlice(arena, &stack);
+            try spill.append(arena, entry);
+        }
     }
-    return .{ .entries = try entries.toOwnedSlice(arena) };
+    if (spill.items.len > 0) return .{ .entries = try spill.toOwnedSlice(arena) };
+    return .{ .entries = try arena.dupe(Entry, stack[0..count]) };
+}
+
+test "a tree with more entries than the stack holds" {
+    // 40 int entries "a0".."a39", then the end of the tree.
+    var bytes: [40 * 8 + 1]u8 = undefined;
+    for (0..40) |i| {
+        const entry = bytes[i * 8 ..][0..8];
+        entry.* = .{ 1, 2, 'a', '0' + @as(u8, @intCast(i / 10)), @intCast(i), 0, 0, 0 };
+    }
+    bytes[40 * 8] = 0;
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var reader: Reader = .{ .bytes = &bytes };
+    const tree = try parse(arena.allocator(), &reader);
+    try std.testing.expectEqual(40, tree.entries.len);
+    for (tree.entries, 0..) |entry, i| try std.testing.expectEqual(@as(i32, @intCast(i)), entry.value.int);
 }
 
 fn parseValue(arena: std.mem.Allocator, reader: *Reader, typeId: u8) Error!Value {
