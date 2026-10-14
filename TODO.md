@@ -16,26 +16,25 @@ storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 ## Memory
 
-No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). Stage 1 could come before the colour map, since everything after it builds on the decoding path.
+No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). Stage 1, no allocation per chunk, is done.
 
-7. **No allocation per chunk.** Fixed per-worker scratch: palette, planes, decompression buffers, a static zstd context, a block entity area reset per chunk. `Chunk` as fixed-size arrays.
-8. **Fixed tile buffers,** one per worker, as part of the tiles item above.
-9. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
+7. **Fixed tile buffers,** one per worker, as part of the tiles item above.
+8. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
 
 ## Block entities
 
-10. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
-11. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
+9. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
+10. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
 
 ## Isometric render
 
-12. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
-13. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
+11. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
+12. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
 
 ## Format coverage
 
-14. **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; it needs a world with ruins (or a placed chiseled block) and items on the ground.
-15. **A modded world.** Primitive Survival is installed but was added after the test world was made. When modded content becomes relevant (asset extraction for mods, the ID mapping), ask for a new world created with it enabled.
+13. **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; it needs a world with ruins (or a placed chiseled block) and items on the ground.
+14. **A modded world.** Primitive Survival is installed but was added after the test world was made. When modded content becomes relevant (asset extraction for mods, the ID mapping), ask for a new world created with it enabled.
 
 ## Done
 
@@ -48,5 +47,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Saves opened with SQLite's `immutable=1`, so storymap never writes next to them; a warning if the game may still be running.
 - `storymap extract-assets`: copies blocktypes, itemtypes, shapes, textures (minus gui/icons), worldproperties, patches and `config/colormaps.json` (181 MB for 1.22.7) plus every mod, in the game's own layout. Verified byte-for-byte against the install.
 - Block ID → block code mapping from `gamedata` (`src/GameData.zig`); every ID in both test saves has a name.
+- No allocation per chunk (memory stage 1): one `Chunk.Decoder` and one fixed-size `Chunk` per worker, reused for every chunk ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)).
 - Chunk decoding on every core, one SQLite connection per worker; timings in [`docs/rendering.md`](docs/rendering.md#performance).
 - Format checked against 1.22.7: schema, positions, chunk fields, block and liquid decoding and block entities all hold; differences are noted in the docs.

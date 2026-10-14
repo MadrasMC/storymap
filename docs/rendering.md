@@ -93,14 +93,14 @@ Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/
 | zstd decompression context | nothing | Fixed size; zstd can build it in a supplied buffer (`ZSTD_initStaticDCtx`). |
 | Decompression output | the format | The same caps as the palette and planes. |
 | A chunk record from SQLite | the chunk's contents | SQLite's memory; SQLite can run inside one fixed block (`SQLITE_ENABLE_MEMSYS5` with `SQLITE_CONFIG_HEAP`). |
-| Block entity data | arbitrary (mods, full chests) | Not set by the format: needs a configured per-chunk limit, with entities over it skipped with a warning. |
+| Block entity data | arbitrary (mods, full chests) | Not set by the format: a per-chunk limit, 2 MiB by default (`Chunk.Decoder.defaultBlockEntityBytes`), with entities over it skipped with a warning. Parsed, block entities take up to 4.6× their raw bytes; the busiest test chunk, a ruin with 659 chiseled blocks and 134 KB of raw data, needs 615 KB. |
 | Block and item names (`gamedata`), later assets | the game version and mods | Read once at startup. |
 | Tile height arrays and pixels | the tile size | Fixed per worker, reused for every tile. |
 | PNG encoding (stb) | the tile size | stb's memory functions can be replaced (`STBIW_MALLOC`), so it can use a fixed buffer. |
 
 Stages:
 
-1. **No allocation per chunk:** each worker gets one fixed scratch area (palette, planes, decompression buffers, a static zstd context, a block entity area reset after each chunk). `Chunk` becomes fixed-size arrays instead of slices of slices, which also makes `getBlock` faster.
+1. **No allocation per chunk** (done): each worker sets up one `Chunk.Decoder` (a zstd context in a fixed buffer, and the block entity buffer, reset before each chunk) and one `Chunk` with fixed-size layers, about 380 KB, and reuses both for every chunk. `Decoder.decode` takes no allocator. Collecting each tree's entries on the stack before copying them out once halved block entity memory (1.2 MB → 615 KB for the busiest chunk). Renders take the same time as before on the test worlds, since the PNG dominates; decoding-heavy work is much faster: a stress test of about 12 million damaged inputs went from about 14 minutes to just over a second, with identical results.
 2. **Tiles with levels of detail,** each worker reusing one fixed tile buffer.
 3. **Enforcement:** an allocator that refuses to allocate after startup, SQLite on its own fixed block, and stb's memory functions pointed at a fixed buffer.
 
