@@ -109,6 +109,14 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    const bench_cmd = b.addRunArtifact(exe);
+    bench_cmd.step.dependOn(b.getInstallStep());
+    bench_cmd.addArg("bench");
+    bench_cmd.addPassthruArgs();
+
+    const bench_step = b.step("bench", "Time each stage of a render (use -Doptimize=ReleaseFast)");
+    bench_step.dependOn(&bench_cmd.step);
+
     const unit_tests = b.addTest(.{ .root_module = exe_mod });
     const run_unit_tests = b.addRunArtifact(unit_tests);
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const DB = @import("sqlite.zig");
 const s = @import("sqlite3");
 const Chunk = @import("Chunk.zig");
@@ -6,12 +7,14 @@ const ProtoBuf = @import("ProtoBuf.zig");
 const BlockEntity = @import("BlockEntity.zig");
 const VS = @import("Compression.zig");
 const extract = @import("extract.zig");
+const bench = @import("bench.zig");
 const GameData = @import("GameData.zig");
 const stb = @import("stb_image_write");
 
 const usage =
     \\usage: storymap <save.vcdbs> [output.png]
     \\       storymap extract-assets <output folder> [--game <folder>] [--data <folder>]
+    \\       storymap bench <save.vcdbs> [runs]
     \\
     \\Renders a top-down heightmap of a Vintage Story save to output.png,
     \\or out.png when no output path is given.
@@ -24,19 +27,13 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len >= 2 and std.mem.eql(u8, args[1], "extract-assets")) return extract.run(init, args[2..]);
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "bench")) return bench.run(init, args[2..]);
     if (args.len < 2 or args.len > 3) {
         std.debug.print(usage, .{});
         std.process.exit(2);
     }
     const dbPath = args[1];
     const outPath = if (args.len == 3) args[2] else "out.png";
-
-    // Never write next to the save: it may be in the game's own Saves folder.
-    const db = DB.initImmutable(allocator, dbPath) catch |err| {
-        std.debug.print("storymap: can't open {s} ({s})\n", .{ dbPath, @errorName(err) });
-        std.process.exit(1);
-    };
-    defer db.deinit();
 
     // The immutable open ignores the save's -wal file. A non-empty one holds changes the
     // game hasn't written into the save yet, because it's still running or it crashed.
@@ -54,6 +51,40 @@ pub fn main(init: std.process.Init) !void {
 
     // chunk with one block in sample-one-block-spawn.vcdbs
     _ = Chunk.Position.position64(.{ .x = 15995, .y = 4, .z = 15999 });
+
+    try render(allocator, init.io, dbPath, .{ .file = outPath }, null);
+}
+
+pub const Output = union(enum) {
+    file: [:0]const u8,
+    /// Encode the PNG and drop it, so a benchmark doesn't time the disk.
+    discard,
+};
+
+/// What a render covered and how long each stage took.
+pub const Stats = struct {
+    chunks: usize = 0,
+    width: usize = 0,
+    height: usize = 0,
+    /// Opening the save and reading its extent and block list.
+    open: Io.Duration = .zero,
+    /// Decoding every chunk and finding each column's top block.
+    scan: Io.Duration = .zero,
+    /// Shading the pixels and encoding the PNG.
+    png: Io.Duration = .zero,
+};
+
+/// Renders a top-down heightmap of the save. With `stats`, records the stages' times
+/// instead of printing a summary of the map.
+pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: Output, stats: ?*Stats) !void {
+    const start: Io.Timestamp = .now(io, .awake);
+
+    // Never write next to the save: it may be in the game's own Saves folder.
+    const db = DB.initImmutable(allocator, dbPath) catch |err| {
+        std.debug.print("storymap: can't open {s} ({s})\n", .{ dbPath, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer db.deinit();
 
     // The image covers every chunk in the save. Chunk x is the low 27 bits of
     // `position` and z the next 27 (see Chunk.Position).
@@ -83,6 +114,7 @@ pub fn main(init: std.process.Init) !void {
     // One pixel per block column; x goes right (east), z goes down (south).
     const width = (max_x - min_x + 1) * 32;
     const height = (max_z - min_z + 1) * 32;
+    const opened: Io.Timestamp = .now(io, .awake);
 
     // Height of the highest non-air block in each column, or null if there is none.
     const top = try allocator.alloc(?u16, width * height);
@@ -93,31 +125,14 @@ pub fn main(init: std.process.Init) !void {
     defer allocator.free(topBlock);
     @memset(topBlock, 0);
 
-    // Decode and scan on every core. Each worker opens its own connection and takes whole
-    // chunk columns, so every pixel is written by exactly one thread and needs no locking.
-    const workers = std.Thread.getCpuCount() catch 1;
-    const jobs = try allocator.alloc(ScanJob, workers);
-    defer allocator.free(jobs);
-    const threads = try allocator.alloc(?std.Thread, workers);
-    defer allocator.free(threads);
-    for (jobs, threads, 0..) |*job, *thread, worker| {
-        job.* = .{
-            .allocator = allocator,
-            .dbPath = dbPath,
-            .worker = worker,
-            .workers = workers,
-            .minX = min_x,
-            .minZ = min_z,
-            .width = width,
-            .top = top,
-            .topBlock = topBlock,
-        };
-        // If a thread can't be started, that share of the work runs here instead.
-        thread.* = std.Thread.spawn(.{}, scanColumns, .{job}) catch null;
-        if (thread.* == null) scanColumns(job);
-    }
-    for (threads) |thread| if (thread) |t| t.join();
-    for (jobs) |job| if (job.err) |err| return err;
+    const chunks = try scanChunks(allocator, dbPath, .{
+        .minX = min_x,
+        .minZ = min_z,
+        .width = width,
+        .top = top,
+        .topBlock = topBlock,
+    });
+    const scanned: Io.Timestamp = .now(io, .awake);
 
     var lowest: u16 = std.math.maxInt(u16);
     var highest: u16 = 0;
@@ -126,8 +141,11 @@ pub fn main(init: std.process.Init) !void {
         highest = @max(highest, y);
     };
 
-    std.debug.print("{}x{} blocks, surface y {}..{}\n", .{ width, height, lowest, highest });
-    try printSurfaceBlocks(allocator, gameData, top, topBlock);
+    if (stats == null) {
+        std.debug.print("{}x{} blocks, surface y {}..{}\n", .{ width, height, lowest, highest });
+        try printSurfaceBlocks(allocator, gameData, top, topBlock);
+    }
+    const summarised: Io.Timestamp = .now(io, .awake);
 
     // Greyscale by height. The lowest surface is dark grey rather than black, so it
     // stays distinguishable from columns with no blocks at all.
@@ -142,9 +160,64 @@ pub fn main(init: std.process.Init) !void {
         pixel.* = 0xFF000000 | (shade << 16) | (shade << 8) | shade;
     }
 
-    if (stb.stbi_write_png(outPath, @intCast(width), @intCast(height), 4, pixels.ptr, @intCast(width * @sizeOf(u32))) == 0) {
-        return error.WritePngFailed;
+    const stride: c_int = @intCast(width * @sizeOf(u32));
+    const written = switch (output) {
+        .file => |path| stb.stbi_write_png(path, @intCast(width), @intCast(height), 4, pixels.ptr, stride),
+        .discard => stb.stbi_write_png_to_func(discardPng, null, @intCast(width), @intCast(height), 4, pixels.ptr, stride),
+    };
+    if (written == 0) return error.WritePngFailed;
+
+    if (stats) |out| out.* = .{
+        .chunks = chunks,
+        .width = width,
+        .height = height,
+        .open = start.durationTo(opened),
+        .scan = opened.durationTo(scanned),
+        .png = summarised.untilNow(io, .awake),
+    };
+}
+
+fn discardPng(_: ?*anyopaque, _: ?*anyopaque, _: c_int) callconv(.c) void {}
+
+/// The image the workers fill in, one pixel per block column.
+pub const Map = struct {
+    minX: usize,
+    minZ: usize,
+    width: usize,
+    /// Height of the highest non-air block in each column, or null if there is none.
+    top: []?u16,
+    /// The block ID at that height.
+    topBlock: []i32,
+};
+
+/// Decodes every chunk on every core and, with a map, records each column's top block in it.
+/// Returns how many chunks were read. Each worker opens its own connection and takes whole
+/// chunk columns, so every pixel is written by exactly one thread and needs no locking.
+pub fn scanChunks(allocator: std.mem.Allocator, dbPath: []const u8, map: ?Map) !usize {
+    const workers = std.Thread.getCpuCount() catch 1;
+    const jobs = try allocator.alloc(ScanJob, workers);
+    defer allocator.free(jobs);
+    const threads = try allocator.alloc(?std.Thread, workers);
+    defer allocator.free(threads);
+    for (jobs, threads, 0..) |*job, *thread, worker| {
+        job.* = .{
+            .allocator = allocator,
+            .dbPath = dbPath,
+            .worker = worker,
+            .workers = workers,
+            .map = map,
+        };
+        // If a thread can't be started, that share of the work runs here instead.
+        thread.* = std.Thread.spawn(.{}, scanColumns, .{job}) catch null;
+        if (thread.* == null) scanColumns(job);
     }
+    for (threads) |thread| if (thread) |t| t.join();
+    var chunks: usize = 0;
+    for (jobs) |job| {
+        if (job.err) |err| return err;
+        chunks += job.chunks;
+    }
+    return chunks;
 }
 
 /// One worker's share of the chunks: the columns whose position (without its y bits)
@@ -154,12 +227,9 @@ const ScanJob = struct {
     dbPath: []const u8,
     worker: usize,
     workers: usize,
-    minX: usize,
-    minZ: usize,
-    width: usize,
     /// Shared with the other workers; this one only writes its own columns.
-    top: []?u16,
-    topBlock: []i32,
+    map: ?Map,
+    chunks: usize = 0,
     err: ?anyerror = null,
 };
 
@@ -187,6 +257,7 @@ fn scanColumnsOrFail(job: *ScanJob) !void {
     chunk.* = .{};
 
     while (stmt.step()) {
+        job.chunks += 1;
         // One undecodable chunk shouldn't stop the whole map.
         decoder.decode(chunk, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch |err| {
             const pos = chunk.position;
@@ -194,22 +265,23 @@ fn scanColumnsOrFail(job: *ScanJob) !void {
             continue;
         };
 
+        const map = job.map orelse continue;
         if (chunk.blocks.bits == 0) continue; // all air
 
-        const left = (chunk.position.x - job.minX) * 32;
-        const up = (chunk.position.z - job.minZ) * 32;
+        const left = (chunk.position.x - map.minX) * 32;
+        const up = (chunk.position.z - map.minZ) * 32;
 
         for (0..32) |z| for (0..32) |x| {
-            const index = (up + z) * job.width + left + x;
+            const index = (up + z) * map.width + left + x;
             // Walk down from the top of the chunk and stop at the first solid block.
             for (0..32) |i| {
                 const y = 31 - i;
                 const block = chunk.getBlock(@intCast(x), @intCast(y), @intCast(z));
                 if (block == 0) continue;
                 const world_y: u16 = @intCast(@as(usize, chunk.position.y) * 32 + y);
-                if (job.top[index] == null or job.top[index].? < world_y) {
-                    job.top[index] = world_y;
-                    job.topBlock[index] = block;
+                if (map.top[index] == null or map.top[index].? < world_y) {
+                    map.top[index] = world_y;
+                    map.topBlock[index] = block;
                 }
                 break;
             }
@@ -254,4 +326,5 @@ test {
     _ = Chunk;
     _ = DB;
     _ = extract;
+    _ = bench;
 }
