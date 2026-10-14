@@ -38,10 +38,10 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 ## Done
 
-- Zig 0.17.0 upgrade, SQLite built from the amalgamation (`1162659`).
-- Palette over-read fix (`12219e3`).
-- Blocks decoded from bit planes; greyscale top-down heightmap (`f9dc6e3`).
-- Save format docs and interactive explainer (`aebadc2`, then the restructure into `docs/save-format/`).
+- Zig 0.17.0 upgrade, SQLite built from the amalgamation (`35484a3`).
+- Palette over-read fix (`092de71`).
+- Blocks decoded from bit planes; greyscale top-down heightmap (`a314adf`).
+- Save format docs and interactive explainer (`e900272`, then the restructure into `docs/save-format/`).
 - Save path and output path as command-line arguments.
 - Tree attribute parser: every block entity in the 1.19 sample parses (`src/TreeAttribute.zig`).
 - Saves opened with SQLite's `immutable=1`, so storymap never writes next to them; a warning if the game may still be running.

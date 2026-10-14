@@ -109,11 +109,11 @@ Field names come from the `fieldNames` list in [`src/Chunk.zig`](../../src/Chunk
 
 The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities, entities, decor, mod data and format version metadata. *([Wiki: Chunk Data Storage](https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage))*
 
-**Earlier observations** (from an older sample save, deleted in commit `ec646a7`): fields seen were 1, 2, 3, 6, 8, 12, 14, 16; fields 6 and 8 repeat; changing one solid block changed fields 1, 2 and 3. The 1.19 sample shows that fields 5, 7, 13, 17 and 18 also appear, but only in some chunks.
+**Earlier observations** (from an older sample save, no longer in the repo): fields seen were 1, 2, 3, 6, 8, 12, 14, 16; fields 6 and 8 repeat; changing one solid block changed fields 1, 2 and 3. The 1.19 sample shows that fields 5, 7, 13, 17 and 18 also appear, but only in some chunks.
 
 ## 4. Blocks: fields 1 and 16
 
-*(Verified (1.19) unless noted: decoding the one-block chunk at chunk (15995, 4, 15999) finds exactly one non-air block, palette ID 164, at local (5, 7, 18); decoding the whole save renders a continuous heightmap. Decoding code: [`src/Compression.zig`](../../src/Compression.zig). Read side: `Chunk.getBlock` in [`src/Chunk.zig`](../../src/Chunk.zig), commit `f9dc6e3`.)*
+*(Verified (1.19) unless noted: decoding the one-block chunk at chunk (15995, 4, 15999) finds exactly one non-air block, palette ID 164, at local (5, 7, 18); decoding the whole save renders a continuous heightmap. Decoding code: [`src/Compression.zig`](../../src/Compression.zig). Read side: `Chunk.getBlock` in [`src/Chunk.zig`](../../src/Chunk.zig), commit `a314adf`.)*
 
 ### Layout
 
@@ -138,7 +138,7 @@ The y = 3 chunk shows that palettes aren't pruned: its blocks were removed, so e
 
 ### Palette rounding
 
-The number of planes is `bits = ceil(log2(palette entries))`, and the palette is treated as having `2^bits` slots; `Layer.decode` in `src/Compression.zig` computes this. Only the real entries are stored. Slots past them are never referenced in valid data, and a reader should treat them as air rather than read past the stored entries. (storymap used to over-read here; fixed in commit `12219e3`.)
+The number of planes is `bits = ceil(log2(palette entries))`, and the palette is treated as having `2^bits` slots; `Layer.decode` in `src/Compression.zig` computes this. Only the real entries are stored. Slots past them are never referenced in valid data, and a reader should treat them as air rather than read past the stored entries. (storymap used to over-read here; fixed in commit `092de71`.)
 
 ### Block order and bit planes
 
