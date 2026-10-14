@@ -11,23 +11,31 @@ storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 3. **Colour map.** Read liquids (chunk field 16), look under snow, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`. Plants such as tall grass are often the top block (up to 15% of columns); decide whether to look through them.
 4. **Height from `mapchunk`.** Decode the stored rain height map, if it's there, instead of scanning every block.
-5. **Faster image output.** Writing the PNG is two-thirds of a large map's render time ([`docs/rendering.md`](docs/rendering.md#performance)); try stb's compression level or a faster encoder.
+5. **Tiles with levels of detail** instead of one image: per chunk or per map region, at several resolutions for the map viewer ([`docs/rendering.md`](docs/rendering.md#output-tiles-and-levels-of-detail)). Writing one big PNG is two-thirds of a large map's render time today; per-tile images bound that.
 6. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
+
+## Memory
+
+No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). Stage 1 could come before the colour map, since everything after it builds on the decoding path.
+
+7. **No allocation per chunk.** Fixed per-worker scratch: palette, planes, decompression buffers, a static zstd context, a block entity area reset per chunk. `Chunk` as fixed-size arrays.
+8. **Fixed tile buffers,** one per worker, as part of the tiles item above.
+9. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
 
 ## Block entities
 
-7. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
-8. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
+10. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
+11. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
 
 ## Isometric render
 
-9. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
-10. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
+12. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
+13. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
 
 ## Format coverage
 
-11. **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; it needs a world with ruins (or a placed chiseled block) and items on the ground.
-12. **A modded world.** Primitive Survival is installed but was added after the test world was made. When modded content becomes relevant (asset extraction for mods, the ID mapping), ask for a new world created with it enabled.
+14. **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; it needs a world with ruins (or a placed chiseled block) and items on the ground.
+15. **A modded world.** Primitive Survival is installed but was added after the test world was made. When modded content becomes relevant (asset extraction for mods, the ID mapping), ask for a new world created with it enabled.
 
 ## Done
 

@@ -20,6 +20,10 @@ fn copyAssets(gpa: std.mem.Allocator, io: Io, assetsDir: Dir, outAssets: Dir) !u
 
 This matches the standard library, which mostly puts the allocator before `io` and both before the arguments (`dir.openDir(io, path, options)`), so our calls and std's read the same way.
 
+### Memory
+
+The goal is no allocation after startup ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). New code in the per-chunk and per-tile paths takes buffers sized at startup instead of allocating; sizes come from the save, the installed mods or configured limits. Existing code is being moved there (see `TODO.md`).
+
 ### Naming allocator parameters
 
 Name an allocator parameter `arena` only when the function relies on arena semantics: it allocates and never frees individually (intermediate lists, partial results on error). Otherwise name it `allocator`, or `gpa` when it frees what it allocates.

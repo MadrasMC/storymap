@@ -73,6 +73,37 @@ From the sample save (class counts in [`save-format/README.md` §5](save-format/
 
 [Mapcrafter](https://github.com/mapcrafter/mapcrafter) renders Minecraft worlds as isometric tiles for a web map. It's the model for storymap's isometric output; its approach hasn't been studied in detail here yet.
 
+## Output: tiles and levels of detail
+
+storymap won't render a world as one image; today's single `out.png` is a stopgap. The output is a set of tiles for a map viewer, at several resolutions:
+
+- **Tile unit:** a chunk (32 × 32 blocks) or a map region (16 × 16 chunk columns, 512 × 512 blocks, the same unit as the save's `mapregion` table). Which one is still to be decided.
+- **Levels of detail:** each level halves the resolution of the one below, like a web map's zoom levels, so a zoomed-out view loads a few tiles that each cover many regions.
+- **Fetching a tile's chunks:** a chunk's position is the table's row key (x in the low bits, then z, then y), so the chunks under one tile are a few range queries on that key, one per row of chunk columns and height.
+
+Every tile has a fixed size, which is what makes the memory goal below possible.
+
+## Memory: no allocation at runtime (goal)
+
+Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/1a90d33bed174fac26ace95f4f43e51019bbb89d/docs/TIGER_STYLE.md#safety) ("All memory must be statically allocated at startup"): everything is allocated once at startup, sized from the save, the installed mods and configured limits, and nothing is allocated per chunk or per tile. Memory use is then known up front, a render can't run out of memory partway through, hot paths make no allocator calls, and error paths have nothing to free.
+
+| What | Grows with | Bound |
+| --- | --- | --- |
+| Palette and bit planes per layer | the format | At most 2¹⁵ palette entries (128 KB) and 15 planes of 4 KB; already enforced by `src/Compression.zig`. |
+| zstd decompression context | nothing | Fixed size; zstd can build it in a supplied buffer (`ZSTD_initStaticDCtx`). |
+| Decompression output | the format | The same caps as the palette and planes. |
+| A chunk record from SQLite | the chunk's contents | SQLite's memory; SQLite can run inside one fixed block (`SQLITE_ENABLE_MEMSYS5` with `SQLITE_CONFIG_HEAP`). |
+| Block entity data | arbitrary (mods, full chests) | Not set by the format: needs a configured per-chunk limit, with entities over it skipped with a warning. |
+| Block and item names (`gamedata`), later assets | the game version and mods | Read once at startup. |
+| Tile height arrays and pixels | the tile size | Fixed per worker, reused for every tile. |
+| PNG encoding (stb) | the tile size | stb's memory functions can be replaced (`STBIW_MALLOC`), so it can use a fixed buffer. |
+
+Stages:
+
+1. **No allocation per chunk:** each worker gets one fixed scratch area (palette, planes, decompression buffers, a static zstd context, a block entity area reset after each chunk). `Chunk` becomes fixed-size arrays instead of slices of slices, which also makes `getBlock` faster.
+2. **Tiles with levels of detail,** each worker reusing one fixed tile buffer.
+3. **Enforcement:** an allocator that refuses to allocate after startup, SQLite on its own fixed block, and stb's memory functions pointed at a fixed buffer.
+
 ## Performance
 
 *(Measured 2026-10-14 on a 14-thread Windows machine, median of 5–7 runs; scripts in the session scratchpad, not the repo.)*
@@ -85,6 +116,6 @@ Where a render's time goes, ReleaseFast, the 1.22.7 world (6,224 chunks, a 3,232
 | Finding each column's top block | 0.07 s |
 | Turning heights into pixels and writing the PNG (stb) | 0.38 s |
 
-- **The PNG dominates large maps.** It grows with map area, while decoding grows with the number of chunks.
+- **The PNG dominates large maps.** It grows with map area, while decoding grows with the number of chunks. Tiles (above) bound it.
 - **Reusing one zstd decompression context** instead of creating one per layer would save at most ~0.05 s of kernel time per render, so it isn't done. (A stress test with millions of tiny inputs and the leak-checking allocator spent 83% of its time creating contexts, but that's not the rendering workload.)
 - **Decoding runs on every core**, one SQLite connection per worker, each worker taking whole chunk columns. On these small test worlds it barely helps in ReleaseFast (decode and scan 0.19 s → 0.16 s), because starting threads and connections is a fixed cost; in Debug the 1.19 sample renders 2.5× faster (2.56 s → 1.02 s). The gain should grow with world size, which hasn't been measured on a large world yet.
