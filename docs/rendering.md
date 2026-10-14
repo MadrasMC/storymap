@@ -90,7 +90,7 @@ Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/
 | What | Grows with | Bound |
 | --- | --- | --- |
 | Palette and bit planes per layer | the format | At most 2¹⁵ palette entries (128 KB) and 15 planes of 4 KB; already enforced by `src/Compression.zig`. |
-| zstd decompression context | nothing | Fixed size; zstd can build it in a supplied buffer (`ZSTD_initStaticDCtx`). |
+| zstd decompression context | nothing | Fixed size, built once per worker in a supplied buffer (`ZSTD_initStaticDCtx`). |
 | Decompression output | the format | The same caps as the palette and planes. |
 | A chunk record from SQLite | the chunk's contents | SQLite's memory; SQLite can run inside one fixed block (`SQLITE_ENABLE_MEMSYS5` with `SQLITE_CONFIG_HEAP`). |
 | Block entity data | arbitrary (mods, full chests) | Not set by the format: a per-chunk limit, 2 MiB by default (`Chunk.Decoder.defaultBlockEntityBytes`), with entities over it skipped with a warning. Parsed, block entities take up to 4.6× their raw bytes; the busiest test chunk, a ruin with 659 chiseled blocks and 134 KB of raw data, needs 615 KB. |
@@ -119,5 +119,5 @@ Where a render's time goes, the 1.22.7 world (6,224 chunks, a 3,232 × 4,224 ima
 | End to end | 0.80 s | 7,800 |
 
 - **The PNG dominates large maps.** It grows with map area, while decoding grows with the number of chunks. Tiles (above) bound it.
-- **Reusing one zstd decompression context** instead of creating one per layer would save at most ~0.05 s of kernel time per render, so it isn't done. (A stress test with millions of tiny inputs and the leak-checking allocator spent 83% of its time creating contexts, but that's not the rendering workload.)
+- **One zstd decompression context per worker,** reused for every layer (stage 1 above). Creating one per layer cost at most ~0.05 s of kernel time per render, so renders barely changed; a stress test with millions of tiny inputs, which had spent 83% of its time creating contexts, got much faster.
 - **Decoding runs on every core**, one SQLite connection per worker, each worker taking whole chunk columns. On these small test worlds it barely helps in ReleaseFast (decode and scan 0.19 s → 0.16 s), because starting threads and connections is a fixed cost; in Debug the 1.19 sample renders 2.5× faster (2.56 s → 1.02 s). The gain should grow with world size, which hasn't been measured on a large world yet.
