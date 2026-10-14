@@ -106,15 +106,17 @@ Stages:
 
 ## Performance
 
-*(Measured 2026-10-14 on a 14-thread Windows machine, median of 5–7 runs; scripts in the session scratchpad, not the repo.)*
+*(Measured 2026-10-14 on a 14-thread Windows machine with `zig build bench -Doptimize=ReleaseFast -- <save> 7`: the median of 7 renders after one untimed one. The PNG is encoded but not written to disk.)*
 
-Where a render's time goes, ReleaseFast, the 1.22.7 world (6,224 chunks, a 3,232 × 4,224 image):
+Where a render's time goes, the 1.22.7 world (6,224 chunks, a 3,232 × 4,224 image):
 
-| Stage | Time |
-| --- | --- |
-| Reading and decoding all chunks, plus the block list | 0.12 s |
-| Finding each column's top block | 0.07 s |
-| Turning heights into pixels and writing the PNG (stb) | 0.38 s |
+| Stage | Time | Chunks/s |
+| --- | --- | --- |
+| Opening the save, its extent and the block list | 0.01 s | |
+| Decoding all chunks | 0.09 s | 70,000 |
+| Decoding all chunks and finding each column's top block | 0.14 s | 44,700 |
+| Turning heights into pixels and encoding the PNG (stb) | 0.64 s | |
+| End to end | 0.80 s | 7,800 |
 
 - **The PNG dominates large maps.** It grows with map area, while decoding grows with the number of chunks. Tiles (above) bound it.
 - **Reusing one zstd decompression context** instead of creating one per layer would save at most ~0.05 s of kernel time per render, so it isn't done. (A stress test with millions of tiny inputs and the leak-checking allocator spent 83% of its time creating contexts, but that's not the rendering workload.)
