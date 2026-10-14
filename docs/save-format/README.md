@@ -113,7 +113,7 @@ The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities
 
 ## 4. Blocks: fields 1 and 16
 
-*(Verified (1.19) unless noted: decoding the one-block chunk at chunk (15995, 4, 15999) finds exactly one non-air block, palette ID 164, at local (5, 7, 18); decoding the whole save renders a continuous heightmap. Decoding code: [`src/Compression.zig`](../../src/Compression.zig), originally a port of the game's own C# routine. Read side: `Chunk.getBlock` in [`src/Chunk.zig`](../../src/Chunk.zig), commit `f9dc6e3`.)*
+*(Verified (1.19) unless noted: decoding the one-block chunk at chunk (15995, 4, 15999) finds exactly one non-air block, palette ID 164, at local (5, 7, 18); decoding the whole save renders a continuous heightmap. Decoding code: [`src/Compression.zig`](../../src/Compression.zig). Read side: `Chunk.getBlock` in [`src/Chunk.zig`](../../src/Chunk.zig), commit `f9dc6e3`.)*
 
 ### Layout
 
@@ -138,7 +138,7 @@ The y = 3 chunk shows that palettes aren't pruned: its blocks were removed, so e
 
 ### Palette rounding
 
-The number of planes is `bits = ceil(log2(palette entries))`, and the palette is treated as having `2^bits` slots; storymap's `GetRoundedUpSize` (ported from the game) computes this. Only the real entries are stored. Slots past them are never referenced in valid data, and a reader should treat them as air rather than read past the stored entries. (storymap used to over-read here; fixed in commit `12219e3`.)
+The number of planes is `bits = ceil(log2(palette entries))`, and the palette is treated as having `2^bits` slots; `Layer.decode` in `src/Compression.zig` computes this. Only the real entries are stored. Slots past them are never referenced in valid data, and a reader should treat them as air rather than read past the stored entries. (storymap used to over-read here; fixed in commit `12219e3`.)
 
 ### Block order and bit planes
 

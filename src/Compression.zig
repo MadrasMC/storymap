@@ -1,5 +1,5 @@
 //! Decodes a chunk's block or liquid layer (fields 1 and 16): a palette, then zstd-compressed
-//! bit planes. Layout: docs/save-format/README.md §4. Originally ported from the game's C#.
+//! bit planes. Layout, and how it was verified: docs/save-format/README.md §4.
 //!
 //! Every length in the data is checked, so truncated or corrupt data is an error, not a crash.
 //! Nothing here allocates: a `Layer` is fixed-size and a `Decompressor` is set up once.
