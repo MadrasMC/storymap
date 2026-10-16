@@ -77,10 +77,13 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
 /// A top-down tile is 16 × 16 chunk columns, the same area as a map region.
 const chunksPerTile = tiles.size / 32;
 
-/// The tiles with anything to draw: those holding a chunk column with a map chunk. Every
-/// chunk column has one in the saves seen (docs/save-format/README.md#2-positions), and the
-/// table has a row per column where `chunk` has one per chunk, so it's much quicker to go
-/// through. Chunk x is the low 27 bits of `position` and z the next 27 (see Chunk.Position).
+/// The tiles that may have something to draw: those holding a chunk column with a map chunk.
+/// Every chunk column has one in the saves seen (docs/save-format/README.md#2-positions), and
+/// the table has a row per column where `chunk` has one per chunk, so it's much quicker to go
+/// through. Only fully generated columns are drawn, though (see Worker.readColumn), so a tile
+/// holding only partly generated ones comes out empty and isn't written; telling them apart
+/// here would mean reading every map chunk before starting. Chunk x is the low 27 bits of
+/// `position` and z the next 27 (see Chunk.Position).
 fn tileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
     var set: std.AutoArrayHashMapUnmanaged(tiles.Tile, void) = .empty;
     defer set.deinit(allocator);
@@ -222,15 +225,25 @@ const View = struct {
         /// scanning down where they don't.
         fn readColumn(self: *Worker, cx: u64, cz: u64, x0: i64, z0: i64) !void {
             const base = cx | cz << 27;
-            // A chunk column without a map chunk isn't drawn (see tileList).
+            // Only fully generated chunk columns are drawn: the partly generated ones around
+            // them lack trees and plants, and the game's own map leaves them out too
+            // (docs/rendering.md#how-the-game-draws-its-own-world-map). Others stay
+            // transparent, and in the ring around a tile they count as no blocks.
             self.mapChunkRow.bind(1, base);
             defer self.mapChunkRow.reset();
             if (!self.mapChunkRow.step()) return;
             const heights = self.mapChunk;
             heights.decode(self.mapChunkRow.column([]const u8, 0)) catch |err| {
+                // A finished column whose heights can't be read is scanned instead. One whose
+                // stage can't be read either isn't drawn.
+                if (heights.stage != .done) {
+                    if (heights.stage == .none) std.debug.print("storymap: skipping chunk column ({}, {}): {s}\n", .{ cx, cz, @errorName(err) });
+                    return;
+                }
                 std.debug.print("storymap: scanning chunk column ({}, {}) for heights: {s}\n", .{ cx, cz, @errorName(err) });
                 @memset(&heights.rainHeight, MapChunk.unset);
             };
+            if (heights.stage != .done) return;
 
             // The block columns, within the chunk column, that fall in the area.
             const span: Span = .{

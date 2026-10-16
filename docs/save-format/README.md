@@ -15,8 +15,10 @@ Version-specific differences are noted inline, in the section they affect, as **
 
 Every section says where its information comes from:
 
-- **Verified (1.19):** checked against the sample save `content/sample-one-block-spawn.vcdbs` (not in the repo; `content/` is git-ignored), with how it was checked.
-- **Verified (1.22.7):** checked against `content/gloomy-cave-valley-1.22.7.vcdbs`, a copy of a fresh 1.22.7 world (also not in the repo).
+- **Verified (1.19):** checked against a sample save written by 1.19.1 and 1.19.2, with how it was checked.
+- **Verified (1.22.7):** checked against a fresh 1.22.7 world with two explored areas far apart (6,224 chunks), or, where it says "the larger 1.22.7 world", a more compact one of 3,649 chunk columns and 29,192 chunks.
+
+The test saves aren't in the repo.
 - **Source:** read in Vintage Story's open-source code on GitHub ([vsapi](https://github.com/anegostudios/vsapi), [vssurvivalmod](https://github.com/anegostudios/vssurvivalmod), [vsessentialsmod](https://github.com/anegostudios/vsessentialsmod)). Links are pinned to the commits read on 2026-10-10, each repository's "Updated to Version 1.22.7" commit: vsapi `63d33f7`, vssurvivalmod `849fa8c`, vsessentialsmod `06673b6`. Pin new links to a commit or tag too, never `master`. The chunk storage code itself is in the closed engine library and isn't available.
 - **Wiki:** the [Vintage Story wiki](https://wiki.vintagestory.at/).
 - **Unverified:** an observation or guess that hasn't been confirmed.
@@ -275,7 +277,7 @@ Every field is 4 bits except the material, so in hexadecimal each field is one d
 | 29 | bytes | `homosapiens` (`surviveandbuild`) | Play style |
 | 30 | bytes | `standard` | World type |
 | 31 | bytes | a tree attribute | World configuration (below) |
-| 34 | bytes | a UUID | Same as the file name of the world's map cache in the data folder's `Maps/` |
+| 34 | bytes | a UUID | Same as the file name of the world's map cache in the data folder's `Maps/` (§7, [the game's map cache](#the-games-map-cache)) |
 | 36 | bytes, repeated | 48 entries `{ 1: name, 2: 1 }`, e.g. `game:v1.12clayplanters` | Names that are keys in the game's `config/remaps.json`; probably remaps already applied to this world |
 
 The other fields are small numbers or fixed-width floats (field 25 is 24.0, field 35 is 0.5) and are unknown.
@@ -316,7 +318,7 @@ Water fills the blocks below sea level: the top water block of a sea or lake is 
 | # | Wire type | Per row | Values (1.22.7 · 1.19) | Probably |
 | --- | --- | --- | --- | --- |
 | 3 | varint | 1,024 | 54–65,535 · 0–65,534 | `RainHeightMap` (below) |
-| 4 | varint | 1 | 2–6 | `CurrentPass`, the world generation pass |
+| 4 | varint | 1 | 2–6 | `CurrentPass`, the world-generation stage (below) |
 | 7 | varint | 1,024 | 3–151 · 46–236 | `WorldGenTerrainHeightMap` (below) |
 | 10 | varint | 1 | 109–166 · 109–236 | `YMax`, the highest non-air block |
 | 11 | bytes | 1 | always 1,024 bytes | `CaveHeightDistort` (a byte array) |
@@ -329,6 +331,38 @@ Fields 1, 8, 9 and 15 appear in some rows only and aren't decoded.
 - **Field 3, the rain height:** "the last block that is not rain permeable before the first airblock" (`IMapChunk`). Rain stops at water but falls through plants and loose stones, so this is the water surface or the ground beneath them. A column with no blocks at all has 0. A few columns hold 65,531–65,535, far above the world (3 in the 1.22.7 world, 14 in the 1.19 sample); as signed 16-bit numbers those are −5 to −1, perhaps heights that went below 0. A reader should treat a height above the column's chunks as unknown. It's what the game's own world map draws *(Source: [vsessentialsmod `ChunkMapLayer.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs))*. *(Verified (1.19, 1.22.7), against the highest block of every column: in the 1.22.7 world it's the highest solid block in 422,000 columns and the water surface in 166,000; in nearly all of the other 208,000 it's below the highest block, which there is tall grass, loose stones or flints, reeds, tule or horsetail. 777 columns (0.1%) point at a block that's gone, presumably changed afterwards. In the 1.19 sample, the 49,161 columns of a cleared area hold 0 and no blocks. The index order `x * 32 + z` matches far fewer columns.)*
 - **Field 7, the terrain height:** "the last block before the first airblock before world gen pass Vegetation"; for seas and lakes, their bed (`IMapChunk`). *(Verified (1.19, 1.22.7): it's never a water surface; it equals the highest solid block in 65% of the 1.22.7 world's columns and 49% of the 1.19 sample's, the rest being under plants, water or later changes.)*
 - **Stale rows:** map chunks stay when their chunks' blocks are removed, so a reader should check the block at the stored height.
+
+### World-generation stages
+
+Field 4 is the column's world-generation stage, `IMapChunk.CurrentPass`, a value of `EnumWorldGenPass`. It's the pass the column is **waiting for**, not the last one finished. The passes *(Wiki: [WorldGen Concept](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))*:
+
+| Value | Pass | What it adds |
+| --- | --- | --- |
+| 0 | None | |
+| 1 | Terrain | terrain, rock layers, caves |
+| 2 | TerrainFeatures | deposits, structures, ponds |
+| 3 | Vegetation | patches, shrubs, trees, rivulets |
+| 4 | NeighbourSunLightFlood | the snow layer, light across chunks |
+| 5 | PreDone | creatures; neighbours may still add things |
+| 6 | Done | nothing: the column is fully generated |
+
+Passes 2 to 5 need the neighbouring columns, so the game surrounds everything it finishes with rings of partly generated columns. In the larger 1.22.7 world they're concentric, each exactly one chunk column (32 blocks) wide:
+
+| Stage | Chunk columns | This stage or later spans |
+| --- | --- | --- |
+| 6 Done | 2,729 | 1,824 × 1,600 blocks |
+| 5 | 218 | 1,888 × 1,664 |
+| 4 | 226 | 1,952 × 1,728 |
+| 3 | 234 | 2,016 × 1,792 |
+| 2 | 242 | 2,080 × 1,856 |
+
+*(Verified (1.22.7): the larger world, 3,649 columns in all.)* Rendered, stage 2 and 3 columns are bare, with no trees or shrubs, while from stage 4 on they have trees and look like Done ones. That confirms the value is the next pass: 3 means Vegetation hasn't run. Whether snow appears from stage 5 on couldn't be checked: no edge of that world is snowy. The other test saves have the same rings: 266 of the 1.22.7 world's 778 columns are Done (152, 136, 120 and 104 at stages 2 to 5, around each of its two explored areas), and 420 of the 1.19 sample's 860 (122, 114, 106 and 98). *(Verified (1.19, 1.22.7).)*
+
+### The game's map cache
+
+The game's world map isn't drawn from the save. It's a cache on the client: `Maps/<id>.db` in the data folder, where `<id>` is `gamedata` field 34 (§6). It has two tables, `mappiece (position integer PRIMARY KEY, data BLOB)` and `blockidmapping` (empty in the larger world). `mappiece` positions use the map chunks' packing (x | z << 27, no y), one piece per chunk column. The pieces' data isn't decoded.
+
+The larger world's cache has 2,694 pieces, all of them stage-6 columns. The other 35 Done columns have no piece: they're finished but were never sent to the client, so the game's map doesn't show them. *(Verified (1.22.7): the larger world's cache, copied out of the data folder.)* Matching the game's map exactly would take this per-player cache, which a server doesn't have, so storymap draws the stage-6 columns instead.
 
 ## 8. Open questions
 

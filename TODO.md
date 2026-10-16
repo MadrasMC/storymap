@@ -9,31 +9,32 @@ storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 ## Top-down map
 
-3. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`.
+3. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`. The game's own client map cache (`mappiece` rows in `Maps/<id>.db`, [save format §7](docs/save-format/README.md#the-games-map-cache)) could serve as a colour reference once its data is decoded.
 4. **A viewer** ([`docs/rendering.md`](docs/rendering.md#output-tiles-and-levels-of-detail)): `map.json` describing each view, then a viewer page: our own, not a map library, with a projection per view so isometric views fit in later.
-5. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
+5. **Incremental rendering.** Re-render only the tiles whose chunks changed since the last render, and the zoomed-out tiles above them, instead of the whole world every time.
+6. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
 
 ## Memory
 
 No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). Stage 1, no allocation per chunk, is done.
 
-6. **Fixed buffers throughout.** Tiles already reuse per-worker buffers, but the halves passed between levels are allocated per render, the levels above the subtrees per level, and the PNG encoder per tile.
-7. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
+7. **Fixed buffers throughout.** Tiles already reuse per-worker buffers, but the halves passed between levels are allocated per render, the levels above the subtrees per level, and the PNG encoder per tile.
+8. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
 
 ## Block entities
 
-8. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
-9. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
+9. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
+10. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
 
 ## Isometric render
 
-10. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
-11. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
+11. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
+12. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
 
 ## Format coverage
 
-12. **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; it needs a world with ruins (or a placed chiseled block) and items on the ground.
-13. **A modded world.** Primitive Survival is installed but was added after the test world was made. When modded content becomes relevant (asset extraction for mods, the ID mapping), ask for a new world created with it enabled.
+13. **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; it needs a world with ruins (or a placed chiseled block) and items on the ground.
+14. **A modded world.** Primitive Survival is installed but was added after the test world was made. When modded content becomes relevant (asset extraction for mods, the ID mapping), ask for a new world created with it enabled.
 
 ## Done
 
@@ -52,5 +53,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Heights from `mapchunk`: the rain height map, so plants and loose stones don't hide the ground, and the terrain height for water depth. Block columns without a stored height, or whose stored height is out of date, are scanned.
 - Only the chunks holding the surface are read, fetched by key: 1,244 of 6,224 in the 1.22.7 world ([`docs/rendering.md`](docs/rendering.md#performance)).
 - Tiles: the top-down map is written as 512 × 512 tiles by a pipeline every view shares (`src/tiles.zig`), seamless across tile edges, with zoomed-out levels up to a single tile.
+- Only fully generated chunk columns (world-generation stage 6, Done) are drawn, like the game's own map: the rings of partly generated columns around them are left out ([save format §7](docs/save-format/README.md#world-generation-stages)).
 - Chunk decoding on every core, one SQLite connection per worker; timings in [`docs/rendering.md`](docs/rendering.md#performance).
 - Format checked against 1.22.7: schema, positions, chunk fields, block and liquid decoding and block entities all hold; differences are noted in the docs.

@@ -17,9 +17,11 @@ Per block column:
 
 The game's map doesn't treat block entities specially: a chiseled block is coloured as whatever block sits at that position.
 
+The game's map only shows chunk columns the client has received, all of them fully generated: in a 1.22.7 test world, every piece in its cache was a stage-6 (Done) column, and none were partly generated columns ([save format §7](save-format/README.md#the-games-map-cache)).
+
 Seas and lakes are told apart by block: `saltwater` sets `mapColorCode: "ocean"`, while `water`, `rapidwater` and `boilingwater` set none and take the liquid default, and `lakeice` sets `"lake"`. *(Verified (1.22.7): `assets/survival/blocktypes/liquid/` in the install.)* Both test saves list `saltwater` in their block IDs but contain none: neither world reaches a sea.
 
-storymap's top-down map takes each column's height from its map chunk's rain height ([save format §7](save-format/README.md#7-map-chunks)), like the game, and looks up only the block there, in the solid layer (field 1) and the liquid layer (field 16). A liquid there is a water surface, and the map chunk's terrain height gives its bed. Rain falls through plants and loose stones, so the map shows the ground beneath them. The map covers the chunk columns that have a map chunk, which in both test saves is all of them (§2 of the save format); a chunk column without one wouldn't be drawn. Block columns without a stored height, or whose stored height points at a block that's gone, are scanned instead: from the top down, a column shows liquid when its highest liquid is at or above its highest solid block, ignoring solid blocks that share their place with a liquid. Those are water plants *(Verified (1.19, 1.22.7): at the water surface they're `seaweed`, `aquatic-*` (milfoil, crowfoot), reeds and tule)*, so the water shows and its depth reaches down to the ground. Lily pads (`waterlily`) sit on top of the water instead and still show as land.
+storymap's top-down map takes each column's height from its map chunk's rain height ([save format §7](save-format/README.md#7-map-chunks)), like the game, and looks up only the block there, in the solid layer (field 1) and the liquid layer (field 16). A liquid there is a water surface, and the map chunk's terrain height gives its bed. Rain falls through plants and loose stones, so the map shows the ground beneath them. The map covers only fully generated chunk columns: those whose map chunk says world generation is Done (stage 6; [save format §7](save-format/README.md#world-generation-stages)). The game rings everything it finishes with partly generated columns, which look unfinished (no trees or plants up to stage 3) and which its own map leaves out. A column that isn't Done stays transparent, and in the ring around a tile it counts as no blocks. Every chunk column has a map chunk in the test saves (§2 of the save format); one without wouldn't be drawn either. Block columns without a stored height, or whose stored height points at a block that's gone, are scanned instead: from the top down, a column shows liquid when its highest liquid is at or above its highest solid block, ignoring solid blocks that share their place with a liquid. Those are water plants *(Verified (1.19, 1.22.7): at the water surface they're `seaweed`, `aquatic-*` (milfoil, crowfoot), reeds and tule)*, so the water shows and its depth reaches down to the ground. Lily pads (`waterlily`) sit on top of the water instead and still show as land.
 
 ## Assets
 
@@ -112,18 +114,28 @@ Stages:
 
 ## Performance
 
-*(Measured 2026-10-16 on a 14-thread Windows machine with `zig build bench -Doptimize=ReleaseFast -- <save> 7`: the median of 7 renders after one untimed one. The PNG is encoded but not written to disk. Chunks/s counts all the save's chunks, so the stages compare.)*
+*(Measured 2026-10-17 on a 14-thread Windows machine with `zig build bench -Doptimize=ReleaseFast -- <save> 7`: the median of 7 renders after one untimed one. The PNGs are encoded but not written to disk. Chunks/s counts all the save's chunks, so the stages compare.)*
 
-Where a render's time goes, the 1.22.7 world (6,224 chunks, a 3,232 × 4,224 image):
+Where a render's time goes, in the larger 1.22.7 test world (29,192 chunks in 3,649 chunk columns, 2,729 of them fully generated):
+
+| Stage | Time | Chunks/s |
+| --- | --- | --- |
+| Opening the save, its block list and which tiles it has | 0.016 s | |
+| Decoding every chunk, for comparison | 0.45 s | 64,800 |
+| All 34 tiles in 5 levels: the stored heights, the 6,618 chunks they point into (including each tile's ring), pixels, the levels above and the PNGs | 0.30 s | 98,500 |
+| End to end | 0.31 s | 93,500 |
+
+And in a smaller 1.22.7 world, with two explored areas far apart (6,224 chunks, of which 530 are read for its 23 tiles):
 
 | Stage | Time | Chunks/s |
 | --- | --- | --- |
 | Opening the save, its block list and which tiles it has | 0.007 s | |
-| Decoding every chunk, for comparison | 0.09 s | 68,800 |
-| All 23 tiles in 5 levels: the stored heights, the 1,440 chunks they point into (including each tile's ring), pixels, the levels above and the PNGs | 0.16 s | 39,900 |
-| End to end | 0.16 s | 38,300 |
+| Decoding every chunk, for comparison | 0.07 s | 91,800 |
+| All 23 tiles in 5 levels | 0.10 s | 62,800 |
+| End to end | 0.11 s | 58,700 |
 
-- **Tiles skip empty space.** The single image this replaced was 94% empty paper between the world's two explored areas, and its PNG took 0.41 s of a 0.52 s render. Level 0 alone (8 tiles) takes 0.08 s. Encoding PNGs is about 64% of the workers' time.
+- **Only fully generated columns are drawn**, so fewer chunks are read: 6,618 instead of 8,701 in the larger world, 530 instead of 1,440 in the smaller one. A column's stage is read only when its tile is drawn, so tiles holding only partly generated columns are still drawn, for nothing. Finding them before drawing would mean reading every map chunk on one thread first, which cost more.
+- **Tiles skip empty space.** The single image this replaced was 94% empty paper between the smaller world's two explored areas, and its PNG took 0.41 s of a 0.52 s render. Encoding PNGs is about 40% of the workers' time in the larger world and 65% in the smaller one.
 - **Small worlds wait on their top levels.** Each level waits for the one below, and above level 0 these worlds have only 5, 5, 4 and 1 tiles: a chain of encodes that can't overlap. In a large world nearly all tiles are in the bottom levels, which spread over every core.
 
 - **Only the chunks holding the surface are read.** Each column's map chunk names the chunk holding its surface block, and workers fetch those chunks by key (their position), along with every chunk below a stale height. The map's extent and columns come from `mapchunk` too, which has a row per chunk column instead of one per chunk, so nothing goes through the whole `chunk` table. Before, each worker read through all of it to pick out its share, and every chunk was decoded: finding top blocks took 0.17 s in the 1.22.7 world and 0.11 s in the 1.19 sample, now 0.11 s and 0.03 s. What's left in the 1.22.7 world is mostly the per-pixel arrays, which cover its empty space between the two explored areas.
