@@ -287,12 +287,29 @@ Water fills the blocks below sea level: the top water block of a sea or lake is 
 
 ## 7. Map chunks
 
-`mapchunk.data` averages ~17 KB per row in the sample and isn't decoded. The game's world map reads a per-column `RainHeightMap` from map chunks *(Source: [vsessentialsmod `ChunkMapLayer.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs))*, so the stored rows probably include it; if so, a top-down map wouldn't need to scan blocks. *(Unverified.)*
+`mapchunk.data` is one plain Protobuf message per chunk column, not compressed: ~10 KB per row in the 1.22.7 world, ~17 KB in the 1.19 sample. *(Verified (1.19, 1.22.7): every row parses completely.)* Its per-column maps hold 1,024 values, one per block column at index `z * 32 + x`, written as repeated varints (not packed). The names come from the game's [`IMapChunk`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IMapChunk.cs) interface, matched to fields by their values; the wire format itself is in the closed engine.
+
+| # | Wire type | Per row | Values (1.22.7 · 1.19) | Probably |
+| --- | --- | --- | --- | --- |
+| 3 | varint | 1,024 | 54–65,535 · 0–65,534 | `RainHeightMap` (below) |
+| 4 | varint | 1 | 2–6 | `CurrentPass`, the world generation pass |
+| 7 | varint | 1,024 | 3–151 · 46–236 | `WorldGenTerrainHeightMap` (below) |
+| 10 | varint | 1 | 109–166 · 109–236 | `YMax`, the highest non-air block |
+| 11 | bytes | 1 | always 1,024 bytes | `CaveHeightDistort` (a byte array) |
+| 12 | varint | 1,024 | always 0 | Unknown |
+| 13 | varint | 1,024 | block IDs, e.g. 6,763–6,769 in the 1.19 sample (6,769 is `rock-granite`) | `TopRockIdMap`, the top rock layer's block |
+| 16 | varint | 1 | 3 · 2 | Unknown; differs between the versions |
+
+Fields 1, 8, 9 and 15 appear in some rows only and aren't decoded.
+
+- **Field 3, the rain height:** "the last block that is not rain permeable before the first airblock" (`IMapChunk`). Rain stops at water but falls through plants and loose stones, so this is the water surface or the ground beneath them. A column with no blocks at all has 0. It's what the game's own world map draws *(Source: [vsessentialsmod `ChunkMapLayer.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs))*. *(Verified (1.19, 1.22.7), against the highest block of every column: in the 1.22.7 world it's the highest solid block in 422,000 columns and the water surface in 166,000; in nearly all of the other 208,000 it's below the highest block, which there is tall grass, loose stones or flints, reeds, tule or horsetail. 777 columns (0.1%) point at a block that's gone, presumably changed afterwards. In the 1.19 sample, the 49,161 columns of a cleared area hold 0 and no blocks. The index order `x * 32 + z` matches far fewer columns.)*
+- **Field 7, the terrain height:** "the last block before the first airblock before world gen pass Vegetation"; for seas and lakes, their bed (`IMapChunk`). *(Verified (1.19, 1.22.7): it's never a water surface; it equals the highest solid block in 65% of the 1.22.7 world's columns and 49% of the 1.19 sample's, the rest being under plants, water or later changes.)*
+- **Stale rows:** map chunks stay when their chunks' blocks are removed, so a reader should check the block at the stored height.
 
 ## 8. Open questions
 
 - **Other chunk fields:** light (2, 3), entities (5, 6), field 10, decor (14), and the small varint fields.
-- **`mapchunk`, `mapregion`, `playerdata`:** not decoded. **`gamedata`:** only the ID lists, world size and world configuration are decoded.
+- **`mapregion`, `playerdata`:** not decoded. **`mapchunk`:** fields 1, 8, 9, 12, 15 and 16 aren't understood. **`gamedata`:** only the ID lists, world size and world configuration are decoded.
 - **In-game coordinates:** the offset from absolute coordinates isn't confirmed.
 - **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; a world with ruins or a placed chiseled block, and items on the ground, would cover them.
 - **Mods.** How modded blocks appear in palettes and `gamedata` (with a domain prefix or without) needs a world created with a mod enabled.

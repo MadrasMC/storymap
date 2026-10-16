@@ -55,6 +55,7 @@ pub fn main(init: std.process.Init) !void {
 
 test {
     _ = GameData;
+    _ = @import("MapChunk.zig");
     _ = ProtoBuf;
     _ = VS;
     _ = Chunk;

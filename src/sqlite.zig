@@ -132,6 +132,18 @@ pub const Stmt = struct {
         };
     }
 
+    /// Sets the statement's parameter `index` (from 1, as in `?1`).
+    pub fn bind(self: Stmt, index: c_int, value: u64) void {
+        // Only fails for an index the statement doesn't have, or while it's running.
+        std.debug.assert(c.sqlite3_bind_int64(self.stmt, index, @bitCast(value)) == c.SQLITE_OK);
+    }
+
+    /// Makes the statement ready to step again, keeping its parameters.
+    pub fn reset(self: Stmt) void {
+        // Returns the last step's error, if any; step already reports that by returning false.
+        _ = c.sqlite3_reset(self.stmt);
+    }
+
     pub fn finalize(self: Stmt) void {
         std.debug.assert(c.sqlite3_finalize(self.stmt) == c.SQLITE_OK);
     }

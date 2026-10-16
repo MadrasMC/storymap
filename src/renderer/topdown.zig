@@ -4,6 +4,7 @@ const Io = std.Io;
 const DB = @import("../sqlite.zig");
 const Chunk = @import("../Chunk.zig");
 const Compression = @import("../Compression.zig");
+const MapChunk = @import("../MapChunk.zig");
 const GameData = @import("../GameData.zig");
 const stb = @import("stb_image_write");
 
@@ -83,8 +84,26 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     const liquidBlock = try allocator.alloc(i32, width * height);
     defer allocator.free(liquidBlock);
     @memset(liquidBlock, 0);
+    // The heights stored in map chunks, which save scanning each column for its top block:
+    // a slot per chunk column, numbering the chunk columns that have a map chunk. The workers
+    // fill in the heights.
+    const mapChunkSlot = try allocator.alloc(u32, (width / 32) * (height / 32));
+    defer allocator.free(mapChunkSlot);
+    @memset(mapChunkSlot, noMapChunk);
+    var mapChunkCount: u32 = 0;
+    {
+        const rows = try db.prepare("SELECT position FROM mapchunk;");
+        defer rows.finalize();
+        while (rows.step()) {
+            const column = chunkColumn(rows.column(u64, 0), min_x, min_z, width / 32, height / 32) orelse continue;
+            mapChunkSlot[column] = mapChunkCount;
+            mapChunkCount += 1;
+        }
+    }
+    const mapChunks = try allocator.alloc(MapChunk, mapChunkCount);
+    defer allocator.free(mapChunks);
 
-    const chunks = try scanChunks(allocator, dbPath, .{
+    const map: Map = .{
         .minX = min_x,
         .minZ = min_z,
         .width = width,
@@ -92,7 +111,10 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
         .topBlock = topBlock,
         .liquidTop = liquidTop,
         .liquidBlock = liquidBlock,
-    });
+        .mapChunkSlot = mapChunkSlot,
+        .mapChunks = mapChunks,
+    };
+    const chunks = try scanChunks(allocator, dbPath, map);
     const scanned: Io.Timestamp = .now(io, .awake);
 
     var lowest: u16 = std.math.maxInt(u16);
@@ -104,7 +126,7 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
 
     if (stats == null) {
         std.debug.print("{}x{} blocks, surface y {}..{}\n", .{ width, height, lowest, highest });
-        try printSurfaceBlocks(allocator, gameData, top, topBlock);
+        try printSurfaceBlocks(allocator, gameData, map);
     }
     const summarised: Io.Timestamp = .now(io, .awake);
 
@@ -354,7 +376,64 @@ pub const Map = struct {
     liquidTop: []?u16,
     /// The liquid's block ID.
     liquidBlock: []i32,
+    /// For each chunk column (west to east, then north to south), its index in `mapChunks`,
+    /// or `noMapChunk`. Columns with stored heights only look at the block at that height;
+    /// the others scan down for it.
+    mapChunkSlot: []const u32,
+    /// The stored heights, filled in by the workers before they scan the chunks.
+    mapChunks: []MapChunk,
+
+    /// The stored heights of the chunk column at a position, if there are any.
+    fn mapChunk(self: Map, position: u64) ?*MapChunk {
+        const slot = self.mapChunkSlot[chunkColumn(position, self.minX, self.minZ, self.width / 32, self.top.len / self.width / 32) orelse return null];
+        return if (slot == noMapChunk) null else &self.mapChunks[slot];
+    }
 };
+
+const noMapChunk = std.math.maxInt(u32);
+
+/// The index of the chunk column at a chunk or map chunk position, in a map `columns` chunk
+/// columns wide and `rows` long, or null if it's outside the map. x is the position's low 27
+/// bits and z the next 27.
+fn chunkColumn(position: u64, minX: usize, minZ: usize, columns: usize, rows: usize) ?usize {
+    const x: usize = @intCast(position & 134217727);
+    const z: usize = @intCast((position >> 27) & 134217727);
+    if (x < minX or z < minZ or x - minX >= columns or z - minZ >= rows) return null;
+    return (z - minZ) * columns + x - minX;
+}
+
+test chunkColumn {
+    const position = Chunk.Position.position64(.{ .x = 15995, .y = 4, .z = 15999 });
+    try std.testing.expectEqual(2 * 10 + 5, chunkColumn(position, 15990, 15997, 10, 3));
+    try std.testing.expectEqual(null, chunkColumn(position, 15990, 15997, 5, 3));
+    try std.testing.expectEqual(null, chunkColumn(position, 15996, 15997, 10, 3));
+}
+
+/// Decodes the height maps of a worker's map chunks into their slots: those of the chunk
+/// columns whose chunks it scans. Each is fetched by its key, which is the chunk column's
+/// position (x in the low 27 bits, z in the next 27), so the worker reads only its own rows.
+fn readHeights(db: DB, map: Map, worker: usize, workers: usize) !void {
+    const row = try db.prepare("SELECT data FROM mapchunk WHERE position = ?1;");
+    defer row.finalize();
+    const columns = map.width / 32;
+    for (map.mapChunkSlot, 0..) |slot, column| {
+        if (slot == noMapChunk) continue;
+        const position: u64 = (map.minX + column % columns) | (map.minZ + column / columns) << 27;
+        if (position % workers != worker) continue;
+        row.bind(1, position);
+        defer row.reset();
+        const mapChunk = &map.mapChunks[slot];
+        if (!row.step()) {
+            @memset(&mapChunk.rainHeight, MapChunk.unset);
+            continue;
+        }
+        mapChunk.decode(row.column([]const u8, 0)) catch |err| {
+            // Without heights, the column's blocks are scanned instead.
+            std.debug.print("storymap: scanning chunk column ({}, {}) for heights: {s}\n", .{ position & 134217727, position >> 27, @errorName(err) });
+            @memset(&mapChunk.rainHeight, MapChunk.unset);
+        };
+    }
+}
 
 /// Decodes every chunk on every core and, with a map, records each column's top block in it.
 /// Returns how many chunks were read. Each worker opens its own connection and takes whole
@@ -409,8 +488,11 @@ fn scanColumnsOrFail(job: *ScanJob) !void {
     const allocator = job.allocator;
     const db = try DB.initImmutable(allocator, job.dbPath);
     defer db.deinit();
+    // This worker's columns' stored heights, before any of their chunks.
+    if (job.map) |map| try readHeights(db, map, job.worker, job.workers);
     // 2^54 - 1 keeps x and z and drops y, so all chunks of a column go to the same worker.
-    const sql = try std.fmt.allocPrint(allocator, "SELECT position, data FROM chunk WHERE (position & 18014398509481983) % {d} = {d};", .{ job.workers, job.worker });
+    // y is the position's highest part, so descending order takes each column top down.
+    const sql = try std.fmt.allocPrint(allocator, "SELECT position, data FROM chunk WHERE (position & 18014398509481983) % {d} = {d} ORDER BY position DESC;", .{ job.workers, job.worker });
     defer allocator.free(sql);
     const stmt = try db.prepare(sql);
     defer stmt.finalize();
@@ -435,14 +517,47 @@ fn scanColumnsOrFail(job: *ScanJob) !void {
         const left = (chunk.position.x - map.minX) * 32;
         const up = (chunk.position.z - map.minZ) * 32;
 
+        const stored = map.mapChunk(chunk.position.position64());
         for (0..32) |z| for (0..32) |x| {
             const index = (up + z) * map.width + left + x;
+            if (stored) |heights| {
+                const rain = &heights.rainHeight[z * 32 + x];
+                if (rain.* != MapChunk.unset) {
+                    if (rain.* / 32 != chunk.position.y) continue;
+                    if (recordStored(chunk, x, rain.* % 32, z, rain.*, heights.terrainHeight[z * 32 + x], map, index)) continue;
+                    // The block there is gone: the column has no blocks at all (the game
+                    // stores 0 then), or it changed after its height was stored. Scan it
+                    // instead, from this chunk down, as chunks come top down.
+                    rain.* = MapChunk.unset;
+                }
+            }
             // Plants growing in water, such as seaweed and reeds, share their place with it:
             // from above, the water shows, and its depth goes down to the ground below them.
             recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &map.top[index], &map.topBlock[index]);
             recordTop(&chunk.liquids, null, chunk.position.y, x, z, &map.liquidTop[index], &map.liquidBlock[index]);
         };
     }
+}
+
+/// Records a column from its stored heights: the block at the rain height, in the chunk that
+/// holds it. Rain stops at water, so a liquid there is the water surface, and the terrain
+/// height is its bed. Returns false, recording nothing, if there's no block there.
+fn recordStored(chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, map: Map, index: usize) bool {
+    const block = (y * 32 + z) * 32 + x;
+    const liquid = if (chunk.liquids.bits == 0) 0 else chunk.liquids.get(block);
+    const solid = if (chunk.blocks.bits == 0) 0 else chunk.blocks.get(block);
+    if (liquid == 0 and solid == 0) return false;
+    if (liquid != 0) {
+        map.liquidTop[index] = rain;
+        map.liquidBlock[index] = liquid;
+        // The block under the water isn't looked up; only its depth is drawn.
+        map.top[index] = if (terrain == MapChunk.unset) rain else @min(terrain, rain);
+        map.topBlock[index] = 0;
+    } else {
+        map.top[index] = rain;
+        map.topBlock[index] = solid;
+    }
+    return true;
 }
 
 /// Records the highest block of a chunk's layer in one column, unless a chunk above has
@@ -466,16 +581,21 @@ fn recordTop(layer: *const Compression.Layer, hiddenBy: ?*const Compression.Laye
     }
 }
 
-/// The five most common top blocks, by name.
-fn printSurfaceBlocks(allocator: std.mem.Allocator, gameData: GameData, top: []const ?u16, topBlock: []const i32) !void {
+/// The five most common blocks seen from above, by name.
+fn printSurfaceBlocks(allocator: std.mem.Allocator, gameData: GameData, map: Map) !void {
     var counts: std.AutoArrayHashMapUnmanaged(i32, usize) = .empty;
     defer counts.deinit(allocator);
     var columns: usize = 0;
-    for (top, topBlock) |column, block| if (column != null) {
+    for (map.top, map.liquidTop, map.topBlock, map.liquidBlock) |solid, liquid, solidBlock, liquidBlock| {
+        const block = switch (Surface.of(solid, liquid)) {
+            .none => continue,
+            .land => solidBlock,
+            .liquid => liquidBlock,
+        };
         const entry = try counts.getOrPutValue(allocator, block, 0);
         entry.value_ptr.* += 1;
         columns += 1;
-    };
+    }
     const Context = struct {
         values: []const usize,
         pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
