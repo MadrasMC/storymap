@@ -481,7 +481,13 @@
 			<span class="chip">gamedata</span>
 			<span class="chip">playerdata</span>
 		</div>
-		<p>The world is cut into <b>chunks</b>: cubes of 32 × 32 × 32 blocks. Each chunk is one row of the <code>chunk</code> table, with two columns: <code>position</code> (where the cube is) and <code>data</code> (what's inside it). <code>mapchunk</code> has one row per column of chunks, and <code>mapregion</code> one per 16 × 16 columns.</p>
+		<p>The world is cut into <b>chunks</b>: cubes of 32 × 32 × 32 blocks. Each chunk is one row of the <code>chunk</code> table, with two columns: <code>position</code> (where the cube is) and <code>data</code> (what's inside it). The tables store the world at three scales:</p>
+		<ul class="list">
+			<li><b><code>chunk</code> is 3D.</b> One row per cube, keyed by its x, z and y. The only table with blocks in it.</li>
+			<li><b><code>mapchunk</code> is a 2D layer on top.</b> One row per <b>chunk column</b>, the stack of chunks with the same x and z, keyed by just x and z. For each of its 32 × 32 block columns it keeps a few numbers, such as the height of the highest block rain can't fall through.</li>
+			<li><b><code>mapregion</code> is coarser still.</b> One row per 16 × 16 chunk columns, with world generation data.</li>
+		</ul>
+		<p>So a block column's map chunk gives its surface height, and that height names the one chunk holding the surface block. A top-down map only needs those chunks: about a fifth of the chunks in the test saves.</p>
 		<p>Saves use SQLite's write-ahead log, so even read-only access creates <code>-shm</code> and <code>-wal</code> files next to the save. Read a copy, or open it with SQLite's <code>immutable=1</code> option.</p>
 		<p class="source">Sources: table schema from 1.19 and 1.22.7 saves · <a href="https://www.sqlite.org/wal.html">SQLite: write-ahead log</a> · table descriptions from the <a href="https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept">wiki</a> · <a href="README.md#1-the-save-file">README §1</a></p>
 	</section>

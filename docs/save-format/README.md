@@ -44,12 +44,34 @@ CREATE INDEX index_playeruid on playerdata(playeruid)
 | `chunk` | 6,880 | One 32 × 32 × 32 cube of blocks per row. "Chunks do not span the world height." *([Wiki: WorldGen Concept](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
 | `mapchunk` | 860 | One row per chunk column: "information on a chunk column, such as the rain height or snow accumulation." *([Wiki](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
 | `mapregion` | 20 | "Information over an area of 16x16 chunk columns, such as weather and maps required for world generation." *([Wiki](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
-| `gamedata` | 1 | The save's global data (429,515 bytes in the sample). Not decoded. |
+| `gamedata` | 1 | The save's global data (429,515 bytes in the sample): the block and item names, world size and settings (§6). |
 | `playerdata` | 1 | Per-player data. Not decoded. |
 
 `sqlite_sequence` is SQLite's own table for `AUTOINCREMENT`, not game data.
 
 **1.22.7:** the new world has 6,224 chunks, 778 map chunks, 32 map regions, and one row each in `gamedata` and `playerdata`.
+
+### How the tables fit together
+
+The world is a grid of blocks, stored at three scales:
+
+| Scale | Size in blocks | Table | Dimensions | Key |
+| --- | --- | --- | --- | --- |
+| **Chunk** | 32 × 32 × 32 | `chunk` | 3D: x, z and y | chunk x, z and y (§2) |
+| **Chunk column** | 32 × 32, the world's full height | `mapchunk` | 2D: x and z | chunk x and z, the same as its chunks' keys without y |
+| **Map region** | 512 × 512 (16 × 16 chunk columns) | `mapregion` | 2D | region x and z *(inferred, §2)* |
+
+- **A chunk column** is the stack of chunks with the same x and z: 8 chunks in a 256-block-high world (y 0–7). Only generated chunks are saved, so a column can have gaps.
+- **`chunk` holds the blocks**, one row per cube (§3–§5). It's the only table with blocks in it.
+- **`mapchunk` holds per-column summaries**, one row per chunk column (§7): for each of its 32 × 32 block columns, a few numbers, such as the height of the highest block rain can't fall through. It's a 2D layer over the 3D chunks.
+- **`mapregion` holds coarser world generation data** over 16 × 16 chunk columns. Not decoded.
+
+Finding things from a block position (x, y, z), all in absolute block coordinates:
+
+1. **Its chunk** is (x ÷ 32, y ÷ 32, z ÷ 32), rounded down; that's the `chunk` row's key (§2). Inside it, the block is at local (lx, ly, lz) = (x mod 32, y mod 32, z mod 32), index `(ly·32 + lz)·32 + lx` in the block arrays (§4).
+2. **Its chunk column's map chunk** has the same key without y. The block column's values are at index `lz·32 + lx` in each per-column map (§7).
+
+This is what makes a top-down map cheap: the map chunk gives each block column's surface height, which names the one chunk that holds the surface block, so only those chunks need reading. In the test saves, the surface lies in 1,074 of 6,224 chunks (1.22.7) and 1,345 of 6,880 (1.19): most chunk columns need one chunk, a few two or more. *(Verified (1.19, 1.22.7): the distinct chunks the rain heights of §7 fall in.)*
 
 ## 2. Positions
 
