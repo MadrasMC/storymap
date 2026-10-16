@@ -7,10 +7,10 @@ storymap renders a top-down relief map in sepia today, shaded by height; block c
 To render a top-down heightmap of a save (Zig 0.17.0):
 
 ```bash
-zig build run -- path/to/save.vcdbs [output.png]
+zig build run -- path/to/save.vcdbs [output folder]
 ```
 
-The image goes to `out.png` when no output path is given. Saves are in the game's data folder, under `Saves/`. storymap never writes next to a save.
+The map is written as 512 × 512-pixel tiles, `topdown/0/<x>/<y>.png` in the output folder (`out` when none is given), one pixel per block. Zoomed-out levels and a viewer are next. Saves are in the game's data folder, under `Saves/`. storymap never writes next to a save.
 
 To copy the game assets the renderer needs (block types, shapes, textures) from your own Vintage Story install and mods into a folder, for example to render on a machine without the game:
 

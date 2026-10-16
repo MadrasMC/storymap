@@ -10,12 +10,12 @@ const topdown = @import("renderer/topdown.zig");
 const GameData = @import("GameData.zig");
 
 const usage =
-    \\usage: storymap <save.vcdbs> [output.png]
+    \\usage: storymap <save.vcdbs> [output folder]
     \\       storymap extract-assets <output folder> [--game <folder>] [--data <folder>]
     \\       storymap bench <save.vcdbs> [runs]
     \\
-    \\Renders a top-down heightmap of a Vintage Story save to output.png,
-    \\or out.png when no output path is given.
+    \\Renders a top-down map of a Vintage Story save as tiles in the output folder,
+    \\or in out when no folder is given: <folder>/topdown/0/<x>/<y>.png.
     \\Run extract-assets without arguments for its options.
     \\
 ;
@@ -31,7 +31,7 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(2);
     }
     const dbPath = args[1];
-    const outPath = if (args.len == 3) args[2] else "out.png";
+    const outPath = if (args.len == 3) args[2] else "out";
 
     // The immutable open ignores the save's -wal file. A non-empty one holds changes the
     // game hasn't written into the save yet, because it's still running or it crashed.
@@ -41,16 +41,12 @@ pub fn main(init: std.process.Init) !void {
         if (wal.size > 0) std.debug.print("storymap: {s} has unsaved changes (is the game running?); they won't be on the map\n", .{dbPath});
     } else |_| {}
 
-    // spawn chunk of sample.vcdbs
-    _ = Chunk.Position.position64(.{ .x = 15997, .y = 3, .z = 16000 });
-
-    // empty chunk in sample-one-block-spawn.vcdbs
-    _ = Chunk.Position.position64(.{ .x = 15995, .y = 5, .z = 15999 });
-
-    // chunk with one block in sample-one-block-spawn.vcdbs
-    _ = Chunk.Position.position64(.{ .x = 15995, .y = 4, .z = 15999 });
-
-    try topdown.render(allocator, init.io, dbPath, .{ .file = outPath }, null);
+    var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err| {
+        std.debug.print("storymap: can't create {s} ({s})\n", .{ outPath, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer out.close(init.io);
+    try topdown.render(allocator, init.io, dbPath, .{ .folder = out }, null);
 }
 
 test {
@@ -63,4 +59,5 @@ test {
     _ = extract;
     _ = bench;
     _ = topdown;
+    _ = @import("tiles.zig");
 }

@@ -10,14 +10,14 @@ storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 ## Top-down map
 
 3. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`.
-4. **Tiles with levels of detail** instead of one image: per chunk or per map region, at several resolutions for the map viewer ([`docs/rendering.md`](docs/rendering.md#output-tiles-and-levels-of-detail)). Writing one big PNG is two-thirds of a large map's render time today; per-tile images bound that.
+4. **Levels of detail and a viewer** ([`docs/rendering.md`](docs/rendering.md#output-tiles-and-levels-of-detail)): zoomed-out levels built bottom-up from level 0 (averaging 2 × 2 pixels, weighted by transparency), then `map.json` describing each view, then a viewer page: our own, not a map library, with a projection per view so isometric views fit in later.
 5. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
 
 ## Memory
 
 No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). Stage 1, no allocation per chunk, is done.
 
-6. **Fixed tile buffers,** one per worker, as part of the tiles item above.
+6. **Fixed tile buffers** for the zoomed-out levels, one per worker; level-0 tiles already reuse theirs. The PNG encoder still allocates per tile.
 7. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
 
 ## Block entities
@@ -51,5 +51,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Water from the liquid layer: shaded by depth, saltwater (seas) apart from other water, inked coastlines; water plants don't hide the water.
 - Heights from `mapchunk`: the rain height map, so plants and loose stones don't hide the ground, and the terrain height for water depth. Block columns without a stored height, or whose stored height is out of date, are scanned.
 - Only the chunks holding the surface are read, fetched by key: 1,244 of 6,224 in the 1.22.7 world ([`docs/rendering.md`](docs/rendering.md#performance)).
+- Tiles: the top-down map is written as 512 × 512 tiles by a pipeline every view shares (`src/tiles.zig`), seamless across tile edges.
 - Chunk decoding on every core, one SQLite connection per worker; timings in [`docs/rendering.md`](docs/rendering.md#performance).
 - Format checked against 1.22.7: schema, positions, chunk fields, block and liquid decoding and block entities all hold; differences are noted in the docs.

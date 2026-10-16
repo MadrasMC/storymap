@@ -1,11 +1,13 @@
 //! `storymap bench`: renders a save several times and prints the median time of each stage,
 //! for the numbers in docs/rendering.md#performance. Build with -Doptimize=ReleaseFast.
 //!
-//! The PNG is encoded but not written, so the disk isn't timed. One untimed render first
+//! The PNGs are encoded but not written, so the disk isn't timed. One untimed render first
 //! warms the file cache.
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
+const DB = @import("sqlite.zig");
+const Chunk = @import("Chunk.zig");
 const topdown = @import("renderer/topdown.zig");
 
 pub const usage =
@@ -28,12 +30,12 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     defer allocator.free(open);
     const decode = try allocator.alloc(Io.Duration, runs);
     defer allocator.free(decode);
-    const scan = try allocator.alloc(Io.Duration, runs);
-    defer allocator.free(scan);
-    const png = try allocator.alloc(Io.Duration, runs);
-    defer allocator.free(png);
+    const tiles = try allocator.alloc(Io.Duration, runs);
+    defer allocator.free(tiles);
     const total = try allocator.alloc(Io.Duration, runs);
     defer allocator.free(total);
+    const encodeShare = try allocator.alloc(f64, runs);
+    defer allocator.free(encodeShare);
 
     var stats: topdown.Stats = .{};
     // Every chunk in the save, which a render doesn't count: it reads only those it needs.
@@ -42,25 +44,28 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     for (0..runs) |i| {
         try topdown.render(allocator, io, dbPath, .discard, &stats);
         open[i] = stats.open;
-        scan[i] = stats.scan;
-        png[i] = stats.png;
-        total[i] = .{ .nanoseconds = stats.open.nanoseconds + stats.scan.nanoseconds + stats.png.nanoseconds };
+        tiles[i] = stats.render;
+        total[i] = .{ .nanoseconds = stats.open.nanoseconds + stats.render.nanoseconds };
+        const draw: f64 = @floatFromInt(stats.draw.nanoseconds);
+        const encode: f64 = @floatFromInt(stats.encode.nanoseconds);
+        encodeShare[i] = encode / (draw + encode);
 
-        // Decoding alone, without finding top blocks, separates the two costs.
+        // Decoding every chunk, without drawing anything, for comparison.
         const start: Io.Timestamp = .now(io, .awake);
-        chunks = try topdown.scanChunks(allocator, dbPath, null);
+        chunks = try decodeAll(allocator, dbPath);
         decode[i] = start.untilNow(io, .awake);
     }
 
     const threads = std.Thread.getCpuCount() catch 1;
-    std.debug.print("{s}: {} chunks ({} read for the map), {}x{} image, {} threads, {s} build, median of {} runs\n", .{
-        std.fs.path.basename(dbPath), chunks, stats.chunksRead, stats.width, stats.height, threads, @tagName(builtin.mode), runs,
+    std.debug.print("{s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs\n", .{
+        std.fs.path.basename(dbPath), chunks, stats.chunksRead, stats.tiles, threads, @tagName(builtin.mode), runs,
     });
     printStage("open and block list", open, null);
-    printStage("decode only", decode, chunks);
-    printStage("decode and top blocks", scan, chunks);
-    printStage("pixels and PNG", png, null);
+    printStage("decode every chunk", decode, chunks);
+    printStage("tiles", tiles, chunks);
     printStage("end to end", total, chunks);
+    std.mem.sort(f64, encodeShare, {}, std.sort.asc(f64));
+    std.debug.print("  of the workers' time, {d:.0}% went to encoding PNGs\n", .{encodeShare[runs / 2] * 100});
 }
 
 fn printStage(name: []const u8, times: []Io.Duration, chunks: ?usize) void {
@@ -69,6 +74,64 @@ fn printStage(name: []const u8, times: []Io.Duration, chunks: ?usize) void {
     if (chunks) |n| std.debug.print("  {d:>9.0} chunks/s", .{@as(f64, @floatFromInt(n)) / seconds});
     std.debug.print("\n", .{});
 }
+
+/// Decodes every chunk in the save on every core, and returns how many there are. Each worker
+/// takes the chunk columns whose position (without its y bits) leaves its number when divided
+/// by the number of workers.
+fn decodeAll(allocator: std.mem.Allocator, dbPath: []const u8) !usize {
+    const workers = std.Thread.getCpuCount() catch 1;
+    const jobs = try allocator.alloc(DecodeJob, workers);
+    defer allocator.free(jobs);
+    const threads = try allocator.alloc(?std.Thread, workers);
+    defer allocator.free(threads);
+    for (jobs, threads, 0..) |*job, *thread, worker| {
+        job.* = .{ .allocator = allocator, .dbPath = dbPath, .worker = worker, .workers = workers };
+        thread.* = std.Thread.spawn(.{}, DecodeJob.run, .{job}) catch null;
+        if (thread.* == null) job.run();
+    }
+    for (threads) |thread| if (thread) |t| t.join();
+    var chunks: usize = 0;
+    for (jobs) |job| {
+        if (job.err) |err| return err;
+        chunks += job.chunks;
+    }
+    return chunks;
+}
+
+const DecodeJob = struct {
+    allocator: std.mem.Allocator,
+    dbPath: []const u8,
+    worker: usize,
+    workers: usize,
+    chunks: usize = 0,
+    err: ?anyerror = null,
+
+    fn run(job: *DecodeJob) void {
+        job.runOrFail() catch |err| {
+            job.err = err;
+        };
+    }
+
+    fn runOrFail(job: *DecodeJob) !void {
+        const allocator = job.allocator;
+        const db = try DB.initImmutable(allocator, job.dbPath);
+        defer db.deinit();
+        var decoder: Chunk.Decoder = try .init(allocator, Chunk.Decoder.defaultBlockEntityBytes);
+        defer decoder.deinit(allocator);
+        const chunk = try allocator.create(Chunk);
+        defer allocator.destroy(chunk);
+        chunk.* = .{};
+        // 2^54 - 1 keeps x and z and drops y, so all chunks of a column go to the same worker.
+        const sql = try std.fmt.allocPrint(allocator, "SELECT position, data FROM chunk WHERE (position & 18014398509481983) % {d} = {d};", .{ job.workers, job.worker });
+        defer allocator.free(sql);
+        const stmt = try db.prepare(sql);
+        defer stmt.finalize();
+        while (stmt.step()) {
+            job.chunks += 1;
+            decoder.decode(chunk, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch continue;
+        }
+    }
+};
 
 fn median(times: []Io.Duration) Io.Duration {
     std.mem.sort(Io.Duration, times, {}, struct {

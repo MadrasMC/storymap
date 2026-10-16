@@ -77,13 +77,14 @@ From the sample save (class counts in [`save-format/README.md` §5](save-format/
 
 ## Output: tiles and levels of detail
 
-storymap won't render a world as one image; today's single `out.png` is a stopgap. The output is a set of tiles for a map viewer, at several resolutions:
+storymap renders a world as square tiles for a map viewer, never as one image, like a web map. Every view (the top-down map, and later one isometric view per direction) is a pyramid of tiles:
 
-- **Tile unit:** a chunk (32 × 32 blocks) or a map region (16 × 16 chunk columns, 512 × 512 blocks, the same unit as the save's `mapregion` table). Which one is still to be decided.
-- **Levels of detail:** each level halves the resolution of the one below, like a web map's zoom levels, so a zoomed-out view loads a few tiles that each cover many regions.
-- **Fetching a tile's chunks:** a chunk's position is the table's row key (x in the low bits, then z, then y), so the chunks under one tile are a few range queries on that key, one per row of chunk columns and height.
+- **Tiles are 512 × 512 pixels** in every view and level. In the top-down view's full-detail level that's 512 × 512 blocks, 16 × 16 chunk columns, the same area as a map region (the save's `mapregion` table). In an isometric view a block takes many pixels and a region projects to a slanted diamond, so tiles are defined in pixels, not blocks.
+- **Levels of detail:** level 0 is full detail; each level above halves the resolution, so a level-n tile covers 2ⁿ × 2ⁿ level-0 tiles and a zoomed-out view loads a few tiles. *(Planned: built bottom-up by averaging 2 × 2 pixels, weighting colours by transparency.)*
+- **Only tiles with something in them are written.** Empty pixels are transparent; the viewer draws the paper behind them.
+- **Layout:** `<output>/<view>/<level>/<x>/<y>.png`, e.g. `out/topdown/0/1000/999.png`. *(Planned: `map.json` describing each view, and a viewer page.)*
 
-Every tile has a fixed size, which is what makes the memory goal below possible.
+`src/tiles.zig` is the pipeline every view shares: workers on every core take tiles one at a time, and each tile is encoded and written as it's finished. A view only draws a tile into a fixed buffer. The top-down view draws a tile from its 16 × 16 chunk columns plus a one-block ring around them from its neighbours, so hill shading and coastlines match across tile edges: stitched together, the tiles of both test saves are pixel for pixel the single image storymap used to render. Every tile has a fixed size, which is what makes the memory goal below possible.
 
 ## Memory: no allocation at runtime (goal)
 
@@ -114,11 +115,12 @@ Where a render's time goes, the 1.22.7 world (6,224 chunks, a 3,232 × 4,224 ima
 
 | Stage | Time | Chunks/s |
 | --- | --- | --- |
-| Opening the save, its extent and the block list | 0.005 s | |
-| Decoding every chunk, for comparison | 0.07 s | 90,000 |
-| Reading the stored heights and the 1,244 chunks they point into, and finding each column's top block | 0.11 s | 54,800 |
-| Turning heights into pixels and encoding the PNG (stb) | 0.41 s | |
-| End to end | 0.52 s | 12,000 |
+| Opening the save, its block list and which tiles it has | 0.007 s | |
+| Decoding every chunk, for comparison | 0.09 s | 68,800 |
+| Drawing and encoding the 8 tiles: the stored heights, the 1,440 chunks they point into (including each tile's ring), pixels and PNGs | 0.08 s | 79,100 |
+| End to end | 0.085 s | 73,300 |
+
+- **Tiles skip empty space.** The single image this replaced was 94% empty paper between the world's two explored areas, and its PNG took 0.41 s of a 0.52 s render. Encoding is now about 40% of the workers' time. The 1.19 sample has only 6 tiles, so only 6 of 14 threads have work; it takes 0.11 s, down from 0.13 s.
 
 - **Only the chunks holding the surface are read.** Each column's map chunk names the chunk holding its surface block, and workers fetch those chunks by key (their position), along with every chunk below a stale height. The map's extent and columns come from `mapchunk` too, which has a row per chunk column instead of one per chunk, so nothing goes through the whole `chunk` table. Before, each worker read through all of it to pick out its share, and every chunk was decoded: finding top blocks took 0.17 s in the 1.22.7 world and 0.11 s in the 1.19 sample, now 0.11 s and 0.03 s. What's left in the 1.22.7 world is mostly the per-pixel arrays, which cover its empty space between the two explored areas.
 

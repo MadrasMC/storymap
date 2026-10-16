@@ -2,5 +2,5 @@ zig-out
 .zig-cache
 zig-pkg
 content
-out.png
+/out/
 CLAUDE.md
