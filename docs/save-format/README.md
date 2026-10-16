@@ -292,7 +292,7 @@ Water fills the blocks below sea level: the top water block of a sea or lake is 
 ## 8. Open questions
 
 - **Other chunk fields:** light (2, 3), entities (5, 6), field 10, decor (14), and the small varint fields.
-- **`mapchunk`, `mapregion`, `playerdata`:** not decoded. **`gamedata`:** only the ID lists and world configuration are decoded.
+- **`mapchunk`, `mapregion`, `playerdata`:** not decoded. **`gamedata`:** only the ID lists, world size and world configuration are decoded.
 - **In-game coordinates:** the offset from absolute coordinates isn't confirmed.
 - **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; a world with ruins or a placed chiseled block, and items on the ground, would cover them.
 - **Mods.** How modded blocks appear in palettes and `gamedata` (with a domain prefix or without) needs a world created with a mod enabled.

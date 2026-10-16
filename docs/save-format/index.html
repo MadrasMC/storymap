@@ -732,7 +732,8 @@
 			</table>
 		</div>
 		<p style="margin-top: var(--s4)">The same number means different blocks in different saves: 2966 is <code>water-still-7</code> in the 1.22.7 world but a snowy fireclay roof corner in the 1.19 sample. So every save has to be read with its own list. The same row also holds the world's settings, such as how far from the centre new players spawn.</p>
-		<p class="source">Sources: every block ID in both saves has a code · <a href="../../src/GameData.zig">src/GameData.zig</a> · <a href="README.md#6-game-data">README §6</a></p>
+		<p>It also holds the world's height, 256 blocks by default, but not its sea level. The game derives that: the height × 110 / 255, rounded down, so 110 in a default world. Water fills the blocks below it, so the top water block of a sea or lake is at y 109.</p>
+		<p class="source">Sources: every block ID in both saves has a code · <a href="../../src/GameData.zig">src/GameData.zig</a> · sea level from the <a href="https://wiki.vintagestory.at/Sea_level">wiki</a>, matching the water in both saves · <a href="README.md#6-game-data">README §6</a></p>
 	</section>
 
 	<section id="map">
@@ -757,10 +758,10 @@
 		<h2><span class="num">12</span><span>Still unknown</span></h2>
 		<ul class="list">
 			<li><b>The other fields.</b> Light (2, 3), entities (5, 6), field 10, decor (14) and the small number fields.</li>
-			<li><b>The other tables.</b> <code>mapchunk</code>, <code>mapregion</code>, <code>gamedata</code> and <code>playerdata</code> haven't been decoded.</li>
+			<li><b>The other tables.</b> <code>mapchunk</code>, <code>mapregion</code> and <code>playerdata</code> haven't been decoded; of <code>gamedata</code>, only the ID lists, world size and world settings have.</li>
 			<li><b>In-game coordinates.</b> The game shows coordinates shifted from these absolute ones; the exact offset hasn't been confirmed.</li>
-			<li><b>Chiseled blocks on 1.22.</b> The 1.22.7 test world has none yet.</li>
-			<li><b>Mods.</b> How modded blocks appear in a save hasn't been checked.</li>
+			<li><b>Chiseled blocks and ground storage on 1.22.</b> The 1.22.7 test world has neither yet.</li>
+			<li><b>Mods.</b> Whether modded block codes carry a domain prefix, in palettes and <code>gamedata</code>, hasn't been checked.</li>
 		</ul>
 		<p class="source">Source: <a href="README.md#8-open-questions">README §8</a></p>
 	</section>
