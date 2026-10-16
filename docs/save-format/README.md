@@ -279,6 +279,12 @@ The other field-11 keys (`worldeditworkspaces`, `ambient`, `temporalStormData`, 
 
 Field 31 is a tree attribute (§5) whose values are all strings, e.g. `gameMode: "survival"`, `startingClimate: "temperate"`, `seasons: "enabled"`, `spawnRadius: "5000"`. *(Verified (1.19, 1.22.7): it parses with storymap's tree attribute format.)* `spawnRadius` is 50 in the 1.19 sample and 5000 in the 1.22.7 world, which explains where their players spawned (§2).
 
+### Sea level
+
+The save doesn't store a sea level; neither the fields above nor the world configuration has one. *(Verified (1.19, 1.22.7).)* The game derives it from the world height (field 2): the world height × 0.4313725490196078 (= 110 / 255), rounded down, so **110** for the default height of 256. *(Wiki: [Sea level](https://wiki.vintagestory.at/Sea_level), checked there for 1.20.12; the API only calls it "the currently configured sea level" ([vsapi `IWorldAccessor.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IWorldAccessor.cs)).)*
+
+Water fills the blocks below sea level: the top water block of a sea or lake is at y = 109, so the water surface is at height 110. *(Verified (1.19, 1.22.7): both worlds are 256 high; the highest liquid block in each column is water at y = 109 in 84% of the 1.22.7 world's 177,045 water columns and 89% of the 1.19 sample's 219,284. The rest are lakes and springs above sea level.)*
+
 ## 7. Map chunks
 
 `mapchunk.data` averages ~17 KB per row in the sample and isn't decoded. The game's world map reads a per-column `RainHeightMap` from map chunks *(Source: [vsessentialsmod `ChunkMapLayer.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs))*, so the stored rows probably include it; if so, a top-down map wouldn't need to scan blocks. *(Unverified.)*

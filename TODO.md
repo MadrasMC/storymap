@@ -11,7 +11,7 @@ storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 3. **Colour map.** Read liquids (chunk field 16), look under snow, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`. Plants such as tall grass are often the top block (up to 15% of columns); decide whether to look through them.
 4. **Height from `mapchunk`.** Decode the stored rain height map, if it's there, instead of scanning every block.
-5. **Tiles with levels of detail** instead of one image: per chunk or per map region, at several resolutions for the map viewer ([`docs/rendering.md`](docs/rendering.md#output-tiles-and-levels-of-detail)). Writing one big PNG is two-thirds of a large map's render time today; per-tile images bound that.
+5. **Tiles with levels of detail** instead of one image: per chunk or per map region, at several resolutions for the map viewer ([`docs/rendering.md`](docs/rendering.md#output-tiles-and-levels-of-detail)). Writing one big PNG is two-thirds of a large map's render time today; per-tile images bound that. A tile can't see the whole map, so the sepia colours must stop depending on it: anchor them at sea level, worked out from the world height ([save format §6](docs/save-format/README.md#sea-level)), instead of the median surface height. That also makes different worlds look alike.
 6. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
 
 ## Memory
