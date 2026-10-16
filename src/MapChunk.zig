@@ -10,7 +10,8 @@ pub const Error = ProtoBuf.Error || error{
     InvalidHeightMap,
 };
 
-/// A height the game hasn't set.
+/// A height the game hasn't set. A few columns hold other values far above the world (down to
+/// 65,531), which readers should treat the same.
 pub const unset = std.math.maxInt(u16);
 
 /// Per block column, at index z * 32 + x: the highest block that rain can't fall through

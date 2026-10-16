@@ -19,7 +19,7 @@ The game's map doesn't treat block entities specially: a chiseled block is colou
 
 Seas and lakes are told apart by block: `saltwater` sets `mapColorCode: "ocean"`, while `water`, `rapidwater` and `boilingwater` set none and take the liquid default, and `lakeice` sets `"lake"`. *(Verified (1.22.7): `assets/survival/blocktypes/liquid/` in the install.)* Both test saves list `saltwater` in their block IDs but contain none: neither world reaches a sea.
 
-storymap's top-down map takes each column's height from its map chunk's rain height ([save format §7](save-format/README.md#7-map-chunks)), like the game, and looks up only the block there, in the solid layer (field 1) and the liquid layer (field 16). A liquid there is a water surface, and the map chunk's terrain height gives its bed. Rain falls through plants and loose stones, so the map shows the ground beneath them. Columns without a map chunk, or whose stored height points at a block that's gone, are scanned instead: from the top down, a column shows liquid when its highest liquid is at or above its highest solid block, ignoring solid blocks that share their place with a liquid. Those are water plants *(Verified (1.19, 1.22.7): at the water surface they're `seaweed`, `aquatic-*` (milfoil, crowfoot), reeds and tule)*, so the water shows and its depth reaches down to the ground. Lily pads (`waterlily`) sit on top of the water instead and still show as land.
+storymap's top-down map takes each column's height from its map chunk's rain height ([save format §7](save-format/README.md#7-map-chunks)), like the game, and looks up only the block there, in the solid layer (field 1) and the liquid layer (field 16). A liquid there is a water surface, and the map chunk's terrain height gives its bed. Rain falls through plants and loose stones, so the map shows the ground beneath them. The map covers the chunk columns that have a map chunk, which in both test saves is all of them (§2 of the save format); a chunk column without one wouldn't be drawn. Block columns without a stored height, or whose stored height points at a block that's gone, are scanned instead: from the top down, a column shows liquid when its highest liquid is at or above its highest solid block, ignoring solid blocks that share their place with a liquid. Those are water plants *(Verified (1.19, 1.22.7): at the water surface they're `seaweed`, `aquatic-*` (milfoil, crowfoot), reeds and tule)*, so the water shows and its depth reaches down to the ground. Lily pads (`waterlily`) sit on top of the water instead and still show as land.
 
 ## Assets
 
@@ -108,17 +108,19 @@ Stages:
 
 ## Performance
 
-*(Measured 2026-10-14 on a 14-thread Windows machine with `zig build bench -Doptimize=ReleaseFast -- <save> 7`: the median of 7 renders after one untimed one. The PNG is encoded but not written to disk.)*
+*(Measured 2026-10-16 on a 14-thread Windows machine with `zig build bench -Doptimize=ReleaseFast -- <save> 7`: the median of 7 renders after one untimed one. The PNG is encoded but not written to disk. Chunks/s counts all the save's chunks, so the stages compare.)*
 
 Where a render's time goes, the 1.22.7 world (6,224 chunks, a 3,232 × 4,224 image):
 
 | Stage | Time | Chunks/s |
 | --- | --- | --- |
-| Opening the save, its extent and the block list | 0.01 s | |
-| Decoding all chunks | 0.09 s | 70,000 |
-| Decoding all chunks and finding each column's top block | 0.14 s | 44,700 |
-| Turning heights into pixels and encoding the PNG (stb) | 0.64 s | |
-| End to end | 0.80 s | 7,800 |
+| Opening the save, its extent and the block list | 0.005 s | |
+| Decoding every chunk, for comparison | 0.07 s | 90,000 |
+| Reading the stored heights and the 1,244 chunks they point into, and finding each column's top block | 0.11 s | 54,800 |
+| Turning heights into pixels and encoding the PNG (stb) | 0.41 s | |
+| End to end | 0.52 s | 12,000 |
+
+- **Only the chunks holding the surface are read.** Each column's map chunk names the chunk holding its surface block, and workers fetch those chunks by key (their position), along with every chunk below a stale height. The map's extent and columns come from `mapchunk` too, which has a row per chunk column instead of one per chunk, so nothing goes through the whole `chunk` table. Before, each worker read through all of it to pick out its share, and every chunk was decoded: finding top blocks took 0.17 s in the 1.22.7 world and 0.11 s in the 1.19 sample, now 0.11 s and 0.03 s. What's left in the 1.22.7 world is mostly the per-pixel arrays, which cover its empty space between the two explored areas.
 
 - **The PNG dominates large maps.** It grows with map area, while decoding grows with the number of chunks. Tiles (above) bound it.
 - **One zstd decompression context per worker,** reused for every layer (stage 1 above). Creating one per layer cost at most ~0.05 s of kernel time per render, so renders barely changed; a stress test with millions of tiny inputs, which had spent 83% of its time creating contexts, got much faster.

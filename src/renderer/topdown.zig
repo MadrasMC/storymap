@@ -16,12 +16,14 @@ pub const Output = union(enum) {
 
 /// What a render covered and how long each stage took.
 pub const Stats = struct {
-    chunks: usize = 0,
+    /// Chunks the map needed: those holding a surface block.
+    chunksRead: usize = 0,
     width: usize = 0,
     height: usize = 0,
     /// Opening the save and reading its extent and block list.
     open: Io.Duration = .zero,
-    /// Decoding every chunk and finding each column's top block.
+    /// Reading the stored heights and the chunks holding the surface, and finding each
+    /// column's top block.
     scan: Io.Duration = .zero,
     /// Shading the pixels and encoding the PNG.
     png: Io.Duration = .zero,
@@ -39,19 +41,21 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     };
     defer db.deinit();
 
-    // The image covers every chunk in the save. Chunk x is the low 27 bits of
-    // `position` and z the next 27 (see Chunk.Position).
+    // The image covers every chunk column with a map chunk. Every chunk column has one in the
+    // saves seen (docs/save-format/README.md#2-positions), and the table has a row per column
+    // where `chunk` has one per chunk, so it's much quicker to go through. Chunk x is the low
+    // 27 bits of `position` and z the next 27 (see Chunk.Position).
     const bounds = db.prepare(
-        \\SELECT MIN(position & 134217727), MAX(position & 134217727),
+        \\SELECT COUNT(*), MIN(position & 134217727), MAX(position & 134217727),
         \\       MIN((position >> 27) & 134217727), MAX((position >> 27) & 134217727)
-        \\FROM chunk;
+        \\FROM mapchunk;
     ) catch |err| {
         // SQLite opens any file lazily, so this first query is where a wrong file shows up.
         std.debug.print("storymap: {s} isn't a Vintage Story save ({s})\n", .{ dbPath, @errorName(err) });
         std.process.exit(1);
     };
     defer bounds.finalize();
-    if (!bounds.step()) return error.NoChunks;
+    if (!bounds.step() or bounds.column(u64, 0) == 0) return error.NoChunks;
 
     // Which block code each numeric block ID stands for, in this save.
     const gameData = GameData.read(allocator, db) catch |err| {
@@ -59,10 +63,10 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
         std.process.exit(1);
     };
     defer gameData.deinit();
-    const min_x: usize = @intCast(bounds.column(u64, 0));
-    const max_x: usize = @intCast(bounds.column(u64, 1));
-    const min_z: usize = @intCast(bounds.column(u64, 2));
-    const max_z: usize = @intCast(bounds.column(u64, 3));
+    const min_x: usize = @intCast(bounds.column(u64, 1));
+    const max_x: usize = @intCast(bounds.column(u64, 2));
+    const min_z: usize = @intCast(bounds.column(u64, 3));
+    const max_z: usize = @intCast(bounds.column(u64, 4));
 
     // One pixel per block column; x goes right (east), z goes down (south).
     const width = (max_x - min_x + 1) * 32;
@@ -113,8 +117,10 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
         .liquidBlock = liquidBlock,
         .mapChunkSlot = mapChunkSlot,
         .mapChunks = mapChunks,
+        // Chunk levels in the world: 8 for the default height of 256.
+        .levels = std.math.divCeil(usize, gameData.worldHeight, 32) catch unreachable,
     };
-    const chunks = try scanChunks(allocator, dbPath, map);
+    const chunksRead = try scanChunks(allocator, dbPath, map);
     const scanned: Io.Timestamp = .now(io, .awake);
 
     var lowest: u16 = std.math.maxInt(u16);
@@ -167,7 +173,7 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     if (written == 0) return error.WritePngFailed;
 
     if (stats) |out| out.* = .{
-        .chunks = chunks,
+        .chunksRead = chunksRead,
         .width = width,
         .height = height,
         .open = start.durationTo(opened),
@@ -382,6 +388,8 @@ pub const Map = struct {
     mapChunkSlot: []const u32,
     /// The stored heights, filled in by the workers before they scan the chunks.
     mapChunks: []MapChunk,
+    /// How many chunk levels the world has: chunks have y 0 to `levels` − 1.
+    levels: usize,
 
     /// The stored heights of the chunk column at a position, if there are any.
     fn mapChunk(self: Map, position: u64) ?*MapChunk {
@@ -435,9 +443,10 @@ fn readHeights(db: DB, map: Map, worker: usize, workers: usize) !void {
     }
 }
 
-/// Decodes every chunk on every core and, with a map, records each column's top block in it.
-/// Returns how many chunks were read. Each worker opens its own connection and takes whole
-/// chunk columns, so every pixel is written by exactly one thread and needs no locking.
+/// With a map, records each column's top block in it, reading only the chunks that hold the
+/// surface; without one, decodes every chunk. Runs on every core, and returns how many chunks
+/// were read. Each worker opens its own connection and takes whole chunk columns, so every
+/// pixel is written by exactly one thread and needs no locking.
 pub fn scanChunks(allocator: std.mem.Allocator, dbPath: []const u8, map: ?Map) !usize {
     const workers = std.Thread.getCpuCount() catch 1;
     const jobs = try allocator.alloc(ScanJob, workers);
@@ -488,15 +497,6 @@ fn scanColumnsOrFail(job: *ScanJob) !void {
     const allocator = job.allocator;
     const db = try DB.initImmutable(allocator, job.dbPath);
     defer db.deinit();
-    // This worker's columns' stored heights, before any of their chunks.
-    if (job.map) |map| try readHeights(db, map, job.worker, job.workers);
-    // 2^54 - 1 keeps x and z and drops y, so all chunks of a column go to the same worker.
-    // y is the position's highest part, so descending order takes each column top down.
-    const sql = try std.fmt.allocPrint(allocator, "SELECT position, data FROM chunk WHERE (position & 18014398509481983) % {d} = {d} ORDER BY position DESC;", .{ job.workers, job.worker });
-    defer allocator.free(sql);
-    const stmt = try db.prepare(sql);
-    defer stmt.finalize();
-
     // Allocated once and reused for every chunk: decoding itself doesn't allocate.
     var decoder: Chunk.Decoder = try .init(allocator, Chunk.Decoder.defaultBlockEntityBytes);
     defer decoder.deinit(allocator);
@@ -504,39 +504,108 @@ fn scanColumnsOrFail(job: *ScanJob) !void {
     defer allocator.destroy(chunk);
     chunk.* = .{};
 
-    while (stmt.step()) {
-        job.chunks += 1;
-        // One undecodable chunk shouldn't stop the whole map.
-        decoder.decode(chunk, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch |err| {
-            const pos = chunk.position;
-            std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
-            continue;
-        };
+    const map = job.map orelse {
+        // Without a map, decode every chunk: the benchmark's measure of decoding alone.
+        // 2^54 - 1 keeps x and z and drops y, so all chunks of a column go to the same worker.
+        const sql = try std.fmt.allocPrint(allocator, "SELECT position, data FROM chunk WHERE (position & 18014398509481983) % {d} = {d};", .{ job.workers, job.worker });
+        defer allocator.free(sql);
+        const stmt = try db.prepare(sql);
+        defer stmt.finalize();
+        while (stmt.step()) {
+            job.chunks += 1;
+            decodeOrWarn(&decoder, chunk, stmt.column(u64, 0), stmt.column([]const u8, 1)) catch continue;
+        }
+        return;
+    };
 
-        const map = job.map orelse continue;
-        const left = (chunk.position.x - map.minX) * 32;
-        const up = (chunk.position.z - map.minZ) * 32;
+    // This worker's columns' stored heights, before any of their chunks.
+    try readHeights(db, map, job.worker, job.workers);
+    const row = try db.prepare("SELECT data FROM chunk WHERE position = ?1;");
+    defer row.finalize();
+    const columns = map.width / 32;
+    const levels = map.levels;
+    for (map.mapChunkSlot, 0..) |slot, column| {
+        if (slot == noMapChunk) continue;
+        const base: u64 = (map.minX + column % columns) | (map.minZ + column / columns) << 27;
+        if (base % job.workers != job.worker) continue;
+        const heights = &map.mapChunks[slot];
 
-        const stored = map.mapChunk(chunk.position.position64());
-        for (0..32) |z| for (0..32) |x| {
-            const index = (up + z) * map.width + left + x;
-            if (stored) |heights| {
-                const rain = &heights.rainHeight[z * 32 + x];
-                if (rain.* != MapChunk.unset) {
-                    if (rain.* / 32 != chunk.position.y) continue;
-                    if (recordStored(chunk, x, rain.* % 32, z, rain.*, heights.terrainHeight[z * 32 + x], map, index)) continue;
-                    // The block there is gone: the column has no blocks at all (the game
-                    // stores 0 then), or it changed after its height was stored. Scan it
-                    // instead, from this chunk down, as chunks come top down.
-                    rain.* = MapChunk.unset;
-                }
+        // The levels the surface heights point into. Chunks at or below `scanFrom` are all
+        // read: for columns without a stored height, or whose stored height is stale. Levels
+        // with no chunk saved are just a key that isn't found.
+        var needed: std.StaticBitSet(1024) = .empty;
+        var scanFrom: ?usize = null;
+        for (&heights.rainHeight) |*rain| {
+            // A height above the world is stale too.
+            if (rain.* != MapChunk.unset and rain.* / 32 >= levels) rain.* = MapChunk.unset;
+            if (rain.* == MapChunk.unset) scanFrom = levels - 1 else needed.set(rain.* / 32);
+        }
+
+        // Top down, so a stale height found in one chunk can still be scanned for below it.
+        var level: usize = levels;
+        while (level > 0) {
+            level -= 1;
+            if (!needed.isSet(level) and (scanFrom == null or level > scanFrom.?)) continue;
+            const position = base | @as(u64, level) << 54;
+            row.bind(1, position);
+            defer row.reset();
+            if (!row.step()) {
+                // No chunk here: heights pointing here are stale.
+                if (forgetHeightsAt(heights, level)) scanFrom = @max(scanFrom orelse level, level);
+                continue;
             }
-            // Plants growing in water, such as seaweed and reeds, share their place with it:
-            // from above, the water shows, and its depth goes down to the ground below them.
-            recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &map.top[index], &map.topBlock[index]);
-            recordTop(&chunk.liquids, null, chunk.position.y, x, z, &map.liquidTop[index], &map.liquidBlock[index]);
-        };
+            job.chunks += 1;
+            decodeOrWarn(&decoder, chunk, position, row.column([]const u8, 0)) catch continue;
+            if (recordChunk(chunk, map, heights)) scanFrom = @max(scanFrom orelse level, level);
+        }
     }
+}
+
+/// Decodes a chunk; one that can't be decoded is skipped with a warning, so it doesn't stop
+/// the whole map.
+fn decodeOrWarn(decoder: *Chunk.Decoder, chunk: *Chunk, position: u64, data: []const u8) !void {
+    decoder.decode(chunk, position, data) catch |err| {
+        const pos = chunk.position;
+        std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
+        return err;
+    };
+}
+
+/// Forgets the stored heights that point into chunk level `level`, so their columns are
+/// scanned instead. Returns whether there were any.
+fn forgetHeightsAt(heights: *MapChunk, level: usize) bool {
+    var any = false;
+    for (&heights.rainHeight) |*rain| if (rain.* != MapChunk.unset and rain.* / 32 == level) {
+        rain.* = MapChunk.unset;
+        any = true;
+    };
+    return any;
+}
+
+/// Records the columns of one chunk: from their stored heights where they have them, by
+/// scanning down where they don't. Returns whether a stored height turned out stale, in which
+/// case its column needs the chunks below scanned too.
+fn recordChunk(chunk: *const Chunk, map: Map, heights: *MapChunk) bool {
+    const left = (chunk.position.x - map.minX) * 32;
+    const up = (chunk.position.z - map.minZ) * 32;
+    var stale = false;
+    for (0..32) |z| for (0..32) |x| {
+        const index = (up + z) * map.width + left + x;
+        const rain = &heights.rainHeight[z * 32 + x];
+        if (rain.* != MapChunk.unset) {
+            if (rain.* / 32 != chunk.position.y) continue;
+            if (recordStored(chunk, x, rain.* % 32, z, rain.*, heights.terrainHeight[z * 32 + x], map, index)) continue;
+            // The block there is gone: the column has no blocks at all (the game stores 0
+            // then), or it changed after its height was stored. Scan it instead.
+            rain.* = MapChunk.unset;
+            stale = true;
+        }
+        // Plants growing in water, such as seaweed and reeds, share their place with it:
+        // from above, the water shows, and its depth goes down to the ground below them.
+        recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &map.top[index], &map.topBlock[index]);
+        recordTop(&chunk.liquids, null, chunk.position.y, x, z, &map.liquidTop[index], &map.liquidBlock[index]);
+    };
+    return stale;
 }
 
 /// Records a column from its stored heights: the block at the rain height, in the chunk that

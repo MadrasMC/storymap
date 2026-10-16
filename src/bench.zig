@@ -36,6 +36,8 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     defer allocator.free(total);
 
     var stats: topdown.Stats = .{};
+    // Every chunk in the save, which a render doesn't count: it reads only those it needs.
+    var chunks: usize = 0;
     try topdown.render(allocator, io, dbPath, .discard, &stats);
     for (0..runs) |i| {
         try topdown.render(allocator, io, dbPath, .discard, &stats);
@@ -46,19 +48,19 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
 
         // Decoding alone, without finding top blocks, separates the two costs.
         const start: Io.Timestamp = .now(io, .awake);
-        _ = try topdown.scanChunks(allocator, dbPath, null);
+        chunks = try topdown.scanChunks(allocator, dbPath, null);
         decode[i] = start.untilNow(io, .awake);
     }
 
     const threads = std.Thread.getCpuCount() catch 1;
-    std.debug.print("{s}: {} chunks, {}x{} image, {} threads, {s} build, median of {} runs\n", .{
-        std.fs.path.basename(dbPath), stats.chunks, stats.width, stats.height, threads, @tagName(builtin.mode), runs,
+    std.debug.print("{s}: {} chunks ({} read for the map), {}x{} image, {} threads, {s} build, median of {} runs\n", .{
+        std.fs.path.basename(dbPath), chunks, stats.chunksRead, stats.width, stats.height, threads, @tagName(builtin.mode), runs,
     });
     printStage("open and block list", open, null);
-    printStage("decode only", decode, stats.chunks);
-    printStage("decode and top blocks", scan, stats.chunks);
+    printStage("decode only", decode, chunks);
+    printStage("decode and top blocks", scan, chunks);
     printStage("pixels and PNG", png, null);
-    printStage("end to end", total, stats.chunks);
+    printStage("end to end", total, chunks);
 }
 
 fn printStage(name: []const u8, times: []Io.Duration, chunks: ?usize) void {
