@@ -147,6 +147,28 @@
 	.stat { font: var(--t-small)/1.5 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 	.stat b { color: var(--fg); }
 
+	.figure { display: grid; justify-items: center; gap: var(--s4); }
+	.figure figcaption { font-size: var(--t-small); color: var(--muted); max-width: 36rem; }
+	.diagram { width: 100%; max-width: 22.5rem; height: auto; overflow: visible; }
+	.diagram .face-side { fill: var(--zero); stroke: var(--panel); }
+	.diagram .face-side.needed { fill: var(--accent-soft); stroke: var(--accent); }
+	.diagram .face-top { fill: var(--soft); stroke: var(--border); }
+	.diagram .chunk { fill: var(--panel); }
+	.diagram .chunk.needed { fill: var(--accent-soft); }
+	.diagram .terrain { fill: var(--solid); opacity: 0.55; }
+	.diagram .surface { fill: none; stroke: var(--top); stroke-width: 2; }
+	.diagram .chunk-line { fill: none; stroke: var(--border); }
+	.diagram .chunk-line.needed { stroke: var(--accent); stroke-width: 1.5; }
+	.diagram .layer { fill: var(--soft); stroke: var(--muted); }
+	.diagram .layer-line { stroke: var(--border); }
+	.diagram .cell { fill: var(--accent); }
+	.diagram .arrow { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+	.diagram .arrow-head { fill: var(--accent); }
+	.diagram .picked { fill: var(--accent); }
+	.diagram .label { font: 500 0.75rem var(--mono); fill: var(--muted); }
+	.diagram .label.strong, .diagram .label.needed { fill: var(--fg); font-weight: 600; }
+	.key-needed { background: var(--accent-soft); color: var(--accent); border-radius: 0.2rem; padding: 0 0.25rem; }
+
 	label.field { display: grid; gap: var(--s1); font: 600 var(--t-micro)/1.2 var(--mono); letter-spacing: 0.04em; color: var(--muted); }
 	input[type="number"], input[type="text"] {
 		font: var(--t-body)/1.2 var(--mono);
@@ -488,6 +510,67 @@
 			<li><b><code>mapregion</code> is coarser still.</b> One row per 16 × 16 chunk columns, with world generation data.</li>
 		</ul>
 		<p>So a block column's map chunk gives its surface height, and that height names the one chunk holding the surface block. A top-down map only needs those chunks: about a fifth of the chunks in the test saves.</p>
+		<figure class="panel figure">
+			<svg class="diagram" viewBox="0 0 360 430" role="img" aria-labelledby="column-diagram-title">
+				<title id="column-diagram-title">A chunk column: eight chunks stacked from y 0 to y 7, with the terrain surface crossing chunks 3 and 4. Above it floats the map chunk, a flat grid of 32 by 32 heights. An arrow drops from one cell of that grid to the surface block it names, in chunk 3.</title>
+				<polygon class="face-side" points="200,368 244,344 244,380 200,404"/>
+				<polygon class="face-side" points="200,332 244,308 244,344 200,368"/>
+				<polygon class="face-side" points="200,296 244,272 244,308 200,332"/>
+				<polygon class="face-side needed" points="200,260 244,236 244,272 200,296"/>
+				<polygon class="face-side needed" points="200,224 244,200 244,236 200,260"/>
+				<polygon class="face-side" points="200,188 244,164 244,200 200,224"/>
+				<polygon class="face-side" points="200,152 244,128 244,164 200,188"/>
+				<polygon class="face-side" points="200,116 244,92 244,128 200,152"/>
+				<polygon class="face-top" points="40,116 200,116 244,92 84,92"/>
+				<rect class="chunk" x="40" y="368" width="160" height="36"/>
+				<rect class="chunk" x="40" y="332" width="160" height="36"/>
+				<rect class="chunk" x="40" y="296" width="160" height="36"/>
+				<rect class="chunk needed" x="40" y="260" width="160" height="36"/>
+				<rect class="chunk needed" x="40" y="224" width="160" height="36"/>
+				<rect class="chunk" x="40" y="188" width="160" height="36"/>
+				<rect class="chunk" x="40" y="152" width="160" height="36"/>
+				<rect class="chunk" x="40" y="116" width="160" height="36"/>
+				<polygon class="terrain" points="40,404 40,271.25 45,271.25 45,267.875 50,267.875 50,263.375 55,263.375 55,258.875 60,258.875 60,253.25 65,253.25 65,247.625 70,247.625 70,243.125 75,243.125 75,239.75 80,239.75 80,238.625 85,238.625 85,238.625 90,238.625 90,240.875 95,240.875 95,245.375 100,245.375 100,251 105,251 105,257.75 110,257.75 110,264.5 115,264.5 115,271.25 120,271.25 120,276.875 125,276.875 125,281.375 130,281.375 130,284.75 135,284.75 135,287 140,287 140,288.125 145,288.125 145,288.125 150,288.125 150,287 155,287 155,284.75 160,284.75 160,281.375 165,281.375 165,276.875 170,276.875 170,271.25 175,271.25 175,265.625 180,265.625 180,260 185,260 185,254.375 190,254.375 190,249.875 195,249.875 195,246.5 200,246.5 200,404"/>
+				<polyline class="surface" points="40,271.25 45,271.25 45,267.875 50,267.875 50,263.375 55,263.375 55,258.875 60,258.875 60,253.25 65,253.25 65,247.625 70,247.625 70,243.125 75,243.125 75,239.75 80,239.75 80,238.625 85,238.625 85,238.625 90,238.625 90,240.875 95,240.875 95,245.375 100,245.375 100,251 105,251 105,257.75 110,257.75 110,264.5 115,264.5 115,271.25 120,271.25 120,276.875 125,276.875 125,281.375 130,281.375 130,284.75 135,284.75 135,287 140,287 140,288.125 145,288.125 145,288.125 150,288.125 150,287 155,287 155,284.75 160,284.75 160,281.375 165,281.375 165,276.875 170,276.875 170,271.25 175,271.25 175,265.625 180,265.625 180,260 185,260 185,254.375 190,254.375 190,249.875 195,249.875 195,246.5 200,246.5"/>
+				<rect class="chunk-line" x="40" y="368" width="160" height="36"/>
+				<text class="label" x="254" y="378">y 0</text>
+				<rect class="chunk-line" x="40" y="332" width="160" height="36"/>
+				<text class="label" x="254" y="342">y 1</text>
+				<rect class="chunk-line" x="40" y="296" width="160" height="36"/>
+				<text class="label" x="254" y="306">y 2</text>
+				<rect class="chunk-line needed" x="40" y="260" width="160" height="36"/>
+				<text class="label needed" x="254" y="270">y 3</text>
+				<rect class="chunk-line needed" x="40" y="224" width="160" height="36"/>
+				<text class="label needed" x="254" y="234">y 4</text>
+				<rect class="chunk-line" x="40" y="188" width="160" height="36"/>
+				<text class="label" x="254" y="198">y 5</text>
+				<rect class="chunk-line" x="40" y="152" width="160" height="36"/>
+				<text class="label" x="254" y="162">y 6</text>
+				<rect class="chunk-line" x="40" y="116" width="160" height="36"/>
+				<text class="label" x="254" y="126">y 7</text>
+				<polygon class="layer" points="40,52 200,52 244,28 84,28"/>
+				<line class="layer-line" x1="45.5" y1="49" x2="205.5" y2="49"/>
+				<line class="layer-line" x1="60" y1="52" x2="104" y2="28"/>
+				<line class="layer-line" x1="51" y1="46" x2="211" y2="46"/>
+				<line class="layer-line" x1="80" y1="52" x2="124" y2="28"/>
+				<line class="layer-line" x1="56.5" y1="43" x2="216.5" y2="43"/>
+				<line class="layer-line" x1="100" y1="52" x2="144" y2="28"/>
+				<line class="layer-line" x1="62" y1="40" x2="222" y2="40"/>
+				<line class="layer-line" x1="120" y1="52" x2="164" y2="28"/>
+				<line class="layer-line" x1="67.5" y1="37" x2="227.5" y2="37"/>
+				<line class="layer-line" x1="140" y1="52" x2="184" y2="28"/>
+				<line class="layer-line" x1="73" y1="34" x2="233" y2="34"/>
+				<line class="layer-line" x1="160" y1="52" x2="204" y2="28"/>
+				<line class="layer-line" x1="78.5" y1="31" x2="238.5" y2="31"/>
+				<line class="layer-line" x1="180" y1="52" x2="224" y2="28"/>
+				<polygon class="cell" points="140,52 160,52 165.5,49 145.5,49"/>
+				<text class="label strong" x="254" y="44">mapchunk</text>
+				<line class="arrow" x1="147.5" y1="53" x2="147.5" y2="282.125"/>
+				<polygon class="arrow-head" points="143.5,280.125 151.5,280.125 147.5,287.125"/>
+				<rect class="picked" x="145" y="288.125" width="5" height="1.625"/>
+			</svg>
+			<figcaption>One chunk column, seen from the front. Each cell of the map chunk is a block column; its height, here 103, falls in chunk y 3 (heights 96 to 127). The surface lies in the <span class="key-needed">highlighted chunks</span> only.</figcaption>
+		</figure>
 		<p>Saves use SQLite's write-ahead log, so even read-only access creates <code>-shm</code> and <code>-wal</code> files next to the save. Read a copy, or open it with SQLite's <code>immutable=1</code> option.</p>
 		<p class="source">Sources: table schema from 1.19 and 1.22.7 saves · <a href="https://www.sqlite.org/wal.html">SQLite: write-ahead log</a> · table descriptions from the <a href="https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept">wiki</a> · <a href="README.md#1-the-save-file">README §1</a></p>
 	</section>
