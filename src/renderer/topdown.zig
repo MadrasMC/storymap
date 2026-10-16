@@ -98,7 +98,7 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     }
     const summarised: Io.Timestamp = .now(io, .awake);
 
-    const heights = try surfaceHeights(allocator, top, lowest, highest);
+    const heights: Heights = .of(gameData);
 
     const pixels = try allocator.alloc(u32, top.len);
     defer allocator.free(pixels);
@@ -144,52 +144,32 @@ const ramp = [_][3]u8{
 /// The ramp entry for ground level, so most of the map is pale and only low ground is dark.
 const groundStep = 3;
 
-/// The surface heights the ramp is spread over.
+/// The surface heights the ramp is spread over. They depend only on the world, so every
+/// part of a map, and every world, is coloured the same way.
 const Heights = struct {
-    /// Below this, 2% of the columns: the ramp's darkest end.
+    /// The ramp's darkest end, and everything below it.
     low: u16,
-    /// The median: half the columns are lower.
+    /// Sea level: the ground-level colour.
     ground: u16,
-    /// Above this, 2% of the columns: the ramp's palest end.
+    /// The ramp's palest end, and everything above it.
     high: u16,
+
+    /// For a world: in a default 256-block world, 70, 110 (sea level) and 174. The test worlds'
+    /// surfaces have a median of 112. The ends are fractions of the world height, on the guess
+    /// that taller worlds have taller terrain too.
+    fn of(gameData: GameData) Heights {
+        const sea = gameData.seaLevel();
+        return .{
+            .low = @intCast(sea -| gameData.worldHeight * 40 / 256),
+            .ground = @intCast(sea),
+            .high = @intCast(sea + gameData.worldHeight * 64 / 256),
+        };
+    }
 };
 
-/// The surface heights of the columns. Leaving out the lowest and highest 2% stops one
-/// deep pit or tall peak from squeezing the rest of the map into a few shades.
-fn surfaceHeights(allocator: std.mem.Allocator, top: []const ?u16, lowest: u16, highest: u16) !Heights {
-    if (highest < lowest) return .{ .low = 0, .ground = 0, .high = 0 }; // no blocks at all
-    const counts = try allocator.alloc(usize, highest - lowest + 1);
-    defer allocator.free(counts);
-    @memset(counts, 0);
-    var columns: usize = 0;
-    for (top) |column| if (column) |y| {
-        counts[y - lowest] += 1;
-        columns += 1;
-    };
-    const low = percentile(counts, columns / 50);
-    const ground = percentile(counts, columns / 2);
-    const high = percentile(counts, columns - 1 - columns / 50);
-    return .{ .low = @intCast(lowest + low), .ground = @intCast(lowest + ground), .high = @intCast(lowest + high) };
-}
-
-/// The index of the `rank`th column (from 0) when they're sorted by height.
-fn percentile(counts: []const usize, rank: usize) usize {
-    var below: usize = 0;
-    for (counts, 0..) |count, i| {
-        below += count;
-        if (below > rank) return i;
-    }
-    return counts.len - 1;
-}
-
-test surfaceHeights {
-    // 100 columns: one pit at 0, one peak at 200, the rest between 60 and 69.
-    var top: [100]?u16 = undefined;
-    for (&top, 0..) |*column, i| column.* = @intCast(60 + i % 10);
-    top[0] = 0;
-    top[1] = 200;
-    const heights = try surfaceHeights(std.testing.allocator, &top, 0, 200);
-    try std.testing.expectEqual(Heights{ .low = 60, .ground = 65, .high = 69 }, heights);
+test "Heights.of" {
+    const gameData: GameData = .{ .arena = undefined, .blockCodes = &.{}, .itemCodes = &.{}, .worldHeight = 256 };
+    try std.testing.expectEqual(Heights{ .low = 70, .ground = 110, .high = 174 }, Heights.of(gameData));
 }
 
 /// The colour of a column at height `y`. `slope` is how much higher it is than its west and

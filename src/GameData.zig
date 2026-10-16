@@ -12,6 +12,10 @@ arena: std.heap.ArenaAllocator,
 blockCodes: []const ?[]const u8,
 /// Item code by item ID, like `blockCodes`.
 itemCodes: []const ?[]const u8,
+/// The world's height in blocks, at most `maxWorldHeight`.
+worldHeight: u32,
+
+pub const maxWorldHeight = 1024 * 32;
 
 pub fn read(allocator: std.mem.Allocator, db: DB) !GameData {
     const stmt = try db.prepare("SELECT data FROM gamedata;");
@@ -26,9 +30,16 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
     errdefer arena.deinit();
     var blockCodes: ?[]const ?[]const u8 = null;
     var itemCodes: ?[]const ?[]const u8 = null;
+    // The game's default, should a save ever leave the field out.
+    var worldHeight: u32 = 256;
 
     var parser: ProtoBuf = .{ .buf = data };
     while (try parser.next()) |msg| {
+        if (msg.field_number == 2 and msg.data == .VARINT) {
+            // Chunk y positions have 10 bits, so no world is taller than 1,024 chunks.
+            if (msg.data.VARINT == 0 or msg.data.VARINT > maxWorldHeight) return error.InvalidWorldHeight;
+            worldHeight = @intCast(msg.data.VARINT);
+        }
         // Field 11 holds named data entries: { 1: key, 2: value }.
         if (msg.field_number != 11 or msg.data != .LEN) continue;
         var key: []const u8 = "";
@@ -49,7 +60,15 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
         .arena = arena,
         .blockCodes = blockCodes orelse return error.NoBlockIds,
         .itemCodes = itemCodes orelse &.{},
+        .worldHeight = worldHeight,
     };
+}
+
+/// The height of the water surface of seas and lakes: water fills the blocks below it.
+/// The save doesn't store it; the game derives it from the world height
+/// (docs/save-format/README.md#sea-level).
+pub fn seaLevel(self: GameData) u32 {
+    return self.worldHeight * 110 / 255;
 }
 
 pub fn deinit(self: GameData) void {
@@ -102,14 +121,14 @@ fn parseIdMapping(arena: std.mem.Allocator, bytes: []const u8) ![]?[]const u8 {
 }
 
 test "BlockIDs and ItemIDs in the layout real saves use" {
-    // A cut-down gamedata row: field 1 (world width, a varint), field 25 (a fixed 32-bit float),
-    // then field 11 { 1: "BlockIDs", 2: [ { 1: 0, 2: "air" }, { 1: 1, 2: "mantle" } ] }.
+    // A cut-down gamedata row: field 1 (world width, a varint), field 2 (world height, 256),
+    // field 25 (a fixed 32-bit float), then
+    // field 11 { 1: "BlockIDs", 2: [ { 1: 0, 2: "air" }, { 1: 1, 2: "mantle" } ] }.
     const data = [_]u8{
-        0x08, 0x80, 0xc0, 0x3e, 0xcd, 0x01, 0x00, 0x00, 0xc0, 0x41,
-        0x5a, 0x21, 0x0a, 0x08, 'B',  'l',  'o',  'c',  'k',  'I',
-        'D',  's',  0x12, 0x15, 0x0a, 0x07, 0x08, 0x00, 0x12, 0x03,
-        'a',  'i',  'r',  0x0a, 0x0a, 0x08, 0x01, 0x12, 0x06, 'm',
-        'a',  'n',  't',  'l',  'e',
+        0x08, 0x80, 0xc0, 0x3e, 0x10, 0x80, 0x02, 0xcd, 0x01, 0x00, 0x00, 0xc0, 0x41,
+        0x5a, 0x21, 0x0a, 0x08, 'B',  'l',  'o',  'c',  'k',  'I',  'D',  's',  0x12,
+        0x15, 0x0a, 0x07, 0x08, 0x00, 0x12, 0x03, 'a',  'i',  'r',  0x0a, 0x0a, 0x08,
+        0x01, 0x12, 0x06, 'm',  'a',  'n',  't',  'l',  'e',
     };
     const gameData = try parse(std.testing.allocator, &data);
     defer gameData.deinit();
@@ -118,4 +137,20 @@ test "BlockIDs and ItemIDs in the layout real saves use" {
     try std.testing.expectEqual(null, gameData.blockCode(2));
     try std.testing.expectEqual(null, gameData.blockCode(-1));
     try std.testing.expectEqual(null, gameData.itemCode(0));
+    try std.testing.expectEqual(256, gameData.worldHeight);
+    try std.testing.expectEqual(110, gameData.seaLevel());
+}
+
+test "a world height of 0 or over 1,024 chunks is invalid" {
+    // Field 2 = 0, then field 2 = 32,769.
+    try std.testing.expectError(error.InvalidWorldHeight, parse(std.testing.allocator, &.{ 0x10, 0x00 }));
+    try std.testing.expectError(error.InvalidWorldHeight, parse(std.testing.allocator, &.{ 0x10, 0x81, 0x80, 0x02 }));
+}
+
+test seaLevel {
+    // The wiki's table: https://wiki.vintagestory.at/Sea_level
+    for ([_][2]u32{ .{ 128, 55 }, .{ 192, 82 }, .{ 256, 110 }, .{ 320, 138 }, .{ 384, 165 }, .{ 448, 193 }, .{ 512, 220 } }) |row| {
+        const gameData: GameData = .{ .arena = undefined, .blockCodes = &.{}, .itemCodes = &.{}, .worldHeight = row[0] };
+        try std.testing.expectEqual(row[1], gameData.seaLevel());
+    }
 }
