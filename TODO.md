@@ -18,7 +18,7 @@ storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). Stage 1, no allocation per chunk, is done.
 
-7. **Fixed buffers throughout.** Tiles already reuse per-worker buffers, but the halves passed between levels are allocated per render, the levels above the subtrees per level, and the PNG encoder per tile.
+7. **Fixed buffers throughout.** Tiles already reuse per-worker buffers, and every waiting half is set aside before any work starts, but those are sized and allocated per render, and the PNG encoder allocates per tile.
 8. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
 
 ## Block entities

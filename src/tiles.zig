@@ -96,11 +96,19 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
         if (level.count() >= 4 * cores) split = n;
     }
     const items = pyramid.levels[split].keys();
-    // Each subtree's top tile at half size, and whether it has anything on it.
+    // Each subtree's tile at the cut level, at half size, and whether it has anything on it.
     const halves = try allocator.alloc(u32, items.len * half * half);
     defer allocator.free(halves);
     const drawn = try allocator.alloc(bool, items.len);
     defer allocator.free(drawn);
+    // The levels above the subtrees are built one at a time, each from the halves of the one
+    // below, so only two levels' halves are needed at once. They take turns with the cut level's
+    // halves and one more block, sized for the level above the cut: no level has more tiles than
+    // the one below it, so each block fits every level that uses it. All of it is set aside
+    // here, before any work.
+    const cutBlock: Built = .{ .halves = halves, .drawn = drawn };
+    const otherBlock: Built = try .init(allocator, if (split + 1 < pyramid.levels.len) pyramid.levels[split + 1].count() else 0);
+    defer otherBlock.deinit(allocator);
 
     const count = @max(1, @min(cores, items.len));
     const jobs = try allocator.alloc(Job(View), count);
@@ -118,19 +126,18 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     try runAll(View, jobs, threads, Job(View).run);
 
     // The levels above the subtrees, one at a time: each tile is the halves of the four below.
-    var below: Built = .{ .halves = halves, .drawn = drawn };
-    var owned: ?Built = null;
-    defer if (owned) |built| built.deinit(allocator);
-    for (split + 1..pyramid.levels.len) |level| {
+    // A level overwrites the halves of the level two below it, which the level in between has
+    // already used: the first level above the cut fills the other block, the next refills the
+    // cut level's, and so on.
+    var below = cutBlock;
+    for (split + 1..pyramid.levels.len, 0..) |level, turn| {
         const tiles = pyramid.levels[level].keys();
-        const built: Built = try .init(allocator, tiles.len);
-        errdefer built.deinit(allocator);
+        const block = if (turn % 2 == 0) otherBlock else cutBlock;
+        const built: Built = .{ .halves = block.halves[0 .. tiles.len * half * half], .drawn = block.drawn[0..tiles.len] };
         var nextAbove: std.atomic.Value(usize) = .init(0);
         const task: Above = .{ .level = level, .tiles = tiles, .belowTiles = &pyramid.levels[level - 1], .below = below, .built = built, .next = &nextAbove };
         for (jobs) |*job| job.above = &task;
         try runAll(View, jobs, threads, Job(View).runAbove);
-        if (owned) |previous| previous.deinit(allocator);
-        owned = built;
         below = built;
     }
 
@@ -247,7 +254,8 @@ fn Job(comptime View: type) type {
         io: Io,
         pyramid: *const Pyramid,
         split: usize,
-        /// The subtrees' top tiles, shared by all workers, and where their halves go.
+        /// The tiles at the cut level, one per subtree, shared by all workers, and where their
+        /// halves go.
         items: []const Tile,
         halves: []u32,
         drawn: []bool,
