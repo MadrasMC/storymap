@@ -251,6 +251,8 @@ Cuboid packing, 16 × 16 × 16 voxels per block (from `ToUint`/`FromUint`):
 | 20–23 | z2 − 1 |
 | 24–31 | index into `materials` |
 
+Every field is 4 bits except the material, so in hexadecimal each field is one digit and a box reads off directly, most significant first: material (two digits), z2 − 1, y2 − 1, x2 − 1, z1, y1, x1. `0x00F77000` is material `00`, far corner z `F`, y `7`, x `7` (each plus 1: 16, 8, 8) and near corner (0, 0, 0). Storing the far corner minus 1 lets a box that reaches the edge (16) fit in one digit. The cuboids are an int array, so a box with material index 128 or more is a negative number.
+
 *(Verified (1.19): all 20,407 cuboids in the sample decode to boxes with x1 < x2, y1 < y2, z1 < z2. Example: `0x00F77000` is x 0–8, y 0–8, z 0–16, material 0. Note that a comment in the source describes a different layout; the code above is what runs.)*
 
 ### Ground storage

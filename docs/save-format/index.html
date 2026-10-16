@@ -454,10 +454,34 @@
 
 	/* 09 block entities */
 	h3 { font-size: var(--t-body); font-weight: 600; margin: var(--s6) 0 var(--s2); }
-	.cuboid-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s5); align-items: start; margin-top: var(--s4); }
-	.cuboid-views { display: grid; grid-template-columns: repeat(2, minmax(0, 11rem)); gap: var(--s4); }
-	.cuboid-grid { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 1px; aspect-ratio: 1; }
-	.cuboid-grid div { border-radius: 1px; background: var(--zero); }
+	.cuboid-wrap { display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 1fr); gap: var(--s5); align-items: center; }
+	.cuboid-3d { width: 100%; height: auto; max-width: 18rem; justify-self: center; }
+	.cuboid-3d [data-box] { cursor: pointer; }
+	.cuboid-3d .selected { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
+	.cub-sliders { display: grid; gap: var(--s2); }
+	.cub-sliders .slider { grid-template-columns: 4.5rem 1fr 2rem; }
+	.cub-table tbody tr { cursor: pointer; }
+	.cub-table tbody tr.selected td { background: var(--accent-soft); }
+	.cub-table .pick { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; }
+	.cuboid-3d .floor { fill: var(--soft); stroke: var(--border); }
+	.cuboid-3d .grid-line { stroke: var(--border); stroke-width: 0.5; }
+	.cuboid-3d .label { font: 500 0.75rem var(--mono); fill: var(--muted); }
+	.hex-anatomy { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s1); font-family: var(--mono); }
+	.hex-anatomy .prefix { font-size: 1.5rem; line-height: 2.5rem; color: var(--muted); padding-right: var(--s1); }
+	.hex-anatomy .hex-field { display: grid; justify-items: center; gap: var(--s1); }
+	.hex-anatomy .digits { display: flex; gap: 2px; }
+	.hex-anatomy .digit { font-size: 1.5rem; font-weight: 600; width: 1.75rem; height: 2.5rem; display: grid; place-items: center; border-radius: var(--radius-sm); background: var(--soft); }
+	.hex-anatomy .name { font-size: var(--t-micro); color: var(--muted); white-space: nowrap; }
+	.hex-anatomy .value { font-size: var(--t-small); font-weight: 600; }
+	.hex-anatomy .gap { width: var(--s3); }
+	.hex-anatomy .x .digit { background: var(--x-soft); color: var(--x); }
+	.hex-anatomy .y .digit { background: var(--y-soft); color: var(--y); }
+	.hex-anatomy .z .digit { background: var(--z-soft); color: var(--z); }
+	.hex-code .x { color: var(--x); }
+	.hex-code .y { color: var(--y); }
+	.hex-code .z { color: var(--z); }
+	.hex-code .mat { color: var(--muted); }
+	.swatch { display: inline-block; width: 0.75rem; height: 0.75rem; border-radius: 0.2rem; margin-right: var(--s2); vertical-align: -0.05rem; }
 
 	.source { font-size: var(--t-small); color: var(--muted); margin: var(--s4) 0 0; }
 
@@ -466,7 +490,9 @@
 
 	@media (max-width: 44rem) {
 		.two-col, .pg-top, .cuboid-wrap { grid-template-columns: minmax(0, 1fr); }
-		.cuboid-views { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+		.hex-anatomy .digit { font-size: 1.125rem; width: 1.25rem; height: 2rem; }
+		.hex-anatomy .prefix { font-size: 1.125rem; line-height: 2rem; }
+		.hex-anatomy .gap { width: var(--s1); }
 		.panel { padding: var(--s4) var(--s3); }
 		.bitbar-cells span { font-size: 0; height: 1.125rem; }
 		.bits16 { gap: 2px; }
@@ -768,42 +794,42 @@
 		<p style="margin-top: var(--s4)">Every block entity starts with <code>posx</code>, <code>posy</code>, <code>posz</code> (absolute block coordinates) and <code>blockCode</code>. The most common classes in the sample 1.19 save are MicroBlock (8,343), Generic (4,364), BerryBush (632), GenericTypedContainer (370), Crate (274) and GroundStorage (184).</p>
 
 		<h3>Chiseled blocks</h3>
-		<p>A chiseled block is an ordinary block in the chunk with a <code>MicroBlock</code> block entity holding its shape: a 16 × 16 × 16 voxel grid stored as a list of boxes (<code>cuboids</code>), plus <code>materials</code>, a list of block IDs from the same ID space as the palettes. Each box is one 32-bit number:</p>
-		<div class="table-wrap">
-			<table>
-				<thead><tr><th>bits</th><th>value</th></tr></thead>
-				<tbody>
-					<tr><td>0–11</td><td>x1, y1, z1 (4 bits each)</td></tr>
-					<tr><td>12–23</td><td>x2 − 1, y2 − 1, z2 − 1 (4 bits each)</td></tr>
-					<tr><td>24–31</td><td>index into <code>materials</code></td></tr>
-				</tbody>
-			</table>
-		</div>
+		<p>A chiseled block is an ordinary block in the chunk with a <code>MicroBlock</code> block entity holding its shape: a 16 × 16 × 16 voxel grid stored as a list of boxes (<code>cuboids</code>), plus <code>materials</code>, a list of block IDs from the same ID space as the palettes.</p>
+		<p>Each box is one 32-bit number. Written in hexadecimal, every 4 bits are one digit, so the box reads off digit by digit: two digits of material (an index into <code>materials</code>), then the far corner, then the near corner, each as z, y, x. The far corner is stored minus 1, so a box reaching the edge fits in one digit (F = 15 means up to 16).</p>
 		<div class="panel">
-			<label class="field">CUBOIDS<input id="cub-input" type="text" spellcheck="false" autocomplete="off" value="15986688, 16757824, 4190336, 16774284"></label>
-			<p class="error-line" id="cub-error" aria-live="polite"></p>
 			<div class="cuboid-wrap">
-				<div class="cuboid-views">
-					<div>
-						<p class="sub">top</p>
-						<div class="cuboid-grid" id="cub-top" aria-hidden="true"></div>
-						<div class="axis"><span>x →</span><span>z ↓</span></div>
+				<svg class="cuboid-3d" id="cub-3d" role="img" aria-label="The boxes drawn in 3D inside the 16 × 16 × 16 block. Click a box to edit it."></svg>
+				<div>
+					<p class="sub" id="cub-title">box 1</p>
+					<div class="cub-sliders">
+						<label class="slider"><span class="seg-x">x from</span><input id="cub-x1" type="range" min="0" max="15"><output id="cub-x1-out"></output></label>
+						<label class="slider"><span class="seg-x">x to</span><input id="cub-x2" type="range" min="1" max="16"><output id="cub-x2-out"></output></label>
+						<label class="slider"><span class="seg-y">y from</span><input id="cub-y1" type="range" min="0" max="15"><output id="cub-y1-out"></output></label>
+						<label class="slider"><span class="seg-y">y to</span><input id="cub-y2" type="range" min="1" max="16"><output id="cub-y2-out"></output></label>
+						<label class="slider"><span class="seg-z">z from</span><input id="cub-z1" type="range" min="0" max="15"><output id="cub-z1-out"></output></label>
+						<label class="slider"><span class="seg-z">z to</span><input id="cub-z2" type="range" min="1" max="16"><output id="cub-z2-out"></output></label>
+						<label class="slider"><span>material</span><input id="cub-material" type="range" min="0" max="255"><output id="cub-material-out"></output></label>
 					</div>
-					<div>
-						<p class="sub">front</p>
-						<div class="cuboid-grid" id="cub-front" aria-hidden="true"></div>
-						<div class="axis"><span>x →</span><span>y ↑</span></div>
+					<div class="buttons">
+						<button type="button" class="btn" id="cub-add">Add box</button>
+						<button type="button" class="btn" id="cub-remove">Remove box</button>
+						<button type="button" class="btn" id="cub-reset">Reset</button>
 					</div>
-				</div>
-				<div class="table-wrap">
-					<table>
-						<thead><tr><th>#</th><th>x</th><th>y</th><th>z</th><th>material</th></tr></thead>
-						<tbody id="cub-rows"></tbody>
-					</table>
 				</div>
 			</div>
+			<p class="sub" id="cub-anatomy-title" style="margin-top: var(--s5)">box 1, as stored</p>
+			<div class="hex-anatomy" id="cub-anatomy"></div>
+			<p class="stat" id="cub-number" style="margin: var(--s3) 0 0"></p>
+			<div class="table-wrap" style="margin-top: var(--s5)">
+				<table class="cub-table">
+					<thead><tr><th>box</th><th>hex</th><th>x</th><th>y</th><th>z</th><th>material</th></tr></thead>
+					<tbody id="cub-rows"></tbody>
+				</table>
+			</div>
+			<label class="field" style="margin-top: var(--s5)">CUBOIDS, AS STORED<input id="cub-input" type="text" spellcheck="false" autocomplete="off" value="15986688, 16757824, 4190336, 16774284"></label>
+			<p class="error-line" id="cub-error" aria-live="polite"></p>
 		</div>
-		<p class="muted">Lighter cells are higher in the top view and nearer in the front view. The default value is a real chiseled block from the sample save: "Aged polished rock (Granite)", four boxes of one material.</p>
+		<p class="muted">The block starts as a real chiseled block from the sample save, "Aged polished rock (Granite)": four boxes of one material. Each box has its own colour here; in the game all four are granite.</p>
 		<p class="source">Sources: every block entity of a 1.19 save (14,447) and a 1.22.7 save (684) parses with this format; chiseled blocks only appear in the 1.19 one · 1.22.7 code: <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree/TreeAttribute.cs">vsapi TreeAttribute.cs</a> and <a href="https://github.com/anegostudios/vsapi/tree/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree">attribute classes</a> · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Collectible/ItemStack.cs">ItemStack.cs</a> · <a href="https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Microblock/BEMicroBlock.cs">vssurvivalmod BEMicroBlock.cs</a> · <a href="README.md#5-block-entities-field-8">README §5</a></p>
 	</section>
 
@@ -1278,15 +1304,19 @@
 
 	/* 09 chiseled block cuboids */
 	const cubInput = $("#cub-input");
-	const makeCells = (grid) => Array.from({ length: 256 }, () => grid.appendChild(el("div")));
-	const cubTop = makeCells($("#cub-top"));
-	const cubFront = makeCells($("#cub-front"));
-	// 1..16 maps to grey 72..200: never white, so the highest voxels stay visible on the panel.
-	const grey = (v) => {
-		const shade = Math.round(72 + ((v - 1) * 128) / 15);
-		return `rgb(${shade} ${shade} ${shade})`;
-	};
-	// Returns decoded boxes, or an error message. Bad input never moves the display.
+	const CUB_DEFAULT = "15986688, 16757824, 4190336, 16774284";
+	// One hue per box, so the 3D view, the table and the sliders match up.
+	const BOX_HUES = [28, 205, 140, 280, 48, 345, 100, 240];
+	const boxColour = (i, lightness) => `hsl(${BOX_HUES[i % BOX_HUES.length]} 55% ${lightness}%)`;
+	// A box as its packed number: x1, y1, z1 in the low 12 bits, then x2 − 1, y2 − 1, z2 − 1, then
+	// the material index. Unsigned here; the save's int array stores it signed.
+	const packBox = (b) => (b.x1 | (b.y1 << 4) | (b.z1 << 8) | ((b.x2 - 1) << 12) | ((b.y2 - 1) << 16) | ((b.z2 - 1) << 20) | (b.material << 24)) >>> 0;
+	const unpackBox = (u) => ({
+		x1: u & 15, y1: (u >>> 4) & 15, z1: (u >>> 8) & 15,
+		x2: ((u >>> 12) & 15) + 1, y2: ((u >>> 16) & 15) + 1, z2: ((u >>> 20) & 15) + 1,
+		material: u >>> 24,
+	});
+	// Returns decoded boxes, or an error message.
 	function parseCuboids(text) {
 		const tokens = text.split(/[\s,]+/).filter(Boolean);
 		if (!tokens.length) return "Enter at least one cuboid number.";
@@ -1296,18 +1326,193 @@
 			const big = BigInt(token);
 			// Stored in an int array, so boxes with material index ≥ 128 come out negative.
 			if (big < -(1n << 31n) || big >= (1n << 32n)) return `Cuboid ${i + 1} doesn't fit in 32 bits.`;
-			const u = Number(BigInt.asUintN(32, big));
-			const box = {
-				x1: u & 15, y1: (u >>> 4) & 15, z1: (u >>> 8) & 15,
-				x2: ((u >>> 12) & 15) + 1, y2: ((u >>> 16) & 15) + 1, z2: ((u >>> 20) & 15) + 1,
-				material: u >>> 24,
-			};
+			const box = unpackBox(Number(BigInt.asUintN(32, big)));
 			if (box.x1 >= box.x2 || box.y1 >= box.y2 || box.z1 >= box.z2) return `Cuboid ${i + 1} is an empty box.`;
 			boxes.push(box);
 		}
 		return boxes;
 	}
-	function renderCuboids() {
+	let cubBoxes = parseCuboids(CUB_DEFAULT);
+	let cubSelected = 0;
+
+	// Isometric projection: x goes down-right, z down-left, y up. S is one voxel's edge in pixels.
+	const S = 9;
+	const CX = S * Math.cos(Math.PI / 6);
+	const iso = (x, y, z) => [(x - z) * CX, (x + z) * (S / 2) - y * S];
+	const isoPoints = (corners) => corners.map((c) => iso(...c).map((v) => v.toFixed(1)).join(",")).join(" ");
+	const cub3d = $("#cub-3d");
+	{
+		const [left] = iso(0, 0, 16);
+		const [right] = iso(16, 0, 0);
+		const [, top] = iso(0, 16, 0);
+		const [, bottom] = iso(16, 0, 16);
+		const pad = 16;
+		cub3d.setAttribute("viewBox", `${(left - pad).toFixed(1)} ${(top - pad).toFixed(1)} ${(right - left + 2 * pad).toFixed(1)} ${(bottom - top + 2 * pad).toFixed(1)}`);
+	}
+	// The floor and the two back walls, with a line every 4 voxels, for scale.
+	function cuboidFrame() {
+		const parts = [
+			`<polygon class="floor" points="${isoPoints([[0, 0, 0], [16, 0, 0], [16, 0, 16], [0, 0, 16]])}"/>`,
+			`<polygon class="floor" points="${isoPoints([[0, 0, 0], [16, 0, 0], [16, 16, 0], [0, 16, 0]])}"/>`,
+			`<polygon class="floor" points="${isoPoints([[0, 0, 0], [0, 0, 16], [0, 16, 16], [0, 16, 0]])}"/>`,
+		];
+		for (let i = 4; i < 16; i += 4) {
+			for (const [a, b] of [
+				[[i, 0, 0], [i, 0, 16]], [[0, 0, i], [16, 0, i]],
+				[[i, 0, 0], [i, 16, 0]], [[0, i, 0], [16, i, 0]],
+				[[0, 0, i], [0, 16, i]], [[0, i, 0], [0, i, 16]],
+			]) {
+				const [x1, y1] = iso(...a);
+				const [x2, y2] = iso(...b);
+				parts.push(`<line class="grid-line" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`);
+			}
+		}
+		const label = (text, at, dx, dy) => {
+			const [x, y] = iso(...at);
+			return `<text class="label" x="${(x + dx).toFixed(1)}" y="${(y + dy).toFixed(1)}" text-anchor="middle">${text}</text>`;
+		};
+		// The front-left floor edge runs along x, the front-right one along z.
+		parts.push(label("x", [8, 0, 16], -10, 16), label("z", [16, 0, 8], 10, 16), label("y", [0, 16, 0], 0, -6));
+		return parts.join("");
+	}
+	const CUBOID_FRAME = cuboidFrame();
+	// Draws each voxel's visible faces (top, +x, +z) back to front, so nearer voxels cover farther
+	// ones, then outlines the selected box on top, so it shows even where others hide it.
+	function drawCuboids() {
+		const owner = new Int16Array(4096).fill(-1);
+		const at = (x, y, z) => (x > 15 || y > 15 || z > 15 ? -1 : owner[(y * 16 + z) * 16 + x]);
+		cubBoxes.forEach((b, i) => {
+			for (let y = b.y1; y < b.y2; y++) for (let z = b.z1; z < b.z2; z++) for (let x = b.x1; x < b.x2; x++) owner[(y * 16 + z) * 16 + x] = i;
+		});
+		const faces = [];
+		for (let sum = 0; sum <= 45; sum++) {
+			for (let y = 0; y < 16; y++) for (let z = 0; z < 16; z++) {
+				const x = sum - y - z;
+				if (x < 0 || x > 15) continue;
+				const i = at(x, y, z);
+				if (i < 0) continue;
+				const face = (corners, lightness) => {
+					const colour = boxColour(i, lightness);
+					faces.push(`<polygon data-box="${i}" points="${isoPoints(corners)}" fill="${colour}" stroke="${colour}" stroke-width="0.6"/>`);
+				};
+				if (at(x, y + 1, z) < 0) face([[x, y + 1, z], [x + 1, y + 1, z], [x + 1, y + 1, z + 1], [x, y + 1, z + 1]], 80);
+				if (at(x + 1, y, z) < 0) face([[x + 1, y, z], [x + 1, y + 1, z], [x + 1, y + 1, z + 1], [x + 1, y, z + 1]], 62);
+				if (at(x, y, z + 1) < 0) face([[x, y, z + 1], [x + 1, y, z + 1], [x + 1, y + 1, z + 1], [x, y + 1, z + 1]], 50);
+			}
+		}
+		// The selected box's silhouette, and the three edges that meet at its nearest corner.
+		const b = cubBoxes[cubSelected];
+		const outline = `<polygon class="selected" points="${isoPoints([[b.x1, b.y2, b.z1], [b.x2, b.y2, b.z1], [b.x2, b.y1, b.z1], [b.x2, b.y1, b.z2], [b.x1, b.y1, b.z2], [b.x1, b.y2, b.z2]])}"/>`
+			+ `<polyline class="selected" points="${isoPoints([[b.x1, b.y2, b.z2], [b.x2, b.y2, b.z2], [b.x2, b.y2, b.z1]])}"/>`
+			+ `<polyline class="selected" points="${isoPoints([[b.x2, b.y2, b.z2], [b.x2, b.y1, b.z2]])}"/>`;
+		cub3d.innerHTML = CUBOID_FRAME + faces.join("") + outline;
+	}
+	// A box's eight hex digits as [text, class, name, value] fields, most significant first.
+	const hexFields = (b) => {
+		const hex = packBox(b).toString(16).toUpperCase().padStart(8, "0");
+		return [
+			[hex.slice(0, 2), "mat", "material", b.material],
+			[hex[2], "z", "z2−1", b.z2 - 1],
+			[hex[3], "y", "y2−1", b.y2 - 1],
+			[hex[4], "x", "x2−1", b.x2 - 1],
+			[hex[5], "z", "z1", b.z1],
+			[hex[6], "y", "y1", b.y1],
+			[hex[7], "x", "x1", b.x1],
+		];
+	};
+	function drawAnatomy(b) {
+		const parts = [el("span", "prefix", "0x")];
+		hexFields(b).forEach(([digits, cls, name, value], i) => {
+			if (i === 1 || i === 4) parts.push(el("span", "gap"));
+			const field = el("div", `hex-field ${cls}`);
+			const row = el("div", "digits");
+			for (const d of digits) row.append(el("span", "digit", d));
+			field.append(row, el("span", "name", name), el("span", "value", String(value)));
+			parts.push(field);
+		});
+		$("#cub-anatomy").replaceChildren(...parts);
+		const u = packBox(b);
+		$("#cub-number").innerHTML = `0x${u.toString(16).toUpperCase().padStart(8, "0")} = <b>${fmt(u | 0)}</b> in the save`;
+	}
+	const CUB_FIELDS = ["x1", "x2", "y1", "y2", "z1", "z2", "material"];
+	function drawCuboidEditor() {
+		const b = cubBoxes[cubSelected];
+		const titleSwatch = el("span", "swatch");
+		titleSwatch.style.background = boxColour(cubSelected, 62);
+		$("#cub-title").replaceChildren(titleSwatch, `box ${cubSelected + 1}`);
+		$("#cub-anatomy-title").textContent = `box ${cubSelected + 1}, as stored`;
+		for (const f of CUB_FIELDS) {
+			$(`#cub-${f}`).value = b[f];
+			$(`#cub-${f}-out`).textContent = b[f];
+		}
+		$("#cub-remove").disabled = cubBoxes.length === 1;
+		drawCuboids();
+		drawAnatomy(b);
+		$("#cub-rows").replaceChildren(...cubBoxes.map((box, i) => {
+			const row = el("tr", i === cubSelected ? "selected" : "");
+			row.addEventListener("click", () => selectCuboid(i));
+			const name = el("td");
+			const pick = el("button", "pick");
+			pick.type = "button";
+			pick.setAttribute("aria-pressed", String(i === cubSelected));
+			pick.setAttribute("aria-label", `Edit box ${i + 1}`);
+			const swatch = el("span", "swatch");
+			swatch.style.background = boxColour(i, 62);
+			pick.append(swatch, String(i + 1));
+			name.append(pick);
+			const hex = el("td", "hex-code");
+			hex.append("0x");
+			hexFields(box).forEach(([digits, cls]) => hex.append(el("span", cls, digits)));
+			row.append(name, hex);
+			[`${box.x1}–${box.x2}`, `${box.y1}–${box.y2}`, `${box.z1}–${box.z2}`, box.material].forEach((v) => row.append(el("td", "", String(v))));
+			return row;
+		}));
+	}
+	// Redraws everything, and writes the boxes back into the list unless that's where they came from.
+	function cuboidsChanged(fromList) {
+		if (!fromList) {
+			cubInput.value = cubBoxes.map((b) => packBox(b) | 0).join(", ");
+			$("#cub-error").textContent = "";
+			cubInput.setAttribute("aria-invalid", "false");
+		}
+		drawCuboidEditor();
+	}
+	function selectCuboid(i) {
+		cubSelected = i;
+		drawCuboidEditor();
+	}
+	for (const f of CUB_FIELDS) {
+		$(`#cub-${f}`).addEventListener("input", (event) => {
+			const b = cubBoxes[cubSelected];
+			b[f] = Number(event.target.value);
+			// Keep every box at least one voxel thick: moving one end past the other pushes it along.
+			const axis = f[0];
+			if (f.endsWith("1") && b[`${axis}1`] >= b[`${axis}2`]) b[`${axis}2`] = b[`${axis}1`] + 1;
+			if (f.endsWith("2") && b[`${axis}2`] <= b[`${axis}1`]) b[`${axis}1`] = b[`${axis}2`] - 1;
+			cuboidsChanged(false);
+		});
+	}
+	cub3d.addEventListener("click", (event) => {
+		const box = event.target.closest("[data-box]");
+		if (box) selectCuboid(Number(box.dataset.box));
+	});
+	$("#cub-add").addEventListener("click", () => {
+		cubBoxes.push({ x1: 6, x2: 10, y1: 12, y2: 16, z1: 6, z2: 10, material: 0 });
+		cubSelected = cubBoxes.length - 1;
+		cuboidsChanged(false);
+	});
+	$("#cub-remove").addEventListener("click", () => {
+		if (cubBoxes.length === 1) return;
+		cubBoxes.splice(cubSelected, 1);
+		cubSelected = Math.min(cubSelected, cubBoxes.length - 1);
+		cuboidsChanged(false);
+	});
+	$("#cub-reset").addEventListener("click", () => {
+		cubBoxes = parseCuboids(CUB_DEFAULT);
+		cubSelected = 0;
+		cuboidsChanged(false);
+	});
+	cubInput.addEventListener("input", () => {
 		const boxes = parseCuboids(cubInput.value);
 		if (typeof boxes === "string") {
 			$("#cub-error").textContent = boxes;
@@ -1316,23 +1521,11 @@
 		}
 		$("#cub-error").textContent = "";
 		cubInput.setAttribute("aria-invalid", "false");
-		// top: highest y per (x, z); front: nearest z per (x, y), counted from the back so nearer is larger.
-		const top = new Array(256).fill(0);
-		const front = new Array(256).fill(0);
-		for (const b of boxes) {
-			for (let z = b.z1; z < b.z2; z++) for (let x = b.x1; x < b.x2; x++) top[z * 16 + x] = Math.max(top[z * 16 + x], b.y2);
-			for (let y = b.y1; y < b.y2; y++) for (let x = b.x1; x < b.x2; x++) front[(15 - y) * 16 + x] = Math.max(front[(15 - y) * 16 + x], 16 - b.z1);
-		}
-		cubTop.forEach((cell, i) => { cell.style.background = top[i] ? grey(top[i]) : ""; });
-		cubFront.forEach((cell, i) => { cell.style.background = front[i] ? grey(front[i]) : ""; });
-		$("#cub-rows").replaceChildren(...boxes.map((b, i) => {
-			const row = el("tr");
-			[i + 1, `${b.x1}–${b.x2}`, `${b.y1}–${b.y2}`, `${b.z1}–${b.z2}`, b.material].forEach((v) => row.append(el("td", "", String(v))));
-			return row;
-		}));
-	}
-	cubInput.addEventListener("input", renderCuboids);
-	renderCuboids();
+		cubBoxes = boxes;
+		cubSelected = Math.min(cubSelected, boxes.length - 1);
+		cuboidsChanged(true);
+	});
+	cuboidsChanged(true);
 
 	/* 10 map toy */
 	const W = 16;
