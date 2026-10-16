@@ -17,7 +17,9 @@ Per block column:
 
 The game's map doesn't treat block entities specially: a chiseled block is coloured as whatever block sits at that position.
 
-storymap's current heightmap reads only the solid layer (field 1) and scans blocks itself.
+Seas and lakes are told apart by block: `saltwater` sets `mapColorCode: "ocean"`, while `water`, `rapidwater` and `boilingwater` set none and take the liquid default, and `lakeice` sets `"lake"`. *(Verified (1.22.7): `assets/survival/blocktypes/liquid/` in the install.)* Both test saves list `saltwater` in their block IDs but contain none: neither world reaches a sea.
+
+storymap's top-down map scans blocks itself rather than reading map chunks. It reads both the solid layer (field 1) and the liquid layer (field 16) and shows a column as liquid when its highest liquid is at or above its highest solid block, ignoring solid blocks that share their place with a liquid. Those are water plants *(Verified (1.19, 1.22.7): at the water surface they're `seaweed`, `aquatic-*` (milfoil, crowfoot), reeds and tule)*, so the water shows and its depth reaches down to the ground. Lily pads (`waterlily`) sit on top of the water instead and still show as land.
 
 ## Assets
 

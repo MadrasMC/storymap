@@ -9,7 +9,7 @@ storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 ## Top-down map
 
-3. **Colour map.** Read liquids (chunk field 16), look under snow, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`. Plants such as tall grass are often the top block (up to 15% of columns); decide whether to look through them.
+3. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`. Plants such as tall grass are often the top block (up to 15% of columns); decide whether to look through them.
 4. **Height from `mapchunk`.** Decode the stored rain height map, if it's there, instead of scanning every block.
 5. **Tiles with levels of detail** instead of one image: per chunk or per map region, at several resolutions for the map viewer ([`docs/rendering.md`](docs/rendering.md#output-tiles-and-levels-of-detail)). Writing one big PNG is two-thirds of a large map's render time today; per-tile images bound that.
 6. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
@@ -49,5 +49,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Block ID → block code mapping from `gamedata` (`src/GameData.zig`); every ID in both test saves has a name.
 - No allocation per chunk (memory stage 1): one `Chunk.Decoder` and one fixed-size `Chunk` per worker, reused for every chunk ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)).
 - Sepia relief map: pale at sea level, darker below, paler above, with hill shading. Sea level comes from the world height ([save format §6](docs/save-format/README.md#sea-level)), so colours don't depend on the rest of the map: tiles will match, and different worlds look alike.
+- Water from the liquid layer: shaded by depth, saltwater (seas) apart from other water, inked coastlines; water plants don't hide the water.
 - Chunk decoding on every core, one SQLite connection per worker; timings in [`docs/rendering.md`](docs/rendering.md#performance).
 - Format checked against 1.22.7: schema, positions, chunk fields, block and liquid decoding and block entities all hold; differences are noted in the docs.

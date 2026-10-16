@@ -3,6 +3,7 @@ const std = @import("std");
 const Io = std.Io;
 const DB = @import("../sqlite.zig");
 const Chunk = @import("../Chunk.zig");
+const Compression = @import("../Compression.zig");
 const GameData = @import("../GameData.zig");
 const stb = @import("stb_image_write");
 
@@ -75,6 +76,13 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     const topBlock = try allocator.alloc(i32, width * height);
     defer allocator.free(topBlock);
     @memset(topBlock, 0);
+    // The same for liquids, which the save keeps in a layer of their own.
+    const liquidTop = try allocator.alloc(?u16, width * height);
+    defer allocator.free(liquidTop);
+    @memset(liquidTop, null);
+    const liquidBlock = try allocator.alloc(i32, width * height);
+    defer allocator.free(liquidBlock);
+    @memset(liquidBlock, 0);
 
     const chunks = try scanChunks(allocator, dbPath, .{
         .minX = min_x,
@@ -82,6 +90,8 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
         .width = width,
         .top = top,
         .topBlock = topBlock,
+        .liquidTop = liquidTop,
+        .liquidBlock = liquidBlock,
     });
     const scanned: Io.Timestamp = .now(io, .awake);
 
@@ -99,18 +109,32 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     const summarised: Io.Timestamp = .now(io, .awake);
 
     const heights: Heights = .of(gameData);
+    const kinds = try liquidKinds(allocator, gameData);
+    defer allocator.free(kinds);
 
     const pixels = try allocator.alloc(u32, top.len);
     defer allocator.free(pixels);
-    for (pixels, top, 0..) |*pixel, column, i| {
-        const y = column orelse {
+    for (pixels, 0..) |*pixel, i| {
+        const here = Surface.of(top[i], liquidTop[i]);
+        const y = here.height() orelse {
             pixel.* = paper;
             continue;
         };
+        const west: Surface = if (i % width > 0) .of(top[i - 1], liquidTop[i - 1]) else .none;
+        const north: Surface = if (i >= width) .of(top[i - width], liquidTop[i - width]) else .none;
+        const east: Surface = if (i % width < width - 1) .of(top[i + 1], liquidTop[i + 1]) else .none;
+        const south: Surface = if (i + width < top.len) .of(top[i + width], liquidTop[i + width]) else .none;
+
+        if (here == .liquid) {
+            // A coastline in ink where water meets land, as on an old map.
+            const shore = west == .land or north == .land or east == .land or south == .land;
+            const kind = if (liquidBlock[i] >= 0 and liquidBlock[i] < kinds.len) kinds[@intCast(liquidBlock[i])] else .water;
+            pixel.* = if (shore and kind != .lava) ink else liquidColour(kind, if (top[i]) |ground| y - ground else maxDepth);
+            continue;
+        }
         // Neighbours without blocks count as level ground.
-        const west = if (i % width > 0) top[i - 1] orelse y else y;
-        const north = if (i >= width) top[i - width] orelse y else y;
-        pixel.* = colour(y, heights, @as(i32, y) * 2 - west - north);
+        const slope = @as(i32, y) * 2 - (west.height() orelse y) - (north.height() orelse y);
+        pixel.* = colour(y, heights, slope);
     }
 
     const stride: c_int = @intCast(width * @sizeOf(u32));
@@ -132,6 +156,101 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
 
 /// Columns without blocks, as blank paper.
 const paper = rgb(0xEF, 0xE4, 0xC6);
+/// Coastlines.
+const ink = rgb(0x5C, 0x46, 0x2E);
+
+/// What a column shows from above, and at what height.
+const Surface = union(enum) {
+    /// No blocks at all, as far as the save goes.
+    none,
+    land: u16,
+    /// Liquid at or above the highest solid block. Plants growing in water share their
+    /// block with it, so the water still shows.
+    liquid: u16,
+
+    fn of(top: ?u16, liquidTop: ?u16) Surface {
+        const liquid = liquidTop orelse return if (top) |y| .{ .land = y } else .none;
+        const land = top orelse return .{ .liquid = liquid };
+        return if (liquid >= land) .{ .liquid = liquid } else .{ .land = land };
+    }
+
+    fn height(self: Surface) ?u16 {
+        return switch (self) {
+            .none => null,
+            .land, .liquid => |y| y,
+        };
+    }
+};
+
+test Surface {
+    try std.testing.expectEqual(Surface.none, Surface.of(null, null));
+    try std.testing.expectEqual(Surface{ .land = 90 }, Surface.of(90, null));
+    try std.testing.expectEqual(Surface{ .liquid = 109 }, Surface.of(90, 109));
+    try std.testing.expectEqual(Surface{ .liquid = 109 }, Surface.of(109, 109)); // seaweed
+    try std.testing.expectEqual(Surface{ .land = 120 }, Surface.of(120, 12)); // water in a cave
+    try std.testing.expectEqual(Surface{ .liquid = 109 }, Surface.of(null, 109));
+}
+
+/// The liquids the map tells apart. Seas are saltwater; lakes, rivers and hot springs are
+/// the other kinds of water (docs/rendering.md#how-the-game-draws-its-own-world-map).
+const Liquid = enum { water, saltwater, lava };
+
+/// The kind of liquid each block ID stands for, by its block code. Anything that isn't
+/// saltwater or lava, including liquids from mods, is drawn as water.
+fn liquidKinds(allocator: std.mem.Allocator, gameData: GameData) ![]Liquid {
+    const kinds = try allocator.alloc(Liquid, gameData.blockCodes.len);
+    for (kinds, gameData.blockCodes) |*kind, code| {
+        const name = code orelse "";
+        kind.* = if (std.mem.startsWith(u8, name, "saltwater-"))
+            .saltwater
+        else if (std.mem.startsWith(u8, name, "lava-"))
+            .lava
+        else
+            .water;
+    }
+    return kinds;
+}
+
+test liquidKinds {
+    const codes = [_]?[]const u8{ "air", "water-still-7", "saltwater-n-3", "lava-still-7", "boilingwater-still-7", null };
+    const gameData: GameData = .{ .arena = undefined, .blockCodes = &codes, .itemCodes = &.{}, .worldHeight = 256 };
+    const kinds = try liquidKinds(std.testing.allocator, gameData);
+    defer std.testing.allocator.free(kinds);
+    try std.testing.expectEqualSlices(Liquid, &.{ .water, .water, .saltwater, .lava, .water, .water }, kinds);
+}
+
+/// Shallowest and deepest colour of each liquid: faded washes, as on an old map.
+const liquidColours = std.EnumArray(Liquid, [2][3]u8).init(.{
+    .water = .{ .{ 0xB8, 0xC8, 0xB8 }, .{ 0x6C, 0x8A, 0x8A } },
+    .saltwater = .{ .{ 0xB0, 0xC2, 0xC6 }, .{ 0x5A, 0x76, 0x88 } },
+    .lava = .{ .{ 0xB8, 0x5A, 0x30 }, .{ 0x80, 0x30, 0x18 } },
+});
+/// Water this deep or deeper takes the deepest colour.
+const maxDepth = 16;
+
+/// The colour of a liquid `depth` blocks above the ground below it.
+fn liquidColour(kind: Liquid, depth: u16) u32 {
+    const colours = liquidColours.get(kind);
+    const fraction = @as(usize, @min(depth, maxDepth)) * 256 / maxDepth;
+    const mixed = mix(colours[0], colours[1], fraction);
+    return rgb(mixed[0], mixed[1], mixed[2]);
+}
+
+test liquidColour {
+    try std.testing.expectEqual(rgb(0xB8, 0xC8, 0xB8), liquidColour(.water, 0));
+    try std.testing.expectEqual(rgb(0x6C, 0x8A, 0x8A), liquidColour(.water, maxDepth));
+    try std.testing.expectEqual(rgb(0x6C, 0x8A, 0x8A), liquidColour(.water, 200));
+    try std.testing.expectEqual(rgb(0x5A, 0x76, 0x88), liquidColour(.saltwater, maxDepth));
+}
+
+/// `from` blended towards `to` by `fraction` 256ths.
+fn mix(from: [3]u8, to: [3]u8, fraction: usize) [3]u8 {
+    var mixed: [3]u8 = undefined;
+    for (&mixed, from, to) |*channel, a, b| {
+        channel.* = @intCast((@as(usize, a) * (256 - fraction) + @as(usize, b) * fraction) / 256);
+    }
+    return mixed;
+}
 
 /// Ink by height, lowest first: an old map's sepia, from dark brown to pale yellow.
 const ramp = [_][3]u8{
@@ -189,10 +308,9 @@ fn colour(y: u16, heights: Heights, slope: i32) u32 {
     // Light in 1/256ths: each block of slope changes the brightness by 1/16, up to ±3/8.
     const light: i32 = 256 + std.math.clamp(slope * 16, -96, 96);
 
-    var channels: [3]u8 = undefined;
-    for (&channels, ramp[step], ramp[step + 1]) |*channel, from, to| {
-        const mixed: i32 = @intCast((@as(usize, from) * (256 - fraction) + @as(usize, to) * fraction) / 256);
-        channel.* = @intCast(std.math.clamp(@divTrunc(mixed * light, 256), 0, 255));
+    var channels = mix(ramp[step], ramp[step + 1], fraction);
+    for (&channels) |*channel| {
+        channel.* = @intCast(std.math.clamp(@divTrunc(@as(i32, channel.*) * light, 256), 0, 255));
     }
     return rgb(channels[0], channels[1], channels[2]);
 }
@@ -232,6 +350,10 @@ pub const Map = struct {
     top: []?u16,
     /// The block ID at that height.
     topBlock: []i32,
+    /// Height of the highest liquid in each column, or null if there is none.
+    liquidTop: []?u16,
+    /// The liquid's block ID.
+    liquidBlock: []i32,
 };
 
 /// Decodes every chunk on every core and, with a map, records each column's top block in it.
@@ -310,26 +432,37 @@ fn scanColumnsOrFail(job: *ScanJob) !void {
         };
 
         const map = job.map orelse continue;
-        if (chunk.blocks.bits == 0) continue; // all air
-
         const left = (chunk.position.x - map.minX) * 32;
         const up = (chunk.position.z - map.minZ) * 32;
 
         for (0..32) |z| for (0..32) |x| {
             const index = (up + z) * map.width + left + x;
-            // Walk down from the top of the chunk and stop at the first solid block.
-            for (0..32) |i| {
-                const y = 31 - i;
-                const block = chunk.getBlock(@intCast(x), @intCast(y), @intCast(z));
-                if (block == 0) continue;
-                const world_y: u16 = @intCast(@as(usize, chunk.position.y) * 32 + y);
-                if (map.top[index] == null or map.top[index].? < world_y) {
-                    map.top[index] = world_y;
-                    map.topBlock[index] = block;
-                }
-                break;
-            }
+            // Plants growing in water, such as seaweed and reeds, share their place with it:
+            // from above, the water shows, and its depth goes down to the ground below them.
+            recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &map.top[index], &map.topBlock[index]);
+            recordTop(&chunk.liquids, null, chunk.position.y, x, z, &map.liquidTop[index], &map.liquidBlock[index]);
         };
+    }
+}
+
+/// Records the highest block of a chunk's layer in one column, unless a chunk above has
+/// already recorded a higher one. Blocks where `hiddenBy` has a block are skipped.
+fn recordTop(layer: *const Compression.Layer, hiddenBy: ?*const Compression.Layer, chunkY: usize, x: usize, z: usize, top: *?u16, block: *i32) void {
+    if (layer.bits == 0) return; // all air
+    const mask = if (hiddenBy) |other| if (other.bits == 0) null else other else null;
+    // Walk down from the top of the chunk and stop at the first block.
+    for (0..32) |i| {
+        const y = 31 - i;
+        const index = (y * 32 + z) * 32 + x;
+        const id = layer.get(index);
+        if (id == 0) continue;
+        if (mask) |other| if (other.get(index) != 0) continue;
+        const worldY: u16 = @intCast(chunkY * 32 + y);
+        if (top.* == null or top.*.? < worldY) {
+            top.* = worldY;
+            block.* = id;
+        }
+        return;
     }
 }
 
