@@ -19,16 +19,20 @@
 		--s2: 0.5rem;
 		--s3: 0.75rem;
 		--s4: 1rem;
-		--radius: 0.625rem;
+		--radius: 0.5rem;
 		/* The paper the tiles are drawn on: their empty pixels are transparent. */
 		--paper: #efe4c6;
-		--panel: rgb(251 248 239 / 0.94);
+		/* Panels are lighter paper and opaque, so they read over busy terrain. */
+		--panel: #faf6ea;
 		--fg: #2b2117;
-		--muted: #75664f;
-		--border: rgb(92 70 46 / 0.24);
+		--muted: #7a6a52;
+		--border: rgb(92 70 46 / 0.3);
+		--rule: rgb(92 70 46 / 0.16);
+		--lift: 0 1px 2px rgb(60 40 20 / 0.12), 0 4px 12px rgb(60 40 20 / 0.08);
 		/* The accent has one job: the control you're on. */
 		--accent: #5c462e;
 		--edge: max(var(--s3), env(safe-area-inset-left));
+		--bottom: max(var(--s3), env(safe-area-inset-bottom));
 		color-scheme: light;
 	}
 	* { box-sizing: border-box; }
@@ -43,36 +47,47 @@
 	/* Zoomed in past one tile pixel per screen pixel, blocks show as crisp squares. */
 	#tiles.pixelated img { image-rendering: pixelated; }
 
-	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--lift); }
 	.title {
 		position: fixed; top: var(--edge); left: var(--edge); max-width: calc(100vw - 2 * var(--edge));
-		margin: 0; padding: var(--s2) var(--s3); font-size: var(--t-body); font-weight: 600;
-		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+		margin: 0; padding: 0.5625rem var(--s3); font-size: var(--t-body); font-weight: 600; line-height: 1.2;
+		letter-spacing: -0.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 	}
 	.readout {
-		position: fixed; left: var(--edge); bottom: max(var(--s3), env(safe-area-inset-bottom));
-		display: flex; gap: var(--s3); align-items: baseline; padding: var(--s2) var(--s3);
-		font: var(--t-small)/1.4 var(--mono); font-variant-numeric: tabular-nums;
+		position: fixed; left: var(--edge); bottom: var(--bottom); max-width: calc(100vw - 2 * var(--edge) - 3.5rem);
+		display: flex; align-items: center; gap: var(--s3); min-height: 2.25rem; padding: 0 var(--s3);
+		font: var(--t-small)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
 	}
 	.readout .k { color: var(--muted); }
-	#status { color: var(--muted); font-family: var(--sans); }
+	/* A bar the length of a round number of blocks, like a printed map's scale. */
+	.scale { display: flex; align-items: center; gap: var(--s2); padding-left: var(--s3); border-left: 1px solid var(--rule); align-self: stretch; }
+	.scale i { display: block; height: 0.375rem; border: 1.5px solid var(--fg); border-top: 0; }
+	.scale span, #status { font-family: var(--sans); color: var(--muted); }
 	#status:empty { display: none; }
-	.controls {
-		position: fixed; right: max(var(--s3), env(safe-area-inset-right)); bottom: max(var(--s3), env(safe-area-inset-bottom));
-		display: grid; overflow: hidden;
+	/* On a phone, the scale goes under the coordinates, clear of the zoom buttons. */
+	@media (max-width: 30rem) {
+		.readout { flex-direction: column; align-items: flex-start; gap: var(--s2); padding: var(--s2) var(--s3); }
+		.scale { border-left: 0; padding-left: 0; }
 	}
+	.controls {
+		position: fixed; right: max(var(--s3), env(safe-area-inset-right)); bottom: var(--bottom);
+		display: grid; gap: var(--s2);
+	}
+	.group { display: grid; overflow: hidden; }
 	.controls button {
 		width: 2.75rem; height: 2.75rem; display: grid; place-items: center; padding: 0;
 		border: 0; background: none; color: var(--fg); cursor: pointer; font: inherit;
 	}
-	.controls button + button { border-top: 1px solid var(--border); }
+	.group button + button { border-top: 1px solid var(--rule); }
 	.controls button:hover:not(:disabled) { color: var(--accent); background: rgb(92 70 46 / 0.08); }
+	.controls button:active:not(:disabled) { background: rgb(92 70 46 / 0.16); }
 	.controls button:disabled { color: var(--muted); opacity: 0.5; cursor: default; }
 	.controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-	.controls svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+	.controls svg { width: 1.125rem; height: 1.125rem; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 	.message {
 		position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-		width: min(26rem, calc(100vw - 2 * var(--edge))); margin: 0; padding: var(--s4); text-align: center;
+		width: min(24rem, calc(100vw - 2 * var(--edge))); margin: 0; padding: var(--s4) 1.25rem;
+		line-height: 1.5; text-align: center; text-wrap: balance;
 	}
 </style>
 </head>
@@ -81,11 +96,19 @@
 	<div id="tiles"></div>
 </main>
 <h1 class="panel title" id="title">storymap</h1>
-<div class="panel readout"><span id="coords" aria-hidden="true"></span><span id="status" role="status"></span></div>
-<div class="panel controls">
-	<button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in (+)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button>
-	<button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out (−)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12"/></svg></button>
-	<button type="button" id="fit" aria-label="Show the whole map" title="Whole map (0)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 8V4h4M12 4h4v4M16 12v4h-4M8 16H4v-4"/></svg></button>
+<div class="panel readout">
+	<span id="coords" aria-hidden="true"></span>
+	<span class="scale" aria-hidden="true"><i id="scale-bar"></i><span id="scale-label"></span></span>
+	<span id="status" role="status"></span>
+</div>
+<div class="controls">
+	<div class="panel group">
+		<button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in (+)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button>
+		<button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out (−)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12"/></svg></button>
+	</div>
+	<div class="panel group">
+		<button type="button" id="fit" aria-label="Show the whole map" title="Whole map (0)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 8V4h4M12 4h4v4M16 12v4h-4M8 16H4v-4"/></svg></button>
+	</div>
 </div>
 <p class="panel message" id="message" role="alert" hidden></p>
 <script id="map-data" type="application/json">null</script>
@@ -180,9 +203,11 @@
 		settle();
 	}
 
-	// Tiles, by "level/x/y": each image is asked for once and kept while it's useful.
+	// Tiles, by "level/x/y": each image is asked for once and kept while it's useful. A tile that
+	// can't load is left out, and only the console says so, unless none load at all.
 	const cache = new Map();
 	let failed = 0;
+	let loadedAny = false;
 	function tile(level, x, y) {
 		const key = `${level}/${x}/${y}`;
 		let entry = cache.get(key);
@@ -194,11 +219,13 @@
 			entry = { img, state: "loading" };
 			img.onload = () => {
 				entry.state = "loaded";
+				loadedAny = true;
 				redraw();
 			};
 			img.onerror = () => {
 				entry.state = "failed";
 				failed++;
+				console.warn(`storymap: couldn't load ${img.src}`);
 				redraw();
 			};
 			img.src = `${view.name}/${key}.png`;
@@ -245,8 +272,13 @@
 		for (const img of [...layer.children]) if (!placed.has(img)) img.remove();
 		layer.classList.toggle("pixelated", cam.s * ratio > 1.01);
 		trimCache(placed);
+		if (failed && !loadedAny && !pending) {
+			fail("The map's tiles couldn't be loaded. Keep this page in the folder storymap wrote it to, next to its tile folders.");
+			return;
+		}
 		showStatus(pending);
 		showCoords();
+		showScale();
 	}
 	// Edges are rounded to whole pixels, so neighbouring tiles meet without hairline gaps.
 	function place(img, level, x, y, placed) {
@@ -261,7 +293,13 @@
 		img.style.height = `${y1 - y0}px`;
 		// More detailed levels go on top of the ones standing in for them.
 		img.style.zIndex = String(top - level + 1);
-		if (img.parentNode !== layer) layer.append(img);
+		if (img.parentNode !== layer) {
+			layer.append(img);
+			// A tile fades in the first time it's shown. It's only ever taken away off screen or
+			// under the tiles that replace it, so it never needs to fade out.
+			if (!img.dataset.shown && !reduceMotion.matches) img.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: "ease-out" });
+			img.dataset.shown = "1";
+		}
 		placed.add(img);
 	}
 	function trimCache(placed) {
@@ -285,8 +323,19 @@
 			clearTimeout(loadingTimer);
 			loadingTimer = 0;
 		}
-		const loading = pending && loadingTimer === -1;
-		statusEl.textContent = failed ? `${failed} tile${failed === 1 ? "" : "s"} couldn't load` : loading ? "Loading…" : "";
+		statusEl.textContent = pending && loadingTimer === -1 ? "Loading…" : "";
+	}
+
+	// The scale bar: the roundest length of 1, 2 or 5 times a power of ten that's at most 8rem
+	// wide on screen.
+	const scaleBar = $("#scale-bar");
+	const scaleLabel = $("#scale-label");
+	function showScale() {
+		const widest = 128 / cam.s;
+		const power = 10 ** Math.floor(Math.log10(widest));
+		const blocks = [5, 2, 1].map((m) => m * power).find((b) => b <= widest) ?? power;
+		scaleBar.style.width = `${Math.round(blocks * cam.s)}px`;
+		scaleLabel.textContent = `${blocks.toLocaleString("en")} ${blocks === 1 ? "block" : "blocks"}`;
 	}
 
 	// The position under the pointer, or the centre of the screen without one, as the game shows it.
