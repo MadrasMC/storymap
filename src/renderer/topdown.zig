@@ -11,8 +11,9 @@ const tiles = @import("../tiles.zig");
 
 /// What a render covered and how long it took.
 pub const Stats = struct {
-    /// Tiles written.
+    /// Tiles written, at every level.
     tiles: usize = 0,
+    levels: usize = 0,
     /// Chunks read: those holding a surface block, in each tile and the ring around it.
     chunksRead: usize = 0,
     /// Opening the save and reading its block list and which tiles it has.
@@ -60,6 +61,7 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     if (stats) |out| {
         out.* = .{
             .tiles = rendered.tiles,
+            .levels = rendered.levels,
             .chunksRead = view.chunksRead,
             .open = start.durationTo(opened),
             .render = opened.untilNow(io, .awake),
@@ -68,7 +70,7 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
         };
         return;
     }
-    std.debug.print("{} tiles, surface y {}..{}\n", .{ rendered.tiles, view.lowest, view.highest });
+    std.debug.print("{} tiles in {} levels, surface y {}..{}\n", .{ rendered.tiles, rendered.levels, view.lowest, view.highest });
     printSurfaceBlocks(gameData, view.surface);
 }
 
