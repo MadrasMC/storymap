@@ -1290,12 +1290,12 @@
 		for (let n = 0; n < 16; n++) if (blocks[n] === removed) blocks[n] = 0;
 		renderPlayground(before, `${TYPES[removed].name} removed, its blocks became air`);
 	});
+	// Back to the starting state, as on load: nothing to compare with, so no changed bits.
 	$("#pg-reset").addEventListener("click", () => {
-		const before = snapshot();
 		typeCount = 4;
 		START_BLOCKS.forEach((t, n) => { blocks[n] = t; });
 		selected = 6;
-		renderPlayground(before, "Reset");
+		renderPlayground(null, null);
 	});
 	renderPlayground(null, null);
 
