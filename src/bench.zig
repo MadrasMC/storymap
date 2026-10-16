@@ -6,7 +6,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
-const main = @import("main.zig");
+const topdown = @import("renderer/topdown.zig");
 
 pub const usage =
     \\usage: storymap bench <save.vcdbs> [runs]
@@ -35,10 +35,10 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     const total = try allocator.alloc(Io.Duration, runs);
     defer allocator.free(total);
 
-    var stats: main.Stats = .{};
-    try main.render(allocator, io, dbPath, .discard, &stats);
+    var stats: topdown.Stats = .{};
+    try topdown.render(allocator, io, dbPath, .discard, &stats);
     for (0..runs) |i| {
-        try main.render(allocator, io, dbPath, .discard, &stats);
+        try topdown.render(allocator, io, dbPath, .discard, &stats);
         open[i] = stats.open;
         scan[i] = stats.scan;
         png[i] = stats.png;
@@ -46,7 +46,7 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
 
         // Decoding alone, without finding top blocks, separates the two costs.
         const start: Io.Timestamp = .now(io, .awake);
-        _ = try main.scanChunks(allocator, dbPath, null);
+        _ = try topdown.scanChunks(allocator, dbPath, null);
         decode[i] = start.untilNow(io, .awake);
     }
 
