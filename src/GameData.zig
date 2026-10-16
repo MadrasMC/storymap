@@ -14,8 +14,15 @@ blockCodes: []const ?[]const u8,
 itemCodes: []const ?[]const u8,
 /// The world's height in blocks, at most `maxWorldHeight`.
 worldHeight: u32,
+/// The world's size east to west (x) and north to south (z) in blocks (fields 1 and 3). The
+/// defaults are the game's.
+worldWidth: u64 = 1024000,
+worldLength: u64 = 1024000,
+/// The world's name, as the player gave it (field 13).
+name: []const u8 = "",
 
 pub const maxWorldHeight = 1024 * 32;
+pub const maxWorldWidth = (1 << 27) * 32;
 
 pub fn read(allocator: std.mem.Allocator, db: DB) !GameData {
     const stmt = try db.prepare("SELECT data FROM gamedata;");
@@ -30,8 +37,11 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
     errdefer arena.deinit();
     var blockCodes: ?[]const ?[]const u8 = null;
     var itemCodes: ?[]const ?[]const u8 = null;
-    // The game's default, should a save ever leave the field out.
+    // The game's defaults, should a save ever leave the fields out.
     var worldHeight: u32 = 256;
+    var worldWidth: u64 = 1024000;
+    var worldLength: u64 = 1024000;
+    var name: []const u8 = "";
 
     var parser: ProtoBuf = .{ .buf = data };
     while (try parser.next()) |msg| {
@@ -40,6 +50,12 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
             if (msg.data.VARINT == 0 or msg.data.VARINT > maxWorldHeight) return error.InvalidWorldHeight;
             worldHeight = @intCast(msg.data.VARINT);
         }
+        if ((msg.field_number == 1 or msg.field_number == 3) and msg.data == .VARINT) {
+            // Chunk x and z positions have 27 bits.
+            if (msg.data.VARINT == 0 or msg.data.VARINT > maxWorldWidth) return error.InvalidWorldSize;
+            if (msg.field_number == 1) worldWidth = msg.data.VARINT else worldLength = msg.data.VARINT;
+        }
+        if (msg.field_number == 13 and msg.data == .LEN) name = try arena.allocator().dupe(u8, msg.data.LEN);
         // Field 11 holds named data entries: { 1: key, 2: value }.
         if (msg.field_number != 11 or msg.data != .LEN) continue;
         var key: []const u8 = "";
@@ -61,6 +77,9 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
         .blockCodes = blockCodes orelse return error.NoBlockIds,
         .itemCodes = itemCodes orelse &.{},
         .worldHeight = worldHeight,
+        .worldWidth = worldWidth,
+        .worldLength = worldLength,
+        .name = name,
     };
 }
 
@@ -120,17 +139,18 @@ fn parseIdMapping(arena: std.mem.Allocator, bytes: []const u8) ![]?[]const u8 {
     return codes;
 }
 
+/// A cut-down gamedata row: field 1 (world width, 1,024,000), field 2 (world height, 256),
+/// field 25 (a fixed 32-bit float), then
+/// field 11 { 1: "BlockIDs", 2: [ { 1: 0, 2: "air" }, { 1: 1, 2: "mantle" } ] }.
+const testRow = [_]u8{
+    0x08, 0x80, 0xc0, 0x3e, 0x10, 0x80, 0x02, 0xcd, 0x01, 0x00, 0x00, 0xc0, 0x41,
+    0x5a, 0x21, 0x0a, 0x08, 'B',  'l',  'o',  'c',  'k',  'I',  'D',  's',  0x12,
+    0x15, 0x0a, 0x07, 0x08, 0x00, 0x12, 0x03, 'a',  'i',  'r',  0x0a, 0x0a, 0x08,
+    0x01, 0x12, 0x06, 'm',  'a',  'n',  't',  'l',  'e',
+};
+
 test "BlockIDs and ItemIDs in the layout real saves use" {
-    // A cut-down gamedata row: field 1 (world width, a varint), field 2 (world height, 256),
-    // field 25 (a fixed 32-bit float), then
-    // field 11 { 1: "BlockIDs", 2: [ { 1: 0, 2: "air" }, { 1: 1, 2: "mantle" } ] }.
-    const data = [_]u8{
-        0x08, 0x80, 0xc0, 0x3e, 0x10, 0x80, 0x02, 0xcd, 0x01, 0x00, 0x00, 0xc0, 0x41,
-        0x5a, 0x21, 0x0a, 0x08, 'B',  'l',  'o',  'c',  'k',  'I',  'D',  's',  0x12,
-        0x15, 0x0a, 0x07, 0x08, 0x00, 0x12, 0x03, 'a',  'i',  'r',  0x0a, 0x0a, 0x08,
-        0x01, 0x12, 0x06, 'm',  'a',  'n',  't',  'l',  'e',
-    };
-    const gameData = try parse(std.testing.allocator, &data);
+    const gameData = try parse(std.testing.allocator, &testRow);
     defer gameData.deinit();
     try std.testing.expectEqualStrings("air", gameData.blockCode(0).?);
     try std.testing.expectEqualStrings("mantle", gameData.blockCode(1).?);
@@ -139,6 +159,19 @@ test "BlockIDs and ItemIDs in the layout real saves use" {
     try std.testing.expectEqual(null, gameData.itemCode(0));
     try std.testing.expectEqual(256, gameData.worldHeight);
     try std.testing.expectEqual(110, gameData.seaLevel());
+    try std.testing.expectEqual(1024000, gameData.worldWidth);
+}
+
+test "world size and name" {
+    // Then field 3 = 2,048 (world length) and field 13 = "Test".
+    const row = testRow ++ [_]u8{ 0x18, 0x80, 0x10, 0x6a, 0x04, 'T', 'e', 's', 't' };
+    const gameData = try parse(std.testing.allocator, &row);
+    defer gameData.deinit();
+    try std.testing.expectEqual(2048, gameData.worldLength);
+    try std.testing.expectEqual(1024000, gameData.worldWidth);
+    try std.testing.expectEqualStrings("Test", gameData.name);
+    // A size of 0 is invalid.
+    try std.testing.expectError(error.InvalidWorldSize, parse(std.testing.allocator, &.{ 0x08, 0x00 }));
 }
 
 test "a world height of 0 or over 1,024 chunks is invalid" {

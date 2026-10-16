@@ -10,7 +10,7 @@ To render a top-down heightmap of a save (Zig 0.17.0):
 zig build run -- path/to/save.vcdbs [output folder]
 ```
 
-The map is written as 512 × 512-pixel tiles, `topdown/<level>/<x>/<y>.png` in the output folder (`out` when none is given): level 0 has one pixel per block, and each level above halves the resolution, up to a single tile for the whole world. A viewer is next. Saves are in the game's data folder, under `Saves/`. storymap never writes next to a save.
+The map is written as 512 × 512-pixel tiles, `topdown/<level>/<x>/<y>.png` in the output folder (`out` when none is given): level 0 has one pixel per block, and each level above halves the resolution, up to a single tile for the whole world. Open `index.html` in the output folder to browse the map. Saves are in the game's data folder, under `Saves/`. storymap never writes next to a save.
 
 To copy the game assets the renderer needs (block types, shapes, textures) from your own Vintage Story install and mods into a folder, for example to render on a machine without the game:
 

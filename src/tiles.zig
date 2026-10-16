@@ -61,6 +61,18 @@ pub const Stats = struct {
     encode: Io.Duration = .zero,
 };
 
+/// A tile that was written, and its level.
+pub const Written = struct {
+    level: u8,
+    tile: Tile,
+
+    fn lessThan(_: void, a: Written, b: Written) bool {
+        if (a.level != b.level) return a.level < b.level;
+        if (a.tile.x != b.tile.x) return a.tile.x < b.tile.x;
+        return a.tile.y < b.tile.y;
+    }
+};
+
 /// A pixel as the PNG encoder expects it: red, green, blue and alpha bytes in memory order.
 pub fn rgba(r: u8, g: u8, b: u8, a: u8) u32 {
     return std.mem.nativeToLittle(u32, @as(u32, a) << 24 | @as(u32, b) << 16 | @as(u32, g) << 8 | r);
@@ -70,7 +82,8 @@ pub fn rgba(r: u8, g: u8, b: u8, a: u8) u32 {
 pub const transparent = rgba(0, 0, 0, 0);
 
 /// Draws the full-detail tiles in `list` and builds every level above them, on every core.
-pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, list: []const Tile, output: Output) !Stats {
+/// Adds the tiles it writes to a folder to `written`, ordered by level, then x, then y.
+pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, list: []const Tile, output: Output, written: *std.ArrayList(Written)) !Stats {
     var pyramid: Pyramid = try .init(allocator, list);
     defer pyramid.deinit(allocator);
 
@@ -122,12 +135,15 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     }
 
     var stats: Stats = .{ .levels = pyramid.levels.len };
+    const start = written.items.len;
     for (jobs) |*job| {
         view.collect(&job.worker);
+        try written.appendSlice(allocator, job.written.items);
         stats.tiles += job.stats.tiles;
         stats.draw = .{ .nanoseconds = stats.draw.nanoseconds + job.stats.draw.nanoseconds };
         stats.encode = .{ .nanoseconds = stats.encode.nanoseconds + job.stats.encode.nanoseconds };
     }
+    std.mem.sort(Written, written.items[start..], {}, Written.lessThan);
     return stats;
 }
 
@@ -242,6 +258,8 @@ fn Job(comptime View: type) type {
         /// One tile's pixels per level of a subtree: level 0's are drawn, the others built.
         pixels: []Pixels,
         png: std.ArrayList(u8) = .empty,
+        /// The tiles this worker wrote to the folder.
+        written: std.ArrayList(Written) = .empty,
         pngFailed: bool = false,
         stats: Stats = .{},
         err: ?anyerror = null,
@@ -270,6 +288,7 @@ fn Job(comptime View: type) type {
             self.worker.deinit(allocator);
             allocator.free(self.pixels);
             self.png.deinit(allocator);
+            self.written.deinit(allocator);
         }
 
         fn run(self: *Self) void {
@@ -367,6 +386,7 @@ fn Job(comptime View: type) type {
             var pathBuffer: [80]u8 = undefined;
             const path = try std.fmt.bufPrint(&pathBuffer, "{s}/{d}.png", .{ dir, tile.y });
             try folder.writeFile(self.io, .{ .sub_path = path, .data = self.png.items });
+            try self.written.append(self.allocator, .{ .level = @intCast(level), .tile = tile });
         }
 
         fn appendPng(context: ?*anyopaque, data: ?*anyopaque, length: c_int) callconv(.c) void {

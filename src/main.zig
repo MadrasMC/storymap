@@ -60,4 +60,5 @@ test {
     _ = bench;
     _ = topdown;
     _ = @import("tiles.zig");
+    _ = @import("viewer.zig");
 }

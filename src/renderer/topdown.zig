@@ -8,6 +8,7 @@ const Compression = @import("../Compression.zig");
 const MapChunk = @import("../MapChunk.zig");
 const GameData = @import("../GameData.zig");
 const tiles = @import("../tiles.zig");
+const viewer = @import("../viewer.zig");
 
 /// What a render covered and how long it took.
 pub const Stats = struct {
@@ -56,7 +57,18 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     defer view.deinit(allocator);
     const opened: Io.Timestamp = .now(io, .awake);
 
-    const rendered = try tiles.render(View, allocator, io, &view, list, output);
+    var written: std.ArrayList(tiles.Written) = .empty;
+    defer written.deinit(allocator);
+    const rendered = try tiles.render(View, allocator, io, &view, list, output, &written);
+    // The viewer page goes next to the tiles. With more views, it'll list them all.
+    switch (output) {
+        .folder => |folder| try viewer.write(allocator, io, folder, .{
+            .name = gameData.name,
+            .width = gameData.worldWidth,
+            .length = gameData.worldLength,
+        }, &.{.{ .name = View.name, .title = "Top-down", .projection = "topdown", .written = written.items }}),
+        .discard => {},
+    }
 
     if (stats) |out| {
         out.* = .{

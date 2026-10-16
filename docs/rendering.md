@@ -84,7 +84,8 @@ storymap renders a world as square tiles for a map viewer, never as one image, l
 - **Tiles are 512 × 512 pixels** in every view and level. In the top-down view's full-detail level that's 512 × 512 blocks, 16 × 16 chunk columns, the same area as a map region (the save's `mapregion` table). In an isometric view a block takes many pixels and a region projects to a slanted diamond, so tiles are defined in pixels, not blocks.
 - **Levels of detail:** level 0 is full detail; each level above halves the resolution, so a level-n tile covers 2ⁿ × 2ⁿ level-0 tiles and a zoomed-out view loads a few tiles. The top level is a single tile covering the whole world.
 - **Only tiles with something in them are written.** Empty pixels are transparent; the viewer draws the paper behind them.
-- **Layout:** `<output>/<view>/<level>/<x>/<y>.png`, e.g. `out/topdown/0/1000/999.png`. *(Planned: `map.json` describing each view, and a viewer page.)*
+- **Layout:** `<output>/<view>/<level>/<x>/<y>.png`, e.g. `out/topdown/0/1000/999.png`. Beside them, `map.json` describes the world and each view with the tiles it has, and `index.html` is the viewer.
+- **The viewer** (`src/viewer.html`, one page without libraries) has the map's description inlined, as a browser opening the page straight from the disk won't let it fetch `map.json`. It asks only for tiles that exist, at the level whose pixels are closest to screen pixels without being smaller; while a tile loads, the nearest loaded tile above it stands in. Positions show as the game shows them, relative to the world's centre ([save format §2](save-format/README.md#2-positions)), and the current one is kept in the page's address.
 
 `src/tiles.zig` is the pipeline every view shares, and a view only draws full-detail tiles into a fixed buffer:
 
