@@ -98,17 +98,19 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
     }
     const summarised: Io.Timestamp = .now(io, .awake);
 
-    // Greyscale by height. The lowest surface is dark grey rather than black, so it
-    // stays distinguishable from columns with no blocks at all.
+    const heights = try surfaceHeights(allocator, top, lowest, highest);
+
     const pixels = try allocator.alloc(u32, top.len);
     defer allocator.free(pixels);
-    for (pixels, top) |*pixel, column| {
+    for (pixels, top, 0..) |*pixel, column, i| {
         const y = column orelse {
-            pixel.* = 0xFF000000;
+            pixel.* = paper;
             continue;
         };
-        const shade: u32 = if (highest == lowest) 255 else 32 + @as(u32, y - lowest) * 223 / (highest - lowest);
-        pixel.* = 0xFF000000 | (shade << 16) | (shade << 8) | shade;
+        // Neighbours without blocks count as level ground.
+        const west = if (i % width > 0) top[i - 1] orelse y else y;
+        const north = if (i >= width) top[i - width] orelse y else y;
+        pixel.* = colour(y, heights, @as(i32, y) * 2 - west - north);
     }
 
     const stride: c_int = @intCast(width * @sizeOf(u32));
@@ -126,6 +128,117 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
         .scan = opened.durationTo(scanned),
         .png = summarised.untilNow(io, .awake),
     };
+}
+
+/// Columns without blocks, as blank paper.
+const paper = rgb(0xEF, 0xE4, 0xC6);
+
+/// Ink by height, lowest first: an old map's sepia, from dark brown to pale yellow.
+const ramp = [_][3]u8{
+    .{ 0x4A, 0x30, 0x1A },
+    .{ 0x8A, 0x64, 0x38 },
+    .{ 0xC4, 0xA4, 0x6C },
+    .{ 0xE4, 0xD2, 0xA0 },
+    .{ 0xF6, 0xEE, 0xD2 },
+};
+/// The ramp entry for ground level, so most of the map is pale and only low ground is dark.
+const groundStep = 3;
+
+/// The surface heights the ramp is spread over.
+const Heights = struct {
+    /// Below this, 2% of the columns: the ramp's darkest end.
+    low: u16,
+    /// The median: half the columns are lower.
+    ground: u16,
+    /// Above this, 2% of the columns: the ramp's palest end.
+    high: u16,
+};
+
+/// The surface heights of the columns. Leaving out the lowest and highest 2% stops one
+/// deep pit or tall peak from squeezing the rest of the map into a few shades.
+fn surfaceHeights(allocator: std.mem.Allocator, top: []const ?u16, lowest: u16, highest: u16) !Heights {
+    if (highest < lowest) return .{ .low = 0, .ground = 0, .high = 0 }; // no blocks at all
+    const counts = try allocator.alloc(usize, highest - lowest + 1);
+    defer allocator.free(counts);
+    @memset(counts, 0);
+    var columns: usize = 0;
+    for (top) |column| if (column) |y| {
+        counts[y - lowest] += 1;
+        columns += 1;
+    };
+    const low = percentile(counts, columns / 50);
+    const ground = percentile(counts, columns / 2);
+    const high = percentile(counts, columns - 1 - columns / 50);
+    return .{ .low = @intCast(lowest + low), .ground = @intCast(lowest + ground), .high = @intCast(lowest + high) };
+}
+
+/// The index of the `rank`th column (from 0) when they're sorted by height.
+fn percentile(counts: []const usize, rank: usize) usize {
+    var below: usize = 0;
+    for (counts, 0..) |count, i| {
+        below += count;
+        if (below > rank) return i;
+    }
+    return counts.len - 1;
+}
+
+test surfaceHeights {
+    // 100 columns: one pit at 0, one peak at 200, the rest between 60 and 69.
+    var top: [100]?u16 = undefined;
+    for (&top, 0..) |*column, i| column.* = @intCast(60 + i % 10);
+    top[0] = 0;
+    top[1] = 200;
+    const heights = try surfaceHeights(std.testing.allocator, &top, 0, 200);
+    try std.testing.expectEqual(Heights{ .low = 60, .ground = 65, .high = 69 }, heights);
+}
+
+/// The colour of a column at height `y`. `slope` is how much higher it is than its west and
+/// north neighbours together: slopes facing the north-west light are brightened, the others
+/// darkened, as on a hand-shaded relief map.
+fn colour(y: u16, heights: Heights, slope: i32) u32 {
+    // Where y falls on the ramp, in 1/256ths of a step: low..ground covers the steps up
+    // to ground level, ground..high the rest.
+    const steps = ramp.len - 1;
+    const clamped = std.math.clamp(y, heights.low, heights.high);
+    const position: usize = if (clamped <= heights.ground)
+        stretch(clamped - heights.low, heights.ground - heights.low, groundStep)
+    else
+        groundStep * 256 + stretch(clamped - heights.ground, heights.high - heights.ground, steps - groundStep);
+    const step: usize = @min(position / 256, steps - 1);
+    const fraction = position - step * 256;
+    // Light in 1/256ths: each block of slope changes the brightness by 1/16, up to ±3/8.
+    const light: i32 = 256 + std.math.clamp(slope * 16, -96, 96);
+
+    var channels: [3]u8 = undefined;
+    for (&channels, ramp[step], ramp[step + 1]) |*channel, from, to| {
+        const mixed: i32 = @intCast((@as(usize, from) * (256 - fraction) + @as(usize, to) * fraction) / 256);
+        channel.* = @intCast(std.math.clamp(@divTrunc(mixed * light, 256), 0, 255));
+    }
+    return rgb(channels[0], channels[1], channels[2]);
+}
+
+/// `offset` out of `span` heights, as a distance along `steps` ramp steps in 1/256ths.
+fn stretch(offset: u16, span: u16, steps: usize) usize {
+    if (span == 0) return steps * 256;
+    return @as(usize, offset) * steps * 256 / span;
+}
+
+/// An opaque pixel as stb expects it: red, green, blue and alpha bytes in memory order.
+fn rgb(r: u8, g: u8, b: u8) u32 {
+    return std.mem.nativeToLittle(u32, 0xFF000000 | @as(u32, b) << 16 | @as(u32, g) << 8 | r);
+}
+
+test colour {
+    const heights: Heights = .{ .low = 10, .ground = 60, .high = 110 };
+    // Level ground takes the ramp's colour for its height.
+    try std.testing.expectEqual(rgb(0x4A, 0x30, 0x1A), colour(10, heights, 0));
+    try std.testing.expectEqual(rgb(0xE4, 0xD2, 0xA0), colour(60, heights, 0));
+    try std.testing.expectEqual(rgb(0xF6, 0xEE, 0xD2), colour(110, heights, 0));
+    try std.testing.expectEqual(rgb(0xF6, 0xEE, 0xD2), colour(200, heights, 0));
+    // A slope facing the light is brighter, one facing away darker.
+    const level = colour(40, heights, 0);
+    try std.testing.expect(colour(40, heights, 2) & 0xFF > level & 0xFF);
+    try std.testing.expect(colour(40, heights, -2) & 0xFF < level & 0xFF);
 }
 
 fn discardPng(_: ?*anyopaque, _: ?*anyopaque, _: c_int) callconv(.c) void {}

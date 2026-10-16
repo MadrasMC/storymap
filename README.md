@@ -2,7 +2,7 @@
 
 High Performance Vintage Story Map Renderer ⚡️
 
-storymap renders a greyscale top-down heightmap today; colour, tiles and an isometric render are next ([TODO.md](TODO.md)). Tested on saves from Vintage Story 1.19 and 1.22.7.
+storymap renders a top-down relief map in sepia today, shaded by height; block colours, tiles and an isometric render are next ([TODO.md](TODO.md)). Tested on saves from Vintage Story 1.19 and 1.22.7.
 
 To render a top-down heightmap of a save (Zig 0.17.0):
 

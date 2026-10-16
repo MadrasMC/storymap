@@ -48,5 +48,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - `storymap extract-assets`: copies blocktypes, itemtypes, shapes, textures (minus gui/icons), worldproperties, patches and `config/colormaps.json` (181 MB for 1.22.7) plus every mod, in the game's own layout. Verified byte-for-byte against the install.
 - Block ID → block code mapping from `gamedata` (`src/GameData.zig`); every ID in both test saves has a name.
 - No allocation per chunk (memory stage 1): one `Chunk.Decoder` and one fixed-size `Chunk` per worker, reused for every chunk ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)).
+- Sepia relief map: pale at ground level (the median height), darker below, paler above, with hill shading.
 - Chunk decoding on every core, one SQLite connection per worker; timings in [`docs/rendering.md`](docs/rendering.md#performance).
 - Format checked against 1.22.7: schema, positions, chunk fields, block and liquid decoding and block entities all hold; differences are noted in the docs.
