@@ -95,7 +95,7 @@ const Position = packed struct(u64) {
 
 - These are chunk coordinates: chunk (x, y, z) holds blocks x·32 … x·32+31, and so on.
 - SQLite integers are signed, so a chunk with y ≥ 512 (top bit set) is stored as a negative number. *(Inferred from SQLite's integer type; the sample has no chunks that high, max y = 7.)*
-- Coordinates are absolute. The game shows coordinates shifted from these. *(Unverified: the original notes say the shift is half the world size, centring spawn; not confirmed. Storymap's viewer assumes it, using the world size from `gamedata` fields 1 and 3, §6.)*
+- Coordinates are absolute. The game shows coordinates shifted from these by half the world size, so that the world's centre, the default spawn point, is 0, 0. *(Checked roughly (1.22.7): in the larger 1.22.7 world, the spot where the player first spawned is at about 0, 0 in Storymap's viewer, which shifts positions this way using the world size from `gamedata` fields 1 and 3, §6. One spot, by eye.)*
 
 `mapchunk.position` uses the same packing with y = 0, one row per chunk column. *(Verified (1.19): the 860 `mapchunk` positions are exactly the 860 distinct (x, z) columns in `chunk`. Verified (1.22.7): likewise, 778 and 778.)*
 
@@ -368,6 +368,5 @@ The larger world's cache has 2,694 pieces, all of them stage-6 columns. The othe
 
 - **Other chunk fields:** light (2, 3), entities (5, 6), field 10, decor (14), and the small varint fields.
 - **`mapregion`, `playerdata`:** not decoded. **`mapchunk`:** fields 1, 8, 9, 12, 15 and 16 aren't understood. **`gamedata`:** only the ID lists, world size and world configuration are decoded.
-- **In-game coordinates:** the offset from absolute coordinates isn't confirmed.
 - **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; a world with ruins or a placed chiseled block, and items on the ground, would cover them.
 - **Mods.** How modded blocks appear in palettes and `gamedata` (with a domain prefix or without) needs a world created with a mod enabled.

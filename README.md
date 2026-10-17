@@ -13,7 +13,7 @@
 
 - **Fast.** Close to 100,000 chunks a second, using every core.
 - **Made to explore.** Pan and zoom in your browser, from one page that opens straight from the folder: no server, nothing to install.
-- **Drawn like a printed map.** Sepia relief with hill shading, inked coastlines, a coordinate grid and a title cartouche.
+- **Drawn like a printed map.** Sepia relief with hill shading, inked coastlines, a grid in the game's own coordinates and a title cartouche.
 - **Gentle with your saves.** Storymap opens them read-only and never writes next to them.
 
 <h2 align="center">Getting started</h2>
