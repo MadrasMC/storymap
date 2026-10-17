@@ -40,9 +40,9 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     var stats: topdown.Stats = .{};
     // Every chunk in the save, which a render doesn't count: it reads only those it needs.
     var chunks: usize = 0;
-    try topdown.render(allocator, io, dbPath, .discard, &stats);
+    try topdown.render(allocator, io, dbPath, .discard, .{ .stats = &stats });
     for (0..runs) |i| {
-        try topdown.render(allocator, io, dbPath, .discard, &stats);
+        try topdown.render(allocator, io, dbPath, .discard, .{ .stats = &stats });
         open[i] = stats.open;
         tiles[i] = stats.render;
         total[i] = .{ .nanoseconds = stats.open.nanoseconds + stats.render.nanoseconds };

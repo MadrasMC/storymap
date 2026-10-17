@@ -26,9 +26,15 @@ pub const Stats = struct {
     encode: Io.Duration = .zero,
 };
 
-/// Renders the save's top-down tiles into `output`. With `stats`, records the stages' times
-/// instead of printing a summary of the map.
-pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: tiles.Output, stats: ?*Stats) !void {
+pub const Options = struct {
+    /// Records the stages' times here instead of printing a summary of the map.
+    stats: ?*Stats = null,
+    /// What draws the viewer page around the map, when the tiles go into a folder.
+    theme: viewer.Theme = viewer.printed,
+};
+
+/// Renders the save's top-down tiles into `output`, with the viewer page beside them.
+pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: tiles.Output, options: Options) !void {
     const start: Io.Timestamp = .now(io, .awake);
 
     // Never write next to the save: it may be in the game's own Saves folder.
@@ -67,11 +73,11 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
             .width = gameData.worldWidth,
             .length = gameData.worldLength,
             .gameVersion = gameData.gameVersion,
-        }, Io.Timestamp.now(io, .real).toSeconds(), &.{.{ .name = View.name, .title = "Top-down", .projection = "topdown", .written = written.items }}),
+        }, Io.Timestamp.now(io, .real).toSeconds(), &.{.{ .name = View.name, .title = "Top-down", .projection = "topdown", .written = written.items }}, options.theme),
         .discard => {},
     }
 
-    if (stats) |out| {
+    if (options.stats) |out| {
         out.* = .{
             .tiles = rendered.tiles,
             .levels = rendered.levels,

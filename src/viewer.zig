@@ -28,6 +28,37 @@ pub const printed: Theme = .{
     .script = @embedFile("themes/printed/theme.js"),
 };
 
+/// The map filling the window, with small panels over it, light or dark with the reader's
+/// setting. Short on purpose, as a place to start a theme of one's own.
+pub const plain: Theme = .{
+    .style = @embedFile("themes/plain/theme.css"),
+    .script = @embedFile("themes/plain/theme.js"),
+};
+
+/// The themes built into Storymap, by the name `--theme` takes.
+pub const themes = [_]struct { name: []const u8, theme: Theme }{
+    .{ .name = "printed", .theme = printed },
+    .{ .name = "plain", .theme = plain },
+};
+
+/// The built-in theme called `name`, or else the theme in the folder at that path: its
+/// `theme.css` and `theme.js`, read with `arena` and kept for the render.
+pub fn loadTheme(arena: std.mem.Allocator, io: Io, name: []const u8) !Theme {
+    for (themes) |builtIn| {
+        if (std.mem.eql(u8, builtIn.name, name)) return builtIn.theme;
+    }
+    var folder = try Io.Dir.cwd().openDir(io, name, .{});
+    defer folder.close(io);
+    const theme: Theme = .{
+        .style = try folder.readFileAlloc(io, "theme.css", arena, .limited(16 << 20)),
+        .script = try folder.readFileAlloc(io, "theme.js", arena, .limited(16 << 20)),
+    };
+    // Either closing tag would end its element early once the theme is inlined.
+    if (std.mem.indexOf(u8, theme.style, "</style") != null) return error.ThemeStyleEndsItsElement;
+    if (std.mem.indexOf(u8, theme.script, "</script") != null) return error.ThemeScriptEndsItsElement;
+    return theme;
+}
+
 /// The world a map shows.
 pub const World = struct {
     name: []const u8,
@@ -50,9 +81,9 @@ pub const View = struct {
     written: []const tiles.Written,
 };
 
-/// Writes `map.json` and `index.html` into `folder`. `rendered` is when, in seconds since 1970
-/// (UTC).
-pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, world: World, rendered: i64, views: []const View) !void {
+/// Writes `map.json` and `index.html` into `folder`, the page drawn with `theme`. `rendered` is
+/// when, in seconds since 1970 (UTC).
+pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, world: World, rendered: i64, views: []const View, theme: Theme) !void {
     var buffer: [24]u8 = undefined;
     const json = try describe(allocator, world, utc(&buffer, rendered), views);
     defer allocator.free(json);
@@ -63,9 +94,9 @@ pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, world: World,
     defer allocator.free(inlined);
     // The theme goes in first: it's ours, while the description holds the world's name, which
     // could contain anything.
-    const themed = try fill(allocator, template, styleMarker, &.{ "<style id=\"theme-style\">", printed.style, "</style>" });
+    const themed = try fill(allocator, template, styleMarker, &.{ "<style id=\"theme-style\">", theme.style, "</style>" });
     defer allocator.free(themed);
-    const scripted = try fill(allocator, themed, scriptMarker, &.{ "<script id=\"theme-script\">", printed.script, "</script>" });
+    const scripted = try fill(allocator, themed, scriptMarker, &.{ "<script id=\"theme-script\">", theme.script, "</script>" });
     defer allocator.free(scripted);
     const page = try fill(allocator, scripted, marker, &.{ "<script id=\"map-data\" type=\"application/json\">", inlined, "</script>" });
     defer allocator.free(page);
@@ -150,8 +181,10 @@ test "the template has the markers" {
     }
 }
 
-test "the printed theme can be inlined" {
+test "the built-in themes can be inlined" {
     // Either closing tag would end its element early.
-    try std.testing.expect(std.mem.indexOf(u8, printed.style, "</style") == null);
-    try std.testing.expect(std.mem.indexOf(u8, printed.script, "</script") == null);
+    for (themes) |builtIn| {
+        try std.testing.expect(std.mem.indexOf(u8, builtIn.theme.style, "</style") == null);
+        try std.testing.expect(std.mem.indexOf(u8, builtIn.theme.script, "</script") == null);
+    }
 }

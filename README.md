@@ -27,7 +27,7 @@
 	zig build run -Doptimize=ReleaseFast -- path/to/save.vcdbs out
 	```
 
-	Saves are in the game's data folder, under `Saves/` (`%APPDATA%\VintagestoryData\Saves` on Windows).
+	Saves are in the game's data folder, under `Saves/` (`%APPDATA%\VintagestoryData\Saves` on Windows). Add `--theme plain` for a simpler page around the map, or [make your own](docs/themes.md).
 3. Open `out/index.html` in your browser.
 
 Tested with saves from Vintage Story 1.19 and 1.22.7.
@@ -36,6 +36,7 @@ Tested with saves from Vintage Story 1.19 and 1.22.7.
 
 - **[Save format](docs/save-format/README.md):** the `.vcdbs` format as far as Storymap has worked it out, from the SQLite schema to block palettes and block entities. Every claim is marked with its source: verified against a real save, read in the game's open-source code, from the wiki, or unverified.
 - **[Rendering](docs/rendering.md):** how the map is drawn, how it's split into tiles for the viewer, and where the time goes.
+- **[Themes](docs/themes.md):** choosing the page drawn around the map, or writing your own.
 - **[What's next](TODO.md):** block colours, an isometric render and more.
 
 <h2 align="center">Performance</h2>
