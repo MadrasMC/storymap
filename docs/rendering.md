@@ -1,6 +1,6 @@
 # Rendering notes
 
-Research for storymap's two planned outputs: a **top-down map** and a **Mapcrafter-style isometric render**. The save format itself is documented in [`save-format/README.md`](save-format/README.md); sourcing conventions are the same as there.
+Research for Storymap's two planned outputs: a **top-down map** and a **Mapcrafter-style isometric render**. The save format itself is documented in [`save-format/README.md`](save-format/README.md); sourcing conventions are the same as there.
 
 ## How the game draws its own world map
 
@@ -21,7 +21,7 @@ The game's map only shows chunk columns the client has received, all of them ful
 
 Seas and lakes are told apart by block: `saltwater` sets `mapColorCode: "ocean"`, while `water`, `rapidwater` and `boilingwater` set none and take the liquid default, and `lakeice` sets `"lake"`. *(Verified (1.22.7): `assets/survival/blocktypes/liquid/` in the install.)* Both test saves list `saltwater` in their block IDs but contain none: neither world reaches a sea.
 
-storymap's top-down map takes each column's height from its map chunk's rain height ([save format §7](save-format/README.md#7-map-chunks)), like the game, and looks up only the block there, in the solid layer (field 1) and the liquid layer (field 16). A liquid there is a water surface, and the map chunk's terrain height gives its bed. Rain falls through plants and loose stones, so the map shows the ground beneath them. The map covers only fully generated chunk columns: those whose map chunk says world generation is Done (stage 6; [save format §7](save-format/README.md#world-generation-stages)). The game rings everything it finishes with partly generated columns, which look unfinished (no trees or plants up to stage 3) and which its own map leaves out. A column that isn't Done stays transparent, and in the ring around a tile it counts as no blocks. Every chunk column has a map chunk in the test saves (§2 of the save format); one without wouldn't be drawn either. Block columns without a stored height, or whose stored height points at a block that's gone, are scanned instead: from the top down, a column shows liquid when its highest liquid is at or above its highest solid block, ignoring solid blocks that share their place with a liquid. Those are water plants *(Verified (1.19, 1.22.7): at the water surface they're `seaweed`, `aquatic-*` (milfoil, crowfoot), reeds and tule)*, so the water shows and its depth reaches down to the ground. Lily pads (`waterlily`) sit on top of the water instead and still show as land.
+Storymap's top-down map takes each column's height from its map chunk's rain height ([save format §7](save-format/README.md#7-map-chunks)), like the game, and looks up only the block there, in the solid layer (field 1) and the liquid layer (field 16). A liquid there is a water surface, and the map chunk's terrain height gives its bed. Rain falls through plants and loose stones, so the map shows the ground beneath them. The map covers only fully generated chunk columns: those whose map chunk says world generation is Done (stage 6; [save format §7](save-format/README.md#world-generation-stages)). The game rings everything it finishes with partly generated columns, which look unfinished (no trees or plants up to stage 3) and which its own map leaves out. A column that isn't Done stays transparent, and in the ring around a tile it counts as no blocks. Every chunk column has a map chunk in the test saves (§2 of the save format); one without wouldn't be drawn either. Block columns without a stored height, or whose stored height points at a block that's gone, are scanned instead: from the top down, a column shows liquid when its highest liquid is at or above its highest solid block, ignoring solid blocks that share their place with a liquid. Those are water plants *(Verified (1.19, 1.22.7): at the water surface they're `seaweed`, `aquatic-*` (milfoil, crowfoot), reeds and tule)*, so the water shows and its depth reaches down to the ground. Lily pads (`waterlily`) sit on top of the water instead and still show as land.
 
 ## Assets
 
@@ -31,7 +31,7 @@ Blocks are defined by data files, not code *(Wiki)*:
 - **Shapes:** JSON in `shapes/`, normally made with the official Model Creator: boxes with per-face texture references, rotations and nested children. *([Wiki: Asset Type – Shapes](https://wiki.vintagestory.at/Modding:Asset_Type_-_Shapes))*
 - **Textures:** PNG in `textures/`, referenced from block types and shapes by name. *([Wiki: Asset Type – Textures](https://wiki.vintagestory.at/Modding:Asset_Type_-_Textures))*
 
-These are the game developers' copyrighted assets, so storymap never ships them: every user points storymap at their own game install (and mods) and storymap extracts what it needs. That's also the only way modded blocks render correctly.
+These are the game developers' copyrighted assets, so Storymap never ships them: every user points Storymap at their own game install (and mods) and Storymap extracts what it needs. That's also the only way modded blocks render correctly.
 
 To copy what the renderer needs (block types, shapes, textures) from your own install and mods into a folder, for example to render on a machine without the game:
 
@@ -83,11 +83,11 @@ From the sample save (class counts in [`save-format/README.md` §5](save-format/
 
 ## Isometric reference
 
-[Mapcrafter](https://github.com/mapcrafter/mapcrafter) renders Minecraft worlds as isometric tiles for a web map. It's the model for storymap's isometric output; its approach hasn't been studied in detail here yet.
+[Mapcrafter](https://github.com/mapcrafter/mapcrafter) renders Minecraft worlds as isometric tiles for a web map. It's the model for Storymap's isometric output; its approach hasn't been studied in detail here yet.
 
 ## Output: tiles and levels of detail
 
-storymap renders a world as square tiles for a map viewer, never as one image, like a web map. Every view (the top-down map, and later one isometric view per direction) is a pyramid of tiles:
+Storymap renders a world as square tiles for a map viewer, never as one image, like a web map. Every view (the top-down map, and later one isometric view per direction) is a pyramid of tiles:
 
 - **Tiles are 512 × 512 pixels** in every view and level. In the top-down view's full-detail level that's 512 × 512 blocks, 16 × 16 chunk columns, the same area as a map region (the save's `mapregion` table). In an isometric view a block takes many pixels and a region projects to a slanted diamond, so tiles are defined in pixels, not blocks.
 - **Levels of detail:** level 0 is full detail; each level above halves the resolution, so a level-n tile covers 2ⁿ × 2ⁿ level-0 tiles and a zoomed-out view loads a few tiles. The top level is a single tile covering the whole world.
@@ -98,7 +98,7 @@ storymap renders a world as square tiles for a map viewer, never as one image, l
 `src/tiles.zig` is the pipeline every view shares, and a view only draws full-detail tiles into a fixed buffer. [`tile-pipeline.html`](tile-pipeline.html) explains how the work is shared between workers, with a step-by-step demo:
 
 - **Levels are built bottom up**, so nothing is read back from disk: a tile is its four children, each shrunk to half size. Shrinking averages 2 × 2 pixels with their colours weighted by how opaque they are, so the transparent edges of explored areas fade out instead of darkening. *(Verified (1.19, 1.22.7): every zoomed-out tile matches an independent rebuild from the tiles below, byte for byte.)*
-- **Workers take whole subtrees:** a tile at the highest level with at least 4 tiles per core, and everything under it, so each keeps one tile buffer per level. Each subtree's tile at the cut level waits at half size until the levels above are built; those are built one level at a time, every worker taking tiles of that level. The tile list gives every level's size, so all the waiting halves are set aside before any work starts: one per subtree, plus one block the size of the level above the cut. The levels above take turns with the two, since a level only needs the halves of the level below it, and no level has more tiles than the one below it. The top-down view draws a tile from its 16 × 16 chunk columns plus a one-block ring around them from its neighbours, so hill shading and coastlines match across tile edges: stitched together, the tiles of both test saves are pixel for pixel the single image storymap used to render. Every tile has a fixed size, which is what makes the memory goal below possible.
+- **Workers take whole subtrees:** a tile at the highest level with at least 4 tiles per core, and everything under it, so each keeps one tile buffer per level. Each subtree's tile at the cut level waits at half size until the levels above are built; those are built one level at a time, every worker taking tiles of that level. The tile list gives every level's size, so all the waiting halves are set aside before any work starts: one per subtree, plus one block the size of the level above the cut. The levels above take turns with the two, since a level only needs the halves of the level below it, and no level has more tiles than the one below it. The top-down view draws a tile from its 16 × 16 chunk columns plus a one-block ring around them from its neighbours, so hill shading and coastlines match across tile edges: stitched together, the tiles of both test saves are pixel for pixel the single image Storymap used to render. Every tile has a fixed size, which is what makes the memory goal below possible.
 
 ## Memory: no allocation at runtime (goal)
 

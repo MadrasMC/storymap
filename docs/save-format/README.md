@@ -1,6 +1,6 @@
 # Vintage Story save format
 
-The text reference for how a Vintage Story `.vcdbs` save is laid out, as far as storymap has worked it out. [`index.html`](index.html) in this folder is an interactive explainer built from this file; when the two disagree, this file wins and the HTML needs updating.
+The text reference for how a Vintage Story `.vcdbs` save is laid out, as far as Storymap has worked it out. [`index.html`](index.html) in this folder is an interactive explainer built from this file; when the two disagree, this file wins and the HTML needs updating.
 
 ## Versions
 
@@ -27,7 +27,7 @@ The test saves aren't in the repo.
 
 A `.vcdbs` file is an SQLite database. Saves live in the game's data folder under `Saves/`; on Windows that's `%APPDATA%\VintagestoryData\Saves`. *(Verified (1.22.7): a fresh Windows install.)*
 
-Saves use SQLite's [write-ahead log](https://www.sqlite.org/wal.html): bytes 18 and 19 of the file header are 2 in both test saves. In that mode even a read-only connection creates `-shm` and `-wal` files next to the database, so a tool that opens a save in place writes into the game's `Saves` folder. Read a copy, or open the file with SQLite's [`immutable=1`](https://www.sqlite.org/uri.html) URI parameter, which creates nothing; storymap does the latter. The catch: an immutable open ignores the `-wal` file, and while the game is running (or after a crash) that file holds changes not yet written into the save. A non-empty `-wal` next to a save means a map of it may be missing recent changes. *(Verified (1.19, 1.22.7): read-only opens of the copies created both files; `immutable=1` didn't, also with spaces, `%` and non-ASCII characters in the file name.)*
+Saves use SQLite's [write-ahead log](https://www.sqlite.org/wal.html): bytes 18 and 19 of the file header are 2 in both test saves. In that mode even a read-only connection creates `-shm` and `-wal` files next to the database, so a tool that opens a save in place writes into the game's `Saves` folder. Read a copy, or open the file with SQLite's [`immutable=1`](https://www.sqlite.org/uri.html) URI parameter, which creates nothing; Storymap does the latter. The catch: an immutable open ignores the `-wal` file, and while the game is running (or after a crash) that file holds changes not yet written into the save. A non-empty `-wal` next to a save means a map of it may be missing recent changes. *(Verified (1.19, 1.22.7): read-only opens of the copies created both files; `immutable=1` didn't, also with spaces, `%` and non-ASCII characters in the file name.)*
 
 Schema, verbatim *(Verified (1.19, 1.22.7): identical `sqlite_master` in both saves)*:
 
@@ -95,7 +95,7 @@ const Position = packed struct(u64) {
 
 - These are chunk coordinates: chunk (x, y, z) holds blocks x·32 … x·32+31, and so on.
 - SQLite integers are signed, so a chunk with y ≥ 512 (top bit set) is stored as a negative number. *(Inferred from SQLite's integer type; the sample has no chunks that high, max y = 7.)*
-- Coordinates are absolute. The game shows coordinates shifted from these. *(Unverified: the original notes say the shift is half the world size, centring spawn; not confirmed. storymap's viewer assumes it, using the world size from `gamedata` fields 1 and 3, §6.)*
+- Coordinates are absolute. The game shows coordinates shifted from these. *(Unverified: the original notes say the shift is half the world size, centring spawn; not confirmed. Storymap's viewer assumes it, using the world size from `gamedata` fields 1 and 3, §6.)*
 
 `mapchunk.position` uses the same packing with y = 0, one row per chunk column. *(Verified (1.19): the 860 `mapchunk` positions are exactly the 860 distinct (x, z) columns in `chunk`. Verified (1.22.7): likewise, 778 and 778.)*
 
@@ -105,7 +105,7 @@ const Position = packed struct(u64) {
 
 ## 3. Chunk data: Protobuf fields
 
-`chunk.data` is a [Protobuf](https://protobuf.dev/programming-guides/encoding/) message: a sequence of `(field number, wire type, value)` entries with no schema in the file. storymap parses it with [`src/ProtoBuf.zig`](../../src/ProtoBuf.zig).
+`chunk.data` is a [Protobuf](https://protobuf.dev/programming-guides/encoding/) message: a sequence of `(field number, wire type, value)` entries with no schema in the file. Storymap parses it with [`src/ProtoBuf.zig`](../../src/ProtoBuf.zig).
 
 Field names come from the `fieldNames` list in [`src/Chunk.zig`](../../src/Chunk.zig), whose origin isn't recorded; treat them as best guesses unless the status says decoded.
 
@@ -162,7 +162,7 @@ The y = 3 chunk shows that palettes aren't pruned: its blocks were removed, so e
 
 ### Palette rounding
 
-The number of planes is `bits = ceil(log2(palette entries))`, and the palette is treated as having `2^bits` slots; `Layer.decode` in `src/Compression.zig` computes this. Only the real entries are stored. Slots past them are never referenced in valid data, and a reader should treat them as air rather than read past the stored entries. (storymap used to over-read here; fixed in commit `092de71`.)
+The number of planes is `bits = ceil(log2(palette entries))`, and the palette is treated as having `2^bits` slots; `Layer.decode` in `src/Compression.zig` computes this. Only the real entries are stored. Slots past them are never referenced in valid data, and a reader should treat them as air rather than read past the stored entries. (Storymap used to over-read here; fixed in commit `092de71`.)
 
 ### Block order and bit planes
 
@@ -220,11 +220,11 @@ A tree is a list of entries `[u8 type id][string key][value]`, ended by a single
 | 15 | long array | `i32 count`, `i64`s |
 | 16 | bool array | `i32 count`, `u8`s |
 
-Every block entity in the sample starts with `posx`, `posy`, `posz` (int, absolute block coordinates) and `blockCode` (string). storymap parses the full format in [`src/TreeAttribute.zig`](../../src/TreeAttribute.zig) and [`src/BlockEntity.zig`](../../src/BlockEntity.zig); parsing the sample with it gives the same counts as the Python check above.
+Every block entity in the sample starts with `posx`, `posy`, `posz` (int, absolute block coordinates) and `blockCode` (string). Storymap parses the full format in [`src/TreeAttribute.zig`](../../src/TreeAttribute.zig) and [`src/BlockEntity.zig`](../../src/BlockEntity.zig); parsing the sample with it gives the same counts as the Python check above.
 
 Classes in the 1.19 sample: MicroBlock 8,343 · Generic 4,364 · BerryBush 632 · GenericTypedContainer 370 · Crate 274 · GroundStorage 184 · Tapestry 59 · Chisel 39 · TorchHolder 33 · LocustNest 29 · Transient 24 · Mycelium 23 · Firepit 19 · Trough 15 · Bed 12 · Forge 8 · PlantContainer 8 · DynamicTreeBranch 4 · CoalPile 3 · DisplayCase 2 · Lantern 2.
 
-**1.22.7:** all 684 block entities in the new world parse with the same format, in both the Python check and storymap's Zig parser. Classes: WildFruitingBush 628 · Mycelium 43 · DynamicTreeBranch 10 · DynamicTreeFoliage 2 · Beehive 1. `WildFruitingBush` takes over from 1.19's `BerryBush`, which the 1.22.7 code still registers from a `Legacy/` folder for old saves. *(Source: [`Systems/Core.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Core.cs#L797) registers `BerryBush` and, [further down](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Core.cs#L922), `WildFruitingBush`; [`Legacy/BlockEntity/BEBerryBush.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Legacy/BlockEntity/BEBerryBush.cs).)*
+**1.22.7:** all 684 block entities in the new world parse with the same format, in both the Python check and Storymap's Zig parser. Classes: WildFruitingBush 628 · Mycelium 43 · DynamicTreeBranch 10 · DynamicTreeFoliage 2 · Beehive 1. `WildFruitingBush` takes over from 1.19's `BerryBush`, which the 1.22.7 code still registers from a `Legacy/` folder for old saves. *(Source: [`Systems/Core.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Core.cs#L797) registers `BerryBush` and, [further down](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Core.cs#L922), `WildFruitingBush`; [`Legacy/BlockEntity/BEBerryBush.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Legacy/BlockEntity/BEBerryBush.cs).)*
 
 ### Chiseled blocks (MicroBlock, Chisel)
 
@@ -296,14 +296,14 @@ The field-11 entry with key `BlockIDs` maps every block ID to its block code. It
 
 - **IDs are per save.** The same number means different blocks in different saves, so a reader must use each save's own list.
 - **Sizes:** 14,091 block codes and 4,468 item codes in the 1.22.7 world; 9,312 and 3,318 in the 1.19 sample. Block IDs run from 0 with no gaps.
-- **Completeness:** every ID in every solid and liquid palette (41,648 entries in the 1.22.7 world, 52,856 in the 1.19 sample) and every chiseled-block material (9,309 in the sample) has a code. *(Verified with storymap's [`src/GameData.zig`](../../src/GameData.zig).)*
+- **Completeness:** every ID in every solid and liquid palette (41,648 entries in the 1.22.7 world, 52,856 in the 1.19 sample) and every chiseled-block material (9,309 in the sample) has a code. *(Verified with Storymap's [`src/GameData.zig`](../../src/GameData.zig).)*
 - **No domain prefixes:** codes are written without one (`rock-granite`, not `game:rock-granite`) in both saves. Neither world has mods, so how modded codes appear is still open.
 
 The other field-11 keys (`worldeditworkspaces`, `ambient`, `temporalStormData`, `riftweather`, …) aren't decoded.
 
 ### World configuration
 
-Field 31 is a tree attribute (§5) whose values are all strings, e.g. `gameMode: "survival"`, `startingClimate: "temperate"`, `seasons: "enabled"`, `spawnRadius: "5000"`. *(Verified (1.19, 1.22.7): it parses with storymap's tree attribute format.)* `spawnRadius` is 50 in the 1.19 sample and 5000 in the 1.22.7 world, which explains where their players spawned (§2).
+Field 31 is a tree attribute (§5) whose values are all strings, e.g. `gameMode: "survival"`, `startingClimate: "temperate"`, `seasons: "enabled"`, `spawnRadius: "5000"`. *(Verified (1.19, 1.22.7): it parses with Storymap's tree attribute format.)* `spawnRadius` is 50 in the 1.19 sample and 5000 in the 1.22.7 world, which explains where their players spawned (§2).
 
 ### Sea level
 
@@ -362,7 +362,7 @@ Passes 2 to 5 need the neighbouring columns, so the game surrounds everything it
 
 The game's world map isn't drawn from the save. It's a cache on the client: `Maps/<id>.db` in the data folder, where `<id>` is `gamedata` field 34 (§6). It has two tables, `mappiece (position integer PRIMARY KEY, data BLOB)` and `blockidmapping` (empty in the larger world). `mappiece` positions use the map chunks' packing (x | z << 27, no y), one piece per chunk column. The pieces' data isn't decoded.
 
-The larger world's cache has 2,694 pieces, all of them stage-6 columns. The other 35 Done columns have no piece: they're finished but were never sent to the client, so the game's map doesn't show them. *(Verified (1.22.7): the larger world's cache, copied out of the data folder.)* Matching the game's map exactly would take this per-player cache, which a server doesn't have, so storymap draws the stage-6 columns instead.
+The larger world's cache has 2,694 pieces, all of them stage-6 columns. The other 35 Done columns have no piece: they're finished but were never sent to the client, so the game's map doesn't show them. *(Verified (1.22.7): the larger world's cache, copied out of the data folder.)* Matching the game's map exactly would take this per-player cache, which a server doesn't have, so Storymap draws the stage-6 columns instead.
 
 ## 8. Open questions
 

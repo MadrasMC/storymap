@@ -1,22 +1,20 @@
 <p align="center">
-	<img src="docs/images/viewer.webp" alt="storymap's viewer showing a Vintage Story world as a sepia relief map: lakes inked in blue-grey, hills shaded, a coordinate grid labelled in the margins and a title cartouche in the corner">
-</p>
-
-<p align="center">
 	<picture>
 		<source media="(prefers-color-scheme: dark)" srcset="docs/images/title-dark.svg">
 		<img src="docs/images/title-light.svg" width="456" alt="STORYMAP, or, A TRUE AND EXACT DESCRIPTION of the Worlds of Vintage Story, Wherein their Seas, Lakes, Hills &amp; Coasts are faithfully set down from the Records themselves; Together with a Grid of Coordinates and divers Scales for the Reader's Ease. Wrought with great Speed upon every Core. MMXXVI">
 	</picture>
 </p>
 
-<p align="center"><strong>🗺️ High Performance Vintage Story Map Renderer ⚡️</strong></p>
+<p align="center">
+	<img src="docs/images/viewer.webp" alt="Storymap's viewer showing a Vintage Story world as a sepia relief map: lakes inked in blue-grey, hills shaded, a coordinate grid labelled in the margins and a title cartouche in the corner">
+</p>
 
-<p align="center">Turn a Vintage Story save into a map you can explore, drawn like an old printed survey.</p>
+<h1 align="center">🗺️ Storymap: High Performance Vintage Story Map Renderer ⚡️</h1>
 
 - **Fast.** Close to 100,000 chunks a second, using every core.
 - **Made to explore.** Pan and zoom in your browser, from one page that opens straight from the folder: no server, nothing to install.
 - **Drawn like a printed map.** Sepia relief with hill shading, inked coastlines, a coordinate grid and a title cartouche.
-- **Gentle with your saves.** storymap opens them read-only and never writes next to them.
+- **Gentle with your saves.** Storymap opens them read-only and never writes next to them.
 
 <h2 align="center">Getting started</h2>
 
@@ -36,7 +34,7 @@ Tested with saves from Vintage Story 1.19 and 1.22.7.
 
 <h2 align="center">Documentation</h2>
 
-- **[Save format](docs/save-format/README.md):** the `.vcdbs` format as far as storymap has worked it out, from the SQLite schema to block palettes and block entities. Every claim is marked with its source: verified against a real save, read in the game's open-source code, from the wiki, or unverified.
+- **[Save format](docs/save-format/README.md):** the `.vcdbs` format as far as Storymap has worked it out, from the SQLite schema to block palettes and block entities. Every claim is marked with its source: verified against a real save, read in the game's open-source code, from the wiki, or unverified.
 - **[Rendering](docs/rendering.md):** how the map is drawn, how it's split into tiles for the viewer, and where the time goes.
 - **[What's next](TODO.md):** block colours, an isometric render and more.
 
@@ -51,7 +49,7 @@ A render of a 1.22.7 world (29,192 chunks, drawn as 34 tiles in 5 levels), Relea
 | End to end | 0.31 s (93,500 chunks/s) |
 | For comparison, decoding every chunk once | 0.45 s |
 
-storymap reads only the chunks that hold the surface, so drawing the whole map takes less time than decoding the save.
+Storymap reads only the chunks that hold the surface, so drawing the whole map takes less time than decoding the save.
 
 To measure your own save:
 

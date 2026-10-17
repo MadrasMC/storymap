@@ -103,7 +103,7 @@ test "117" {
     try std.testing.expect(try parser.parseVarInt() == 117);
 }
 
-test "every wire type storymap reads" {
+test "every wire type Storymap reads" {
     // field 1 varint 300, field 2 bytes "hi", field 3 fixed64, field 4 fixed32.
     var parser: ProtoBuf = .{ .buf = &.{
         0x08, 0xac, 0x02, 0x12, 0x02, 'h', 'i', 0x19, 1, 0, 0, 0, 0, 0, 0, 0,
