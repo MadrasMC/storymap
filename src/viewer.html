@@ -33,6 +33,8 @@
 		--border: rgb(92 70 46 / 0.3);
 		--rule: rgb(92 70 46 / 0.16);
 		--lift: 0 1px 2px rgb(60 40 20 / 0.12), 0 4px 12px rgb(60 40 20 / 0.08);
+		/* The hairline just inside the ink edge of the cartouche and the zoom key. */
+		--ruled: inset 0 0 0 3px var(--panel), inset 0 0 0 4px var(--border);
 		/* The accent has one job: the control you're on. */
 		--accent: #5c462e;
 		/* The paper margin around the sheet, wide enough for the grid's coordinates. */
@@ -75,7 +77,7 @@
 	.title {
 		position: fixed; top: var(--inset); left: var(--inset); max-width: calc(100vw - 2 * var(--inset));
 		margin: 0; padding: var(--s3) var(--s4); text-align: center;
-		background: var(--panel); border: 1px solid var(--ink); box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 4px var(--border), var(--lift);
+		background: var(--panel); border: 1px solid var(--ink); box-shadow: var(--ruled), var(--lift);
 	}
 	/* Set as an old cartographer would: "A top-down view of", then the world's name. */
 	.title .kind { display: block; font: italic var(--t-small)/1.2 var(--serif); color: var(--muted); }
@@ -96,40 +98,63 @@
 	.title .version { display: block; font: 600 var(--t-micro)/1.4 var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
 	.title .rendered { display: block; font: italic var(--t-small)/1.3 var(--serif); color: var(--muted); }
 	.title .version:empty, .title .rendered:empty { display: none; }
+	/* The coordinates above the scale, so neither pushes the other as it changes. */
 	.readout {
-		position: fixed; left: var(--inset); bottom: var(--inset); max-width: calc(100vw - 2 * var(--inset) - 3.5rem);
-		display: flex; align-items: center; gap: var(--s3); min-height: 2.25rem; padding: 0 var(--s3);
+		position: fixed; left: var(--inset); bottom: var(--inset); max-width: calc(100vw - 2 * var(--inset) - 4.25rem);
+		display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); padding: var(--s2) var(--s3);
 		font: var(--t-small)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
 	}
 	.readout .k { color: var(--muted); }
 	/* A bar the length of a round number of blocks, in alternating ink and paper, like a printed map's scale. */
-	.scale { display: flex; align-items: center; gap: var(--s2); padding-left: var(--s3); border-left: 1px solid var(--rule); align-self: stretch; }
+	.scale { display: flex; align-items: center; gap: var(--s2); }
 	.scale i {
 		display: block; height: 0.3125rem; border: 1px solid var(--ink);
 		background: linear-gradient(90deg, var(--ink) 0 25%, transparent 25% 50%, var(--ink) 50% 75%, transparent 75%);
 	}
 	.scale span, #status { font-family: var(--sans); color: var(--muted); }
 	#status:empty { display: none; }
-	/* On a phone, the scale goes under the coordinates, clear of the zoom buttons. */
 	@media (max-width: 30rem) {
-		.readout { flex-direction: column; align-items: flex-start; gap: var(--s2); padding: var(--s2) var(--s3); }
-		.scale { border-left: 0; padding-left: 0; }
-		/* The cartouche shrinks, so it doesn't cover the map. */
+		/* On a phone the cartouche shrinks, so it doesn't cover the map. */
 		.title { padding: var(--s2) var(--s3); }
 		.title .name { display: block; max-width: none; font-size: 1.25rem; letter-spacing: 0.08em; white-space: nowrap; text-overflow: ellipsis; }
 	}
-	.controls { position: fixed; right: var(--inset); bottom: var(--inset); display: grid; gap: var(--s2); }
-	.group { display: grid; overflow: hidden; }
-	.controls button {
-		width: 2.75rem; height: 2.75rem; display: grid; place-items: center; padding: 0;
-		border: 0; background: none; color: var(--fg); cursor: pointer; font: inherit;
+	/* The zoom key, ruled like the cartouche: hills as old maps draw them, one big hill to come
+	   closer and small ones to stand back, with the zoom between them showing the whole map. */
+	.controls {
+		position: fixed; right: var(--inset); bottom: var(--inset); display: grid; padding: 0.375rem;
+		background: var(--panel); border: 1px solid var(--ink); box-shadow: var(--ruled), var(--lift);
 	}
-	.group button + button { border-top: 1px solid var(--rule); }
-	.controls button:hover:not(:disabled) { color: var(--accent); background: rgb(92 70 46 / 0.08); }
-	.controls button:active:not(:disabled) { background: rgb(92 70 46 / 0.16); }
-	.controls button:disabled { color: var(--muted); opacity: 0.5; cursor: default; }
+	.controls button {
+		/* The hills are filled with the button's own colour, so they hide what's behind them. */
+		--bg: var(--panel);
+		position: relative; width: 2.75rem; height: 2.5rem; display: grid; place-items: center; padding: 0;
+		border: 0; background: var(--bg); color: var(--ink); cursor: pointer; font: inherit;
+	}
+	.controls button:hover:not(:disabled) { --bg: #ede8db; }
+	.controls button:active:not(:disabled) { --bg: #e1dacc; }
+	.controls button:disabled { opacity: 0.5; cursor: default; }
 	.controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-	.controls svg { width: 1.125rem; height: 1.125rem; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+	.hills { width: 2rem; height: 1.375rem; overflow: visible; }
+	.hills .o { fill: var(--bg); stroke: currentColor; stroke-width: 1.1; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+	.hills .h { fill: none; stroke: currentColor; stroke-width: 0.7; vector-effect: non-scaling-stroke; }
+	/* Small arrows as if drawn with a pen, at the hill's top right. */
+	.arrow {
+		position: absolute; top: 0.3125rem; right: 0.125rem; width: 0.5rem; height: 0.625rem; overflow: visible;
+		fill: none; stroke: currentColor; stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round;
+	}
+	/* The zoom as a printed scale, 1 : 16, set on its colon: the colon stays in the middle and the
+	   numbers grow away from it, so nothing shifts as they change or the ≈ comes and goes. */
+	.controls .zoom { height: 2rem; font: var(--t-small)/1 var(--serif); font-variant-numeric: lining-nums tabular-nums; color: var(--muted); white-space: nowrap; }
+	#zoom { justify-self: stretch; display: grid; grid-template-columns: 1fr auto 1fr; align-items: baseline; }
+	#zoom > :first-child { text-align: right; }
+	#zoom > :nth-child(2) { margin: 0 0.1875rem; }
+	#zoom > :last-child { text-align: left; }
+	#zoom b { font-weight: normal; font-size: 0.9375rem; margin-right: 0.0625rem; }
+	/* The whole map at a step of its own: a small range of hills in a faint frame, for the number. */
+	.zoom .mark { display: none; padding: 0.125rem 0.1875rem; border: 1px solid var(--border); }
+	.zoom .mark .hills { display: block; width: 1.375rem; height: 0.9375rem; }
+	.zoom.whole .mark { display: block; }
+	.zoom.whole #zoom { display: none; }
 	.message {
 		position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
 		width: min(24rem, calc(100vw - 2 * var(--inset))); margin: 0; padding: var(--s4) 1.25rem;
@@ -151,13 +176,32 @@
 	<span id="status" role="status"></span>
 </div>
 <div class="controls">
-	<div class="panel group">
-		<button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in (+)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button>
-		<button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out (−)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12"/></svg></button>
-	</div>
-	<div class="panel group">
-		<button type="button" id="fit" aria-label="Show the whole map" title="Whole map (0)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 8V4h4M12 4h4v4M16 12v4h-4M8 16H4v-4"/></svg></button>
-	</div>
+	<button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in (+)">
+		<svg class="hills" viewBox="-14 -16 28 18" aria-hidden="true">
+			<g transform="scale(1.1)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+		</svg>
+		<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M4.3 9.4C3.7 7.6 4.5 5.6 3.9 3"/><path d="M1.2 5.6C2.1 4.7 3 3.7 3.8 2.6"/><path d="M3.5 2.3C4.5 3.4 5.6 4.3 6.9 5"/></svg>
+	</button>
+	<button type="button" class="zoom" id="fit" aria-label="Show the whole map" title="Whole map (0)">
+		<span id="zoom"></span>
+		<span class="mark">
+			<svg class="hills" viewBox="-14 -16 28 18" aria-hidden="true">
+				<path class="o" transform="translate(-4 -5.5) scale(0.42)" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/>
+				<path class="o" transform="translate(4.5 -5) scale(0.38)" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/>
+				<path class="o" transform="translate(-8.5 0) scale(0.45)" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/>
+				<path class="o" transform="scale(0.5)" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/>
+				<path class="o" transform="translate(8.5 0) scale(0.42)" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/>
+			</svg>
+		</span>
+	</button>
+	<button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out (−)">
+		<svg class="hills" viewBox="-14 -16 28 18" aria-hidden="true">
+			<g transform="translate(-5.5 0) scale(0.55)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+			<g transform="translate(5.5 0) scale(0.55)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+			<g transform="translate(0 -4) scale(0.45)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+		</svg>
+		<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M3.7 0.8C4.5 3.2 3.5 5.4 4.2 7.6"/><path d="M1.1 5.1C2 6.1 3.1 7 4.3 8"/><path d="M4 8.3C4.8 7.2 5.8 6.3 6.9 5.5"/></svg>
+	</button>
 </div>
 <p class="panel message" id="message" role="alert" hidden></p>
 <script id="map-data" type="application/json">null</script>
@@ -315,9 +359,29 @@
 	// The map's top-left corner in the window: it sits inside the paper margin, so pointer
 	// positions are measured from here.
 	const origin = { x: 0, y: 0 };
-	const maxScale = 16;
-	const fitScale = () => Math.min(W / (maxX - minX), H / (maxY - minY)) * 0.92;
-	const minScale = () => Math.min(fitScale(), 1) / 2;
+	// Past four screen pixels to a block, zooming only makes the pixels bigger.
+	const maxScale = 4;
+	// Zoom steps are whole magnifications, the powers of two; two zooms closer than this are too
+	// close to be separate steps.
+	const closeStep = 1.2;
+	const isWhole = (s) => Number.isInteger(Math.log2(s));
+	// The view of the whole map: the explored area filling 92% of the screen's tighter side. Close
+	// to a whole step it snaps to it, down, or up while the area still fits, so the buttons don't
+	// take a tiny step away from it; otherwise it's a step of its own between two whole ones.
+	function fitScale() {
+		const fits = Math.min(W / (maxX - minX), H / (maxY - minY));
+		const s = fits * 0.92;
+		const below = 2 ** Math.floor(Math.log2(s));
+		if (s / below < closeStep) return below;
+		if ((below * 2) / s < closeStep && below * 2 <= fits) return below * 2;
+		return s;
+	}
+	// Whether the view is the whole map at a step of its own, which the page shows with a mark
+	// rather than a number.
+	const atOwnFit = () => !isWhole(fitScale()) && Math.abs(cam.s / fitScale() - 1) < 1e-6;
+	// The farthest zoom: the whole step at or below half the view of the whole map, so zooming out
+	// step by step lands on it.
+	const minScale = () => 2 ** Math.floor(Math.log2(Math.min(fitScale(), 1) / 2));
 	function settle() {
 		cam.s = clamp(cam.s, minScale(), maxScale);
 		cam.x = clamp(cam.x, minX, maxX);
@@ -326,6 +390,9 @@
 		saveSoon();
 	}
 	function fit() {
+		// A zoom step still under way would carry on from here.
+		cancelAnimationFrame(animation);
+		heading = 0;
 		cam.x = (minX + maxX) / 2;
 		cam.y = (minY + maxY) / 2;
 		cam.s = fitScale();
@@ -415,6 +482,7 @@
 		showStatus(pending);
 		showCoords();
 		showScale();
+		showZoom();
 		showGrid();
 	}
 	// Edges are rounded to whole pixels, so neighbouring tiles meet without hairline gaps.
@@ -478,6 +546,26 @@
 		scaleLabel.textContent = `${blocks.toLocaleString("en")} ${blocks === 1 ? "block" : "blocks"}`;
 	}
 
+	// The zoom as a scale of screen pixels to blocks, the same for every world, written as maps and
+	// drawings write theirs: 1 : 1 draws a block as one pixel, the tiles' full detail, 1 : 8 fits
+	// eight blocks in a pixel, and 4 : 1 draws a block four pixels wide. A zoom the wheel or a pinch
+	// left between whole numbers shows the nearest one marked as approximate (≈1 : 3); the address keeps
+	// the exact value. The whole map at a step of its own shows a framed range of hills instead.
+	// Pressing the zoom shows the whole map.
+	const zoomEl = $("#zoom");
+	const fitEl = $("#fit");
+	function showZoom() {
+		const whole = atOwnFit();
+		fitEl.classList.toggle("whole", whole);
+		if (whole) return;
+		const ratio = cam.s >= 1 ? cam.s : 1 / cam.s;
+		const rounded = Math.round(ratio);
+		const [pixels, blocks] = cam.s >= 1 ? [rounded, 1] : [1, rounded];
+		const near = Math.abs(ratio / rounded - 1) < 0.005 ? "" : "<b>≈</b>";
+		const text = `<span>${near}${pixels}</span><span>:</span><span>${blocks.toLocaleString("en")}</span>`;
+		if (zoomEl.innerHTML !== text) zoomEl.innerHTML = text;
+	}
+
 	// The grid: a line every round number of blocks in the game's coordinates, 90 to 225 pixels
 	// apart, with the coordinates in the margin on all four sides of the sheet.
 	const gridLines = $("#grid-lines");
@@ -533,20 +621,34 @@
 		cam.y = py - (sy - H / 2) / cam.s;
 		settle();
 	}
+	// The buttons, keys and double-clicks step between whole magnifications (1 : 4, 1 : 2, 1 : 1,
+	// 2 : 1, 4 : 1) and the whole map's own step, if it has one, from wherever the wheel or a
+	// pinch left the zoom, skipping a step too close to it. A step taken while another is still
+	// moving goes on from where that one is heading.
 	let animation = 0;
-	function zoomSmoothly(factor, sx = W / 2, sy = H / 2) {
+	let heading = 0;
+	function zoomStep(direction, sx = W / 2, sy = H / 2) {
+		const from = heading || cam.s;
+		const steps = [];
+		for (let s = minScale(); s <= maxScale; s *= 2) steps.push(s);
+		const whole = fitScale();
+		if (!isWhole(whole) && whole > minScale() && whole < maxScale) steps.push(whole);
+		steps.sort((a, b) => a - b);
+		const to = direction > 0
+			? steps.find((s) => s > from * closeStep) ?? maxScale
+			: steps.findLast((s) => s < from / closeStep) ?? minScale();
 		cancelAnimationFrame(animation);
-		if (reduceMotion.matches) return zoomAt(sx, sy, factor);
+		if (reduceMotion.matches) return zoomAt(sx, sy, to / cam.s);
+		heading = to;
 		const start = performance.now();
-		let done = 0;
+		const s0 = cam.s;
 		const step = (now) => {
 			const t = Math.min((now - start) / 160, 1);
 			const eased = 1 - (1 - t) ** 3;
-			// Zoom by the part of the factor this frame adds, so the steps multiply up to it.
-			const target = Math.log2(factor) * eased;
-			zoomAt(sx, sy, 2 ** (target - done));
-			done = target;
+			// Evenly in magnification: each frame's scale is part of the way from s0 to the step.
+			zoomAt(sx, sy, s0 * (to / s0) ** eased / cam.s);
 			if (t < 1) animation = requestAnimationFrame(step);
+			else heading = 0;
 		};
 		animation = requestAnimationFrame(step);
 	}
@@ -599,10 +701,10 @@
 		const delta = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1);
 		zoomAt(e.clientX - origin.x, e.clientY - origin.y, Math.exp(-delta * 0.0015));
 	}, { passive: false });
-	mapEl.addEventListener("dblclick", (e) => zoomSmoothly(e.shiftKey ? 0.5 : 2, e.clientX - origin.x, e.clientY - origin.y));
+	mapEl.addEventListener("dblclick", (e) => zoomStep(e.shiftKey ? -1 : 1, e.clientX - origin.x, e.clientY - origin.y));
 
-	$("#zoom-in").addEventListener("click", () => zoomSmoothly(2));
-	$("#zoom-out").addEventListener("click", () => zoomSmoothly(0.5));
+	$("#zoom-in").addEventListener("click", () => zoomStep(1));
+	$("#zoom-out").addEventListener("click", () => zoomStep(-1));
 	$("#fit").addEventListener("click", fit);
 
 	const panKeys = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], a: [-1, 0], d: [1, 0], w: [0, -1], s: [0, 1] };
@@ -615,9 +717,9 @@
 			cam.y += pan[1] * step;
 			settle();
 		} else if (e.key === "+" || e.key === "=") {
-			zoomSmoothly(2);
+			zoomStep(1);
 		} else if (e.key === "-" || e.key === "_") {
-			zoomSmoothly(0.5);
+			zoomStep(-1);
 		} else if (e.key === "0" || e.key === "Home") {
 			fit();
 		} else {
@@ -626,22 +728,31 @@
 		e.preventDefault();
 	});
 
-	// The position lives in the address, as the game's x and z and the zoom, so reloading or
-	// sharing the link keeps the place.
+	// The position lives in the address, as the game's x and z and the zoom as the page shows it
+	// (#512,-512,2:1 or #512,-512,1:8, or "fit" for the whole map at a step of its own, which
+	// depends on the screen), so reloading or sharing the link keeps the place. The address keeps
+	// two decimals, so a zoom between steps comes back as it was.
 	let saveTimer = 0;
 	function saveSoon() {
 		clearTimeout(saveTimer);
 		saveTimer = setTimeout(() => {
-			const hash = `#${Math.floor(cam.x) - centreX},${Math.floor(cam.y) - centreZ},${Math.log2(cam.s).toFixed(2)}`;
+			const zoom = atOwnFit()
+				? "fit"
+				: cam.s >= 1 ? `${Number(cam.s.toFixed(2))}:1` : `1:${Number((1 / cam.s).toFixed(2))}`;
+			const hash = `#${Math.floor(cam.x) - centreX},${Math.floor(cam.y) - centreZ},${zoom}`;
 			if (hash !== location.hash) history.replaceState(null, "", hash);
 		}, 300);
 	}
 	function restore() {
-		const parts = location.hash.slice(1).split(",").map(Number);
-		if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return false;
-		cam.x = parts[0] + centreX + 0.5;
-		cam.y = parts[1] + centreZ + 0.5;
-		cam.s = 2 ** parts[2];
+		const parts = location.hash.slice(1).split(",");
+		if (parts.length !== 3) return false;
+		const [x, z] = parts.slice(0, 2).map(Number);
+		const [pixels, blocks] = parts[2].split(":");
+		const s = parts[2] === "fit" ? fitScale() : Number(pixels) / Number(blocks);
+		if (![x, z, s].every(Number.isFinite) || s <= 0) return false;
+		cam.x = x + centreX + 0.5;
+		cam.y = z + centreZ + 0.5;
+		cam.s = s;
 		settle();
 		return true;
 	}
