@@ -1,10 +1,15 @@
-<h1 align="center">storymap</h1>
-
 <p align="center">
 	<img src="docs/images/viewer.webp" alt="storymap's viewer showing a Vintage Story world as a sepia relief map: lakes inked in blue-grey, hills shaded, a coordinate grid labelled in the margins and a title cartouche in the corner">
 </p>
 
-<p align="center"><strong>High Performance Vintage Story Map Renderer ⚡️</strong></p>
+<p align="center">
+	<picture>
+		<source media="(prefers-color-scheme: dark)" srcset="docs/images/title-dark.svg">
+		<img src="docs/images/title-light.svg" width="456" alt="STORYMAP, or, A TRUE AND EXACT DESCRIPTION of the Worlds of Vintage Story, Wherein their Seas, Lakes, Hills &amp; Coasts are faithfully set down from the Records themselves; Together with a Grid of Coordinates and divers Scales for the Reader's Ease. Wrought with great Speed upon every Core. MMXXVI">
+	</picture>
+</p>
+
+<p align="center"><strong>🗺️ High Performance Vintage Story Map Renderer ⚡️</strong></p>
 
 <p align="center">Turn a Vintage Story save into a map you can explore, drawn like an old printed survey.</p>
 
