@@ -1,5 +1,6 @@
 const std = @import("std");
 const extract = @import("vs/extract.zig");
+const Save = @import("vs/Save.zig");
 const bench = @import("bench.zig");
 const topdown = @import("renderer/topdown.zig");
 const viewer = @import("viewer.zig");
@@ -53,20 +54,14 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    // The immutable open ignores the save's -wal file. A non-empty one holds changes the
-    // game hasn't written into the save yet, because it's still running or it crashed.
-    const walPath = try std.mem.concat(allocator, u8, &.{ dbPath, "-wal" });
-    defer allocator.free(walPath);
-    if (std.Io.Dir.cwd().statFile(init.io, walPath, .{})) |wal| {
-        if (wal.size > 0) std.debug.print("storymap: {s} has unsaved changes (is the game running?); they won't be on the map\n", .{dbPath});
-    } else |_| {}
-
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err| {
         std.debug.print("storymap: can't create {s} ({s})\n", .{ outPath, @errorName(err) });
         std.process.exit(1);
     };
     defer out.close(init.io);
-    try topdown.render(allocator, init.io, dbPath, .{ .folder = out }, .{ .theme = theme });
+    const save = try Save.open(allocator, init.io, dbPath);
+    defer save.close(allocator);
+    try topdown.render(Save, allocator, init.io, &save, .{ .folder = out }, .{ .theme = theme });
 }
 
 fn exitWithUsage() noreturn {
@@ -85,8 +80,10 @@ test {
     _ = @import("vs/TreeAttribute.zig");
     _ = @import("vs/BlockEntity.zig");
     _ = @import("vs/extract.zig");
+    _ = @import("vs/Save.zig");
     _ = @import("bench.zig");
     _ = @import("renderer/topdown.zig");
+    _ = @import("columns.zig");
     _ = @import("tiles.zig");
     _ = @import("viewer.zig");
 }

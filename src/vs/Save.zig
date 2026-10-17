@@ -1,0 +1,395 @@
+//! A Vintage Story save, read for the renderers (see columns.zig): which tiles have something
+//! in them, what the world is, and the top of every block column in a tile. Each thread reads
+//! through a `Reader` of its own.
+const Save = @This();
+
+const std = @import("std");
+const DB = @import("../sqlite.zig");
+const tiles = @import("../tiles.zig");
+const columns = @import("../columns.zig");
+const viewer = @import("../viewer.zig");
+const Chunk = @import("Chunk.zig");
+const Compression = @import("Compression.zig");
+const MapChunk = @import("MapChunk.zig");
+const GameData = @import("GameData.zig");
+
+path: []const u8,
+db: DB,
+gameData: GameData,
+/// The tiles that may have something to draw.
+tileList: []tiles.Tile,
+/// The kind of liquid each block ID stands for.
+kinds: []columns.Liquid,
+/// How many chunk levels the world has: chunks have y 0 to `levels` − 1.
+levels: usize,
+
+/// Opens the save at `path` for reading, never writing next to it, since it may be in the
+/// game's own Saves folder. A file that can't be read as a save stops the program with a
+/// message saying why.
+pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Save {
+    // The immutable open ignores the save's -wal file. A non-empty one holds changes the
+    // game hasn't written into the save yet, because it's still running or it crashed.
+    const walPath = try std.mem.concat(allocator, u8, &.{ path, "-wal" });
+    defer allocator.free(walPath);
+    if (std.Io.Dir.cwd().statFile(io, walPath, .{})) |wal| {
+        if (wal.size > 0) std.debug.print("storymap: {s} has unsaved changes (is the game running?); they won't be on the map\n", .{path});
+    } else |_| {}
+
+    const db = DB.initImmutable(allocator, path) catch |err| {
+        std.debug.print("storymap: can't open {s} ({s})\n", .{ path, @errorName(err) });
+        std.process.exit(1);
+    };
+    errdefer db.deinit();
+
+    const list = readTileList(allocator, db) catch |err| {
+        // SQLite opens any file lazily, so this first query is where a wrong file shows up.
+        std.debug.print("storymap: {s} isn't a Vintage Story save ({s})\n", .{ path, @errorName(err) });
+        std.process.exit(1);
+    };
+    errdefer allocator.free(list);
+    if (list.len == 0) return error.NoChunks;
+
+    // Which block code each numeric block ID stands for, in this save.
+    const gameData = GameData.read(allocator, db) catch |err| {
+        std.debug.print("storymap: can't read the block list in {s} ({s})\n", .{ path, @errorName(err) });
+        std.process.exit(1);
+    };
+    errdefer gameData.deinit();
+    const kinds = try liquidKinds(allocator, gameData);
+
+    return .{
+        .path = path,
+        .db = db,
+        .gameData = gameData,
+        .tileList = list,
+        .kinds = kinds,
+        // Chunk levels in the world: 8 for the default height of 256.
+        .levels = std.math.divCeil(usize, gameData.worldHeight, 32) catch unreachable,
+    };
+}
+
+pub fn close(self: Save, allocator: std.mem.Allocator) void {
+    allocator.free(self.kinds);
+    self.gameData.deinit();
+    allocator.free(self.tileList);
+    self.db.deinit();
+}
+
+/// The world, as the viewer describes it.
+pub fn world(self: *const Save) viewer.World {
+    return .{
+        .name = self.gameData.name,
+        .width = self.gameData.worldWidth,
+        .length = self.gameData.worldLength,
+        .gameVersion = self.gameData.gameVersion,
+    };
+}
+
+/// The world's height and sea level.
+pub fn heights(self: *const Save) columns.Heights {
+    return .{ .world = @intCast(self.gameData.worldHeight), .sea = @intCast(self.gameData.seaLevel()) };
+}
+
+/// How many block IDs the save has; IDs run from 0 below it.
+pub fn blockCount(self: *const Save) usize {
+    return self.gameData.blockCodes.len;
+}
+
+/// The block code for a block ID, e.g. "rock-granite".
+pub fn blockName(self: *const Save, id: i32) ?[]const u8 {
+    return self.gameData.blockCode(id);
+}
+
+/// The kind of liquid a block ID stands for. Anything unknown is water.
+pub fn liquid(self: *const Save, id: i32) columns.Liquid {
+    return if (id >= 0 and id < self.kinds.len) self.kinds[@intCast(id)] else .water;
+}
+
+/// A tile is 16 × 16 chunk columns, the same area as a map region.
+const chunksPerTile = tiles.size / 32;
+
+/// The tiles that may have something to draw: those holding a chunk column with a map chunk.
+/// Every chunk column has one in the saves seen (docs/save-format/README.md#2-positions), and
+/// the table has a row per column where `chunk` has one per chunk, so it's much quicker to go
+/// through. Only fully generated columns are drawn, though (see Reader.readColumn), so a tile
+/// holding only partly generated ones comes out empty and isn't written; telling them apart
+/// here would mean reading every map chunk before starting. Chunk x is the low 27 bits of
+/// `position` and z the next 27 (see Chunk.Position).
+fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
+    var set: std.AutoArrayHashMapUnmanaged(tiles.Tile, void) = .empty;
+    defer set.deinit(allocator);
+    const rows = try db.prepare("SELECT position FROM mapchunk;");
+    defer rows.finalize();
+    while (rows.step()) {
+        const position = rows.column(u64, 0);
+        try set.put(allocator, .{
+            .x = @intCast((position & 134217727) / chunksPerTile),
+            .y = @intCast(((position >> 27) & 134217727) / chunksPerTile),
+        }, {});
+    }
+    return allocator.dupe(tiles.Tile, set.keys());
+}
+
+/// The kind of liquid each block ID stands for, by its block code. Seas are saltwater; lakes,
+/// rivers and hot springs are the other kinds of water
+/// (docs/rendering.md#how-the-game-draws-its-own-world-map). Anything that isn't saltwater or
+/// lava, including liquids from mods, is drawn as water.
+fn liquidKinds(allocator: std.mem.Allocator, gameData: GameData) ![]columns.Liquid {
+    const kinds = try allocator.alloc(columns.Liquid, gameData.blockCodes.len);
+    for (kinds, gameData.blockCodes) |*kind, code| {
+        const name = code orelse "";
+        kind.* = if (std.mem.startsWith(u8, name, "saltwater-"))
+            .saltwater
+        else if (std.mem.startsWith(u8, name, "lava-"))
+            .lava
+        else
+            .water;
+    }
+    return kinds;
+}
+
+test liquidKinds {
+    const codes = [_]?[]const u8{ "air", "water-still-7", "saltwater-n-3", "lava-still-7", "boilingwater-still-7", null };
+    const gameData: GameData = .{ .arena = undefined, .blockCodes = &codes, .itemCodes = &.{}, .worldHeight = 256 };
+    const kinds = try liquidKinds(std.testing.allocator, gameData);
+    defer std.testing.allocator.free(kinds);
+    try std.testing.expectEqualSlices(columns.Liquid, &.{ .water, .water, .saltwater, .lava, .water, .water }, kinds);
+}
+
+/// One thread's connection, decoder and buffers, reused for every tile it reads.
+pub const Reader = struct {
+    save: *const Save,
+    db: DB,
+    mapChunkRow: DB.Stmt,
+    chunkRow: DB.Stmt,
+    decoder: Chunk.Decoder,
+    chunk: *Chunk,
+    mapChunk: *MapChunk,
+    /// Chunks read: those holding a surface block, in each tile and the ring around it.
+    chunksRead: usize = 0,
+
+    pub fn init(save: *const Save, allocator: std.mem.Allocator) !Reader {
+        const db = try DB.initImmutable(allocator, save.path);
+        errdefer db.deinit();
+        const mapChunkRow = try db.prepare("SELECT data FROM mapchunk WHERE position = ?1;");
+        errdefer mapChunkRow.finalize();
+        const chunkRow = try db.prepare("SELECT data FROM chunk WHERE position = ?1;");
+        errdefer chunkRow.finalize();
+        var decoder: Chunk.Decoder = try .init(allocator, Chunk.Decoder.defaultBlockEntityBytes);
+        errdefer decoder.deinit(allocator);
+        const chunk = try allocator.create(Chunk);
+        errdefer allocator.destroy(chunk);
+        chunk.* = .{};
+        const mapChunk = try allocator.create(MapChunk);
+        return .{
+            .save = save,
+            .db = db,
+            .mapChunkRow = mapChunkRow,
+            .chunkRow = chunkRow,
+            .decoder = decoder,
+            .chunk = chunk,
+            .mapChunk = mapChunk,
+        };
+    }
+
+    pub fn deinit(self: *Reader, allocator: std.mem.Allocator) void {
+        allocator.destroy(self.mapChunk);
+        allocator.destroy(self.chunk);
+        self.decoder.deinit(allocator);
+        self.chunkRow.finalize();
+        self.mapChunkRow.finalize();
+        self.db.deinit();
+    }
+
+    /// Fills `area` with the tile's block columns and the ring around them, from the save.
+    pub fn read(self: *Reader, tile: tiles.Tile, area: *columns.Area) !void {
+        area.clear();
+        // The area's north-west corner, in blocks, and the chunk column holding it.
+        const x0 = @as(i64, tile.x) * tiles.size - 1;
+        const z0 = @as(i64, tile.y) * tiles.size - 1;
+        const cx0 = @as(i64, tile.x) * chunksPerTile - 1;
+        const cz0 = @as(i64, tile.y) * chunksPerTile - 1;
+        for (0..chunksPerTile + 2) |j| for (0..chunksPerTile + 2) |i| {
+            const cx = cx0 + @as(i64, @intCast(i));
+            const cz = cz0 + @as(i64, @intCast(j));
+            if (cx < 0 or cz < 0 or cx > 134217727 or cz > 134217727) continue;
+            try self.readColumn(area.*, @intCast(cx), @intCast(cz), x0, z0);
+        };
+    }
+
+    /// Records one chunk column's block columns that fall in the area: from their stored
+    /// heights where they have them, reading only the chunks those point into, and by
+    /// scanning down where they don't.
+    fn readColumn(self: *Reader, area: columns.Area, cx: u64, cz: u64, x0: i64, z0: i64) !void {
+        const base = cx | cz << 27;
+        // Only fully generated chunk columns are drawn: the partly generated ones around
+        // them lack trees and plants, and the game's own map leaves them out too
+        // (docs/rendering.md#how-the-game-draws-its-own-world-map). Others stay
+        // transparent, and in the ring around a tile they count as no blocks.
+        self.mapChunkRow.bind(1, base);
+        defer self.mapChunkRow.reset();
+        if (!self.mapChunkRow.step()) return;
+        const stored = self.mapChunk;
+        stored.decode(self.mapChunkRow.column([]const u8, 0)) catch |err| {
+            // A finished column whose heights can't be read is scanned instead. One whose
+            // stage can't be read either isn't drawn.
+            if (stored.stage != .done) {
+                if (stored.stage == .none) std.debug.print("storymap: skipping chunk column ({}, {}): {s}\n", .{ cx, cz, @errorName(err) });
+                return;
+            }
+            std.debug.print("storymap: scanning chunk column ({}, {}) for heights: {s}\n", .{ cx, cz, @errorName(err) });
+            @memset(&stored.rainHeight, MapChunk.unset);
+        };
+        if (stored.stage != .done) return;
+
+        // The block columns, within the chunk column, that fall in the area.
+        const span: Span = .{
+            .chunkX = cx,
+            .chunkZ = cz,
+            .x0 = @intCast(std.math.clamp(x0 - @as(i64, @intCast(cx * 32)), 0, 32)),
+            .x1 = @intCast(std.math.clamp(x0 + columns.Area.side - @as(i64, @intCast(cx * 32)), 0, 32)),
+            .z0 = @intCast(std.math.clamp(z0 - @as(i64, @intCast(cz * 32)), 0, 32)),
+            .z1 = @intCast(std.math.clamp(z0 + columns.Area.side - @as(i64, @intCast(cz * 32)), 0, 32)),
+            .areaX = x0,
+            .areaZ = z0,
+        };
+
+        // The levels the surface heights point into. Chunks at or below `scanFrom` are all
+        // read: for columns without a stored height, or whose stored height is stale.
+        // Levels with no chunk saved are just a key that isn't found.
+        const levels = self.save.levels;
+        var needed: std.StaticBitSet(1024) = .empty;
+        var scanFrom: ?usize = null;
+        for (span.z0..span.z1) |z| for (span.x0..span.x1) |x| {
+            const rain = &stored.rainHeight[z * 32 + x];
+            // A height above the world is stale too.
+            if (rain.* != MapChunk.unset and rain.* / 32 >= levels) rain.* = MapChunk.unset;
+            if (rain.* == MapChunk.unset) scanFrom = levels - 1 else needed.set(rain.* / 32);
+        };
+
+        // Top down, so a stale height found in one chunk can still be scanned for below it.
+        var level: usize = levels;
+        while (level > 0) {
+            level -= 1;
+            if (!needed.isSet(level) and (scanFrom == null or level > scanFrom.?)) continue;
+            const position = base | @as(u64, level) << 54;
+            self.chunkRow.bind(1, position);
+            defer self.chunkRow.reset();
+            if (!self.chunkRow.step()) {
+                // No chunk here: heights pointing here are stale.
+                if (forgetHeightsAt(stored, level)) scanFrom = @max(scanFrom orelse level, level);
+                continue;
+            }
+            self.chunksRead += 1;
+            decodeOrWarn(&self.decoder, self.chunk, position, self.chunkRow.column([]const u8, 0)) catch continue;
+            if (recordChunk(area, self.chunk, stored, span)) scanFrom = @max(scanFrom orelse level, level);
+        }
+    }
+};
+
+/// Records the block columns of `span` in one chunk: from their stored heights where they
+/// have them, by scanning down where they don't. Returns whether a stored height turned out
+/// stale, in which case its column needs the chunks below scanned too.
+fn recordChunk(area: columns.Area, chunk: *const Chunk, stored: *MapChunk, span: Span) bool {
+    var stale = false;
+    for (span.z0..span.z1) |z| for (span.x0..span.x1) |x| {
+        const index = span.index(x, z);
+        const rain = &stored.rainHeight[z * 32 + x];
+        if (rain.* != MapChunk.unset) {
+            if (rain.* / 32 != chunk.position.y) continue;
+            if (recordStored(area, chunk, x, rain.* % 32, z, rain.*, stored.terrainHeight[z * 32 + x], index)) continue;
+            // The block there is gone: the column has no blocks at all (the game stores 0
+            // then), or it changed after its height was stored. Scan it instead.
+            rain.* = MapChunk.unset;
+            stale = true;
+        }
+        // Plants growing in water, such as seaweed and reeds, share their place with it:
+        // from above, the water shows, and its depth goes down to the ground below them.
+        recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &area.top[index], &area.topBlock[index]);
+        recordTop(&chunk.liquids, null, chunk.position.y, x, z, &area.liquidTop[index], &area.liquidBlock[index]);
+    };
+    return stale;
+}
+
+/// Records a column from its stored heights: the block at the rain height, in the chunk that
+/// holds it. Rain stops at water, so a liquid there is the water surface, and the terrain
+/// height is its bed. Returns false, recording nothing, if there's no block there.
+fn recordStored(area: columns.Area, chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, index: usize) bool {
+    const block = (y * 32 + z) * 32 + x;
+    const liquidId = if (chunk.liquids.bits == 0) 0 else chunk.liquids.get(block);
+    const solid = if (chunk.blocks.bits == 0) 0 else chunk.blocks.get(block);
+    if (liquidId == 0 and solid == 0) return false;
+    if (liquidId != 0) {
+        area.liquidTop[index] = rain;
+        area.liquidBlock[index] = liquidId;
+        // The block under the water isn't looked up; only its depth is drawn.
+        area.top[index] = if (terrain == MapChunk.unset) rain else @min(terrain, rain);
+        area.topBlock[index] = 0;
+    } else {
+        area.top[index] = rain;
+        area.topBlock[index] = solid;
+    }
+    return true;
+}
+
+/// The block columns of one chunk column that fall in an area: x0..x1 and z0..z1 within it.
+const Span = struct {
+    chunkX: u64,
+    chunkZ: u64,
+    x0: usize,
+    x1: usize,
+    z0: usize,
+    z1: usize,
+    /// The area's north-west corner, in blocks.
+    areaX: i64,
+    areaZ: i64,
+
+    /// The area index of block column (x, z) of the chunk column.
+    fn index(self: Span, x: usize, z: usize) usize {
+        const ax: usize = @intCast(@as(i64, @intCast(self.chunkX * 32 + x)) - self.areaX);
+        const az: usize = @intCast(@as(i64, @intCast(self.chunkZ * 32 + z)) - self.areaZ);
+        return az * columns.Area.side + ax;
+    }
+};
+
+/// Decodes a chunk; one that can't be decoded is skipped with a warning, so it doesn't stop
+/// the whole map.
+fn decodeOrWarn(decoder: *Chunk.Decoder, chunk: *Chunk, position: u64, data: []const u8) !void {
+    decoder.decode(chunk, position, data) catch |err| {
+        const pos = chunk.position;
+        std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
+        return err;
+    };
+}
+
+/// Forgets the stored heights that point into chunk level `level`, so their columns are
+/// scanned instead. Returns whether there were any.
+fn forgetHeightsAt(stored: *MapChunk, level: usize) bool {
+    var any = false;
+    for (&stored.rainHeight) |*rain| if (rain.* != MapChunk.unset and rain.* / 32 == level) {
+        rain.* = MapChunk.unset;
+        any = true;
+    };
+    return any;
+}
+
+/// Records the highest block of a chunk's layer in one column, unless a chunk above has
+/// already recorded a higher one. Blocks where `hiddenBy` has a block are skipped.
+fn recordTop(layer: *const Compression.Layer, hiddenBy: ?*const Compression.Layer, chunkY: usize, x: usize, z: usize, top: *?u16, block: *i32) void {
+    if (layer.bits == 0) return; // all air
+    const mask = if (hiddenBy) |other| if (other.bits == 0) null else other else null;
+    // Walk down from the top of the chunk and stop at the first block.
+    for (0..32) |i| {
+        const y = 31 - i;
+        const index = (y * 32 + z) * 32 + x;
+        const id = layer.get(index);
+        if (id == 0) continue;
+        if (mask) |other| if (other.get(index) != 0) continue;
+        const worldY: u16 = @intCast(chunkY * 32 + y);
+        if (top.* == null or top.*.? < worldY) {
+            top.* = worldY;
+            block.* = id;
+        }
+        return;
+    }
+}

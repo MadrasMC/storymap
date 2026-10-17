@@ -2,6 +2,10 @@
 
 How code in this project is written. Applies to everyone and every tool working on it.
 
+## Keeping the game apart
+
+Everything that knows Vintage Story, its save format, its assets and its block names, lives in `src/vs/`. The renderers, the tile pipeline, the viewer and `src/columns.zig` don't import it: a game's reader tells the renderers what's on top of each block column (`columns.zig`), and they draw from that alone, so another game could be read the same way. Only `main.zig` and `bench.zig`, which put the program together, import both.
+
 ## Zig conventions
 
 ### Parameter order

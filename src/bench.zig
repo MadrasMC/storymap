@@ -8,6 +8,7 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const DB = @import("sqlite.zig");
 const Chunk = @import("vs/Chunk.zig");
+const Save = @import("vs/Save.zig");
 const topdown = @import("renderer/topdown.zig");
 
 pub const usage =
@@ -40,12 +41,11 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     var stats: topdown.Stats = .{};
     // Every chunk in the save, which a render doesn't count: it reads only those it needs.
     var chunks: usize = 0;
-    try topdown.render(allocator, io, dbPath, .discard, .{ .stats = &stats });
+    _ = try renderOnce(allocator, io, dbPath, &stats);
     for (0..runs) |i| {
-        try topdown.render(allocator, io, dbPath, .discard, .{ .stats = &stats });
-        open[i] = stats.open;
+        open[i] = try renderOnce(allocator, io, dbPath, &stats);
         tiles[i] = stats.render;
-        total[i] = .{ .nanoseconds = stats.open.nanoseconds + stats.render.nanoseconds };
+        total[i] = .{ .nanoseconds = open[i].nanoseconds + stats.render.nanoseconds };
         const draw: f64 = @floatFromInt(stats.draw.nanoseconds);
         const encode: f64 = @floatFromInt(stats.encode.nanoseconds);
         encodeShare[i] = encode / (draw + encode);
@@ -66,6 +66,17 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     printStage("end to end", total, chunks);
     std.mem.sort(f64, encodeShare, {}, std.sort.asc(f64));
     std.debug.print("  of the workers' time, {d:.0}% went to encoding PNGs\n", .{encodeShare[runs / 2] * 100});
+}
+
+/// One render: the save opened, with its block list and which tiles it has, drawn without
+/// writing anything, and closed. Returns how long opening took.
+fn renderOnce(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *topdown.Stats) !Io.Duration {
+    const start: Io.Timestamp = .now(io, .awake);
+    const save = try Save.open(allocator, io, dbPath);
+    defer save.close(allocator);
+    const opened = start.untilNow(io, .awake);
+    try topdown.render(Save, allocator, io, &save, .discard, .{ .stats = stats });
+    return opened;
 }
 
 fn printStage(name: []const u8, times: []Io.Duration, chunks: ?usize) void {
