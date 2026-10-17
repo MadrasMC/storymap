@@ -5,33 +5,27 @@ const ProtoBuf = @import("../ProtoBuf.zig");
 const Compression = @import("Compression.zig");
 const BlockEntity = @import("BlockEntity.zig");
 
-// NOTE: To keep in sync with the server per game version
-pub const fieldNames = [_][]const u8{
-    "<unused>",
-    "compressed_blocks",
-    "compressed_light",
-    "compressed_light_sat",
-    "<unused>",
-    "entities_count",
-    "entities_serialized",
-    "block_entities_count",
-    "block_entities",
-    "moddata",
-    "lights",
-    "serverside_moddata",
-    "game_version",
-    "empty",
-    "decors",
-    "saved_compression_version",
-    "compressed_liquids",
-    "blocks_placed",
-    "blocks_removed",
-};
-
+/// A chunk's key in the `chunk` table, and a chunk column's in `mapchunk` with y 0
+/// (docs/save-format/README.md#2-positions). The dimension is split in two around z.
 pub const Position = packed struct(u64) {
-    x: u27,
-    z: u27,
-    y: u10,
+    x: u21,
+    guard1: u1 = 0,
+    dimensionLow: u5 = 0,
+    z: u21,
+    guard2: u1 = 0,
+    dimensionHigh: u5 = 0,
+    y: u9 = 0,
+    reserved: u1 = 0,
+
+    /// The most chunks across, and up: 2²⁶ blocks wide and 16,384 high, the game's limits.
+    pub const maxXZ = std.math.maxInt(u21);
+    pub const levels = 1 << 9;
+
+    /// 0 is the world itself; the others are separate block spaces, such as vehicles and the
+    /// time-switched alternate world.
+    pub fn dimension(self: Position) u10 {
+        return @as(u10, self.dimensionHigh) << 5 | self.dimensionLow;
+    }
 
     pub fn position64(self: Position) u64 {
         return @bitCast(self);
@@ -41,7 +35,23 @@ pub const Position = packed struct(u64) {
     }
 };
 
-position: Position = @bitCast(@as(u64, 0)),
+test Position {
+    // x 15995, y 4, z 15999 in dimension 2: the dimension's low bits go just above x.
+    const position: Position = @bitCast(@as(u64, 15995 | 2 << 22 | 15999 << 27 | 4 << 54));
+    try std.testing.expectEqual(15995, position.x);
+    try std.testing.expectEqual(15999, position.z);
+    try std.testing.expectEqual(4, position.y);
+    try std.testing.expectEqual(2, position.dimension());
+    // Dimension 33 sets a bit of each half.
+    const high: Position = @bitCast(@as(u64, 1 << 22 | 1 << 49));
+    try std.testing.expectEqual(33, high.dimension());
+    try std.testing.expectEqual(0, high.x);
+    try std.testing.expectEqual(0, high.z);
+    const plain: Position = .{ .x = 15995, .z = 15999, .y = 4 };
+    try std.testing.expectEqual(15995 | 15999 << 27 | 4 << 54, plain.position64());
+}
+
+position: Position = .{ .x = 0, .z = 0 },
 /// Solid blocks (field 1).
 blocks: Compression.Layer = .{},
 /// Liquids (field 16), in the same format.
@@ -209,7 +219,8 @@ test "block entities over the limit are skipped, the blocks still decode" {
 }
 
 pub fn format(self: *const Chunk, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-    try writer.print("Chunk(x: {[x]}, z: {[z]}, y: {[y]}):\n", self.position);
+    const pos = self.position;
+    try writer.print("Chunk(x: {}, z: {}, y: {}, dimension: {}):\n", .{ pos.x, pos.z, pos.y, pos.dimension() });
     try formatLayer(&self.blocks, "Blocks", writer);
     try formatLayer(&self.liquids, "Liquids", writer);
     try writer.print("Block entities:\n", .{});

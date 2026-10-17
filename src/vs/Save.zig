@@ -117,19 +117,17 @@ const chunksPerTile = tiles.size / 32;
 /// the table has a row per column where `chunk` has one per chunk, so it's much quicker to go
 /// through. Only fully generated columns are drawn, though (see Reader.readColumn), so a tile
 /// holding only partly generated ones comes out empty and isn't written; telling them apart
-/// here would mean reading every map chunk before starting. Chunk x is the low 27 bits of
-/// `position` and z the next 27 (see Chunk.Position).
+/// here would mean reading every map chunk before starting. Columns in other dimensions than
+/// the world itself, such as the time-switched alternate world, aren't part of the map.
 fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
     var set: std.AutoArrayHashMapUnmanaged(tiles.Tile, void) = .empty;
     defer set.deinit(allocator);
     const rows = try db.prepare("SELECT position FROM mapchunk;");
     defer rows.finalize();
     while (rows.step()) {
-        const position = rows.column(u64, 0);
-        try set.put(allocator, .{
-            .x = @intCast((position & 134217727) / chunksPerTile),
-            .y = @intCast(((position >> 27) & 134217727) / chunksPerTile),
-        }, {});
+        const position: Chunk.Position = @bitCast(rows.column(u64, 0));
+        if (position.dimension() != 0) continue;
+        try set.put(allocator, .{ .x = position.x / chunksPerTile, .y = position.z / chunksPerTile }, {});
     }
     return allocator.dupe(tiles.Tile, set.keys());
 }
@@ -216,7 +214,7 @@ pub const Reader = struct {
         for (0..chunksPerTile + 2) |j| for (0..chunksPerTile + 2) |i| {
             const cx = cx0 + @as(i64, @intCast(i));
             const cz = cz0 + @as(i64, @intCast(j));
-            if (cx < 0 or cz < 0 or cx > 134217727 or cz > 134217727) continue;
+            if (cx < 0 or cz < 0 or cx > Chunk.Position.maxXZ or cz > Chunk.Position.maxXZ) continue;
             try self.readColumn(area.*, @intCast(cx), @intCast(cz), x0, z0);
         };
     }
@@ -225,12 +223,13 @@ pub const Reader = struct {
     /// heights where they have them, reading only the chunks those point into, and by
     /// scanning down where they don't.
     fn readColumn(self: *Reader, area: columns.Area, cx: u64, cz: u64, x0: i64, z0: i64) !void {
-        const base = cx | cz << 27;
+        // Keys in the world itself, dimension 0.
+        const base: Chunk.Position = .{ .x = @intCast(cx), .z = @intCast(cz) };
         // Only fully generated chunk columns are drawn: the partly generated ones around
         // them lack trees and plants, and the game's own map leaves them out too
         // (docs/rendering.md#how-the-game-draws-its-own-world-map). Others stay
         // transparent, and in the ring around a tile they count as no blocks.
-        self.mapChunkRow.bind(1, base);
+        self.mapChunkRow.bind(1, base.position64());
         defer self.mapChunkRow.reset();
         if (!self.mapChunkRow.step()) return;
         const stored = self.mapChunk;
@@ -262,7 +261,7 @@ pub const Reader = struct {
         // read: for columns without a stored height, or whose stored height is stale.
         // Levels with no chunk saved are just a key that isn't found.
         const levels = self.save.levels;
-        var needed: std.StaticBitSet(1024) = .empty;
+        var needed: std.StaticBitSet(Chunk.Position.levels) = .empty;
         var scanFrom: ?usize = null;
         for (span.z0..span.z1) |z| for (span.x0..span.x1) |x| {
             const rain = &stored.rainHeight[z * 32 + x];
@@ -276,7 +275,9 @@ pub const Reader = struct {
         while (level > 0) {
             level -= 1;
             if (!needed.isSet(level) and (scanFrom == null or level > scanFrom.?)) continue;
-            const position = base | @as(u64, level) << 54;
+            var at = base;
+            at.y = @intCast(level);
+            const position = at.position64();
             self.chunkRow.bind(1, position);
             defer self.chunkRow.reset();
             if (!self.chunkRow.step()) {

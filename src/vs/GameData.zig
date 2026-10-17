@@ -5,6 +5,7 @@ const GameData = @This();
 const std = @import("std");
 const ProtoBuf = @import("../ProtoBuf.zig");
 const DB = @import("../sqlite.zig");
+const Chunk = @import("Chunk.zig");
 
 /// Owns everything below.
 arena: std.heap.ArenaAllocator,
@@ -23,8 +24,10 @@ name: []const u8 = "",
 /// The version of the game that last saved the world, e.g. "1.22.7" (field 21).
 gameVersion: []const u8 = "",
 
-pub const maxWorldHeight = 1024 * 32;
-pub const maxWorldWidth = (1 << 27) * 32;
+/// The game's limits, which chunk positions are sized for (Chunk.Position): 16,384 blocks
+/// high and 2²⁶ across.
+pub const maxWorldHeight = Chunk.Position.levels * 32;
+pub const maxWorldWidth = (Chunk.Position.maxXZ + 1) * 32;
 
 pub fn read(allocator: std.mem.Allocator, db: DB) !GameData {
     const stmt = try db.prepare("SELECT data FROM gamedata;");
@@ -49,12 +52,10 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
     var parser: ProtoBuf = .{ .buf = data };
     while (try parser.next()) |msg| {
         if (msg.field_number == 2 and msg.data == .VARINT) {
-            // Chunk y positions have 10 bits, so no world is taller than 1,024 chunks.
             if (msg.data.VARINT == 0 or msg.data.VARINT > maxWorldHeight) return error.InvalidWorldHeight;
             worldHeight = @intCast(msg.data.VARINT);
         }
         if ((msg.field_number == 1 or msg.field_number == 3) and msg.data == .VARINT) {
-            // Chunk x and z positions have 27 bits.
             if (msg.data.VARINT == 0 or msg.data.VARINT > maxWorldWidth) return error.InvalidWorldSize;
             if (msg.field_number == 1) worldWidth = msg.data.VARINT else worldLength = msg.data.VARINT;
         }
@@ -180,10 +181,10 @@ test "world size, name and game version" {
     try std.testing.expectError(error.InvalidWorldSize, parse(std.testing.allocator, &.{ 0x08, 0x00 }));
 }
 
-test "a world height of 0 or over 1,024 chunks is invalid" {
-    // Field 2 = 0, then field 2 = 32,769.
+test "a world height of 0 or over 512 chunks is invalid" {
+    // Field 2 = 0, then field 2 = 16,385.
     try std.testing.expectError(error.InvalidWorldHeight, parse(std.testing.allocator, &.{ 0x10, 0x00 }));
-    try std.testing.expectError(error.InvalidWorldHeight, parse(std.testing.allocator, &.{ 0x10, 0x81, 0x80, 0x02 }));
+    try std.testing.expectError(error.InvalidWorldHeight, parse(std.testing.allocator, &.{ 0x10, 0x81, 0x80, 0x01 }));
 }
 
 test seaLevel {
