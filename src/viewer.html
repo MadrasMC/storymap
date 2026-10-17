@@ -13,17 +13,21 @@
 		font-size: 16px;
 		--sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 		--mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+		/* The title is set like an old map's: serif capitals, from the system's fonts. */
+		--serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+		--t-micro: 0.625rem;
 		--t-small: 0.8125rem;
 		--t-body: 0.9375rem;
 		--s1: 0.25rem;
 		--s2: 0.5rem;
 		--s3: 0.75rem;
 		--s4: 1rem;
-		--radius: 0.5rem;
+		--radius: 0.25rem;
 		/* The paper the tiles are drawn on: their empty pixels are transparent. */
 		--paper: #efe4c6;
 		/* Panels are lighter paper and opaque, so they read over busy terrain. */
 		--panel: #faf6ea;
+		--ink: #3a2c1e;
 		--fg: #2b2117;
 		--muted: #7a6a52;
 		--border: rgb(92 70 46 / 0.3);
@@ -31,48 +35,86 @@
 		--lift: 0 1px 2px rgb(60 40 20 / 0.12), 0 4px 12px rgb(60 40 20 / 0.08);
 		/* The accent has one job: the control you're on. */
 		--accent: #5c462e;
-		--edge: max(var(--s3), env(safe-area-inset-left));
-		--bottom: max(var(--s3), env(safe-area-inset-bottom));
+		/* The paper margin around the sheet, wide enough for the grid's coordinates. */
+		--margin: clamp(1.25rem, 3vw, 2rem);
+		--inset: calc(var(--margin) + var(--s3));
 		color-scheme: light;
 	}
 	* { box-sizing: border-box; }
 	[hidden] { display: none !important; }
 	html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); color: var(--fg); font: var(--t-body)/1.4 var(--sans); }
 
-	#map { position: fixed; inset: 0; overflow: hidden; touch-action: none; cursor: grab; outline: none; }
+	/* The sheet: the map inside a double neatline, the inner rule its own edge. */
+	#map {
+		position: fixed; inset: var(--margin); overflow: hidden; touch-action: none; cursor: grab; outline: none;
+		border: 1px solid var(--ink);
+	}
+	.neatline { position: fixed; inset: calc(var(--margin) - 0.3125rem); border: 1.5px solid var(--ink); pointer-events: none; }
 	#map.dragging { cursor: grabbing; }
 	#map:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 	#tiles { position: absolute; inset: 0; }
 	#tiles img { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; user-select: none; }
 	/* Zoomed in past one tile pixel per screen pixel, blocks show as crisp squares. */
 	#tiles.pixelated img { image-rendering: pixelated; }
+	#grid { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 100; pointer-events: none; }
+	#grid path { fill: none; stroke: var(--ink); stroke-opacity: 0.2; stroke-width: 1; }
+	/* The grid's coordinates, in the margin, as printed maps label theirs. */
+	.ticks span {
+		position: fixed; font: var(--t-micro)/1 var(--mono); font-variant-numeric: tabular-nums;
+		color: var(--muted); white-space: nowrap; pointer-events: none;
+	}
+	.ticks .x { top: calc(var(--margin) / 2 - 0.3125rem); transform: translateX(-50%); }
+	.ticks .z { left: calc(var(--margin) / 2); transform: translate(-50%, -50%) rotate(-90deg); }
 
 	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--lift); }
+	/* The title cartouche: a double-ruled box, as on the old map's corner. */
 	.title {
-		position: fixed; top: var(--edge); left: var(--edge); max-width: calc(100vw - 2 * var(--edge));
-		margin: 0; padding: 0.5625rem var(--s3); font-size: var(--t-body); font-weight: 600; line-height: 1.2;
-		letter-spacing: -0.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+		position: fixed; top: var(--inset); left: var(--inset); max-width: calc(100vw - 2 * var(--inset));
+		margin: 0; padding: var(--s3) var(--s4); text-align: center;
+		background: var(--panel); border: 1px solid var(--ink); box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 4px var(--border), var(--lift);
 	}
+	/* Set as an old cartographer would: "A top-down view of", then the world's name. */
+	.title .kind { display: block; font: italic var(--t-small)/1.2 var(--serif); color: var(--muted); }
+	/* A long name wraps to three balanced lines, then ends in an ellipsis. */
+	.title .name {
+		display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
+		max-width: 30ch; margin: 0.3125rem auto; font: 500 1.5rem/1.1 var(--serif); letter-spacing: 0.1em; text-transform: uppercase;
+		color: var(--ink); text-wrap: balance;
+	}
+	/* A cut-short name shows in full when the cartouche is tapped, as wide as the screen allows. */
+	.title.truncated { cursor: pointer; }
+	.title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+	.title.open { z-index: 1; max-height: calc(100dvh - 2 * var(--inset)); overflow: auto; }
+	.title.open .name { display: block; max-width: none; white-space: normal; -webkit-line-clamp: none; line-clamp: none; }
+	/* While it resizes, the lines keep their final width and the box reveals them. */
+	.title.sizing { overflow: hidden; }
+	.title.sizing > span { width: var(--content-width); }
+	.title .version { display: block; font: 600 var(--t-micro)/1.4 var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+	.title .rendered { display: block; font: italic var(--t-small)/1.3 var(--serif); color: var(--muted); }
+	.title .version:empty, .title .rendered:empty { display: none; }
 	.readout {
-		position: fixed; left: var(--edge); bottom: var(--bottom); max-width: calc(100vw - 2 * var(--edge) - 3.5rem);
+		position: fixed; left: var(--inset); bottom: var(--inset); max-width: calc(100vw - 2 * var(--inset) - 3.5rem);
 		display: flex; align-items: center; gap: var(--s3); min-height: 2.25rem; padding: 0 var(--s3);
 		font: var(--t-small)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
 	}
 	.readout .k { color: var(--muted); }
-	/* A bar the length of a round number of blocks, like a printed map's scale. */
+	/* A bar the length of a round number of blocks, in alternating ink and paper, like a printed map's scale. */
 	.scale { display: flex; align-items: center; gap: var(--s2); padding-left: var(--s3); border-left: 1px solid var(--rule); align-self: stretch; }
-	.scale i { display: block; height: 0.375rem; border: 1.5px solid var(--fg); border-top: 0; }
+	.scale i {
+		display: block; height: 0.3125rem; border: 1px solid var(--ink);
+		background: linear-gradient(90deg, var(--ink) 0 25%, transparent 25% 50%, var(--ink) 50% 75%, transparent 75%);
+	}
 	.scale span, #status { font-family: var(--sans); color: var(--muted); }
 	#status:empty { display: none; }
 	/* On a phone, the scale goes under the coordinates, clear of the zoom buttons. */
 	@media (max-width: 30rem) {
 		.readout { flex-direction: column; align-items: flex-start; gap: var(--s2); padding: var(--s2) var(--s3); }
 		.scale { border-left: 0; padding-left: 0; }
+		/* The cartouche shrinks, so it doesn't cover the map. */
+		.title { padding: var(--s2) var(--s3); }
+		.title .name { display: block; max-width: none; font-size: 1.25rem; letter-spacing: 0.08em; white-space: nowrap; text-overflow: ellipsis; }
 	}
-	.controls {
-		position: fixed; right: max(var(--s3), env(safe-area-inset-right)); bottom: var(--bottom);
-		display: grid; gap: var(--s2);
-	}
+	.controls { position: fixed; right: var(--inset); bottom: var(--inset); display: grid; gap: var(--s2); }
 	.group { display: grid; overflow: hidden; }
 	.controls button {
 		width: 2.75rem; height: 2.75rem; display: grid; place-items: center; padding: 0;
@@ -86,7 +128,7 @@
 	.controls svg { width: 1.125rem; height: 1.125rem; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 	.message {
 		position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-		width: min(24rem, calc(100vw - 2 * var(--edge))); margin: 0; padding: var(--s4) 1.25rem;
+		width: min(24rem, calc(100vw - 2 * var(--inset))); margin: 0; padding: var(--s4) 1.25rem;
 		line-height: 1.5; text-align: center; text-wrap: balance;
 	}
 </style>
@@ -94,8 +136,11 @@
 <body>
 <main id="map" tabindex="0" role="application" aria-roledescription="map" aria-label="Map. Arrow keys move, plus and minus zoom, 0 shows the whole map.">
 	<div id="tiles"></div>
+	<svg id="grid" aria-hidden="true"><path id="grid-lines"/></svg>
 </main>
-<h1 class="panel title" id="title">storymap</h1>
+<div class="neatline" aria-hidden="true"></div>
+<div class="ticks" id="ticks" aria-hidden="true"></div>
+<h1 class="title" id="title"><span class="kind" id="kind">A view of</span><span class="name" id="name">storymap</span><span class="version" id="version"></span><span class="rendered" id="rendered"></span></h1>
 <div class="panel readout">
 	<span id="coords" aria-hidden="true"></span>
 	<span class="scale" aria-hidden="true"><i id="scale-bar"></i><span id="scale-label"></span></span>
@@ -129,6 +174,8 @@
 		message.textContent = text;
 		message.hidden = false;
 		$(".readout").hidden = true;
+		$("#ticks").hidden = true;
+		$("#grid-lines").removeAttribute("d");
 		for (const button of buttons) button.disabled = true;
 		mapEl.setAttribute("aria-label", text);
 	}
@@ -148,9 +195,84 @@
 	const world = data.world;
 	if (world.name) {
 		document.title = `${world.name} · storymap`;
-		$("#title").textContent = world.name;
+		$("#name").textContent = world.name;
 	}
 	const view = data.views[0];
+	// The cartouche: the kind of map, the world, and what it was made from and when.
+	$("#kind").textContent = `A ${view.title.toLowerCase()} view of`;
+	if (world.gameVersion) $("#version").textContent = `Vintage Story ${world.gameVersion}`;
+	const rendered = new Date(data.rendered);
+	if (!Number.isNaN(rendered.getTime())) $("#rendered").textContent = `Rendered ${rendered.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
+
+	// A name cut short opens the cartouche to show it in full; tapping again, outside or Escape closes it.
+	const titleEl = $("#title");
+	const nameEl = $("#name");
+	let titleOpen = false;
+	let sizing = null;
+	function checkTruncated() {
+		if (titleOpen || sizing) return;
+		// Accents and descenders reach past the line box, so only a hidden line counts as cut short.
+		const line = parseFloat(getComputedStyle(nameEl).lineHeight);
+		const cut = nameEl.scrollWidth > nameEl.clientWidth + 1 || nameEl.scrollHeight > nameEl.clientHeight + line / 2;
+		titleEl.classList.toggle("truncated", cut);
+		if (cut) titleEl.tabIndex = 0;
+		else titleEl.removeAttribute("tabindex");
+	}
+	function openTitle(open) {
+		if (open === titleOpen || (open && !titleEl.classList.contains("truncated"))) return;
+		titleOpen = open;
+		// Turned around mid-way, it starts from where it is.
+		const now = titleEl.getBoundingClientRect();
+		const turning = sizing !== null;
+		if (sizing) {
+			sizing.cancel();
+			sizing = null;
+			titleEl.classList.remove("sizing");
+		}
+		// The box animates between its two sizes while showing the full name, which closing removes at the end.
+		titleEl.classList.add("open");
+		const full = titleEl.getBoundingClientRect();
+		const contentWidth = nameEl.getBoundingClientRect().width;
+		titleEl.classList.remove("open");
+		const cut = titleEl.getBoundingClientRect();
+		titleEl.classList.add("open");
+		if (reduceMotion.matches) {
+			titleEl.classList.toggle("open", open);
+			return;
+		}
+		const [from, to] = open ? [turning ? now : cut, full] : [turning ? now : full, cut];
+		titleEl.style.setProperty("--content-width", `${contentWidth}px`);
+		titleEl.classList.add("sizing");
+		sizing = titleEl.animate(
+			[{ width: `${from.width}px`, height: `${from.height}px` }, { width: `${to.width}px`, height: `${to.height}px` }],
+			{ duration: 200, easing: open ? "cubic-bezier(0.2, 0, 0, 1)" : "cubic-bezier(0.3, 0, 0.8, 0.15)", fill: "forwards" },
+		);
+		const animation = sizing;
+		animation.finished.then(() => {
+			if (sizing !== animation) return;
+			titleEl.classList.remove("sizing");
+			titleEl.classList.toggle("open", open);
+			animation.cancel();
+			sizing = null;
+		}, () => {});
+	}
+	titleEl.addEventListener("click", () => openTitle(!titleOpen));
+	titleEl.addEventListener("keydown", (e) => {
+		if (e.key === "Enter" || e.key === " ") openTitle(!titleOpen);
+		else if (e.key === "Escape") openTitle(false);
+		else return;
+		e.preventDefault();
+		e.stopPropagation();
+	});
+	document.addEventListener("pointerdown", (e) => {
+		if (!titleEl.contains(e.target)) openTitle(false);
+	}, true);
+	document.addEventListener("keydown", (e) => {
+		if (e.key === "Escape") openTitle(false);
+	});
+	new ResizeObserver(checkTruncated).observe(titleEl);
+	window.addEventListener("resize", checkTruncated);
+	checkTruncated();
 	if (view.projection !== "topdown") {
 		fail(`This viewer can't show the “${view.title}” view.`);
 		return;
@@ -186,6 +308,9 @@
 	const cam = { x: (minX + maxX) / 2, y: (minY + maxY) / 2, s: 1 };
 	let W = 0;
 	let H = 0;
+	// The map's top-left corner in the window: it sits inside the paper margin, so pointer
+	// positions are measured from here.
+	const origin = { x: 0, y: 0 };
 	const maxScale = 16;
 	const fitScale = () => Math.min(W / (maxX - minX), H / (maxY - minY)) * 0.92;
 	const minScale = () => Math.min(fitScale(), 1) / 2;
@@ -249,14 +374,19 @@
 		const upper = cam.y - H / 2 / cam.s;
 		const lower = cam.y + H / 2 / cam.s;
 		const placed = new Set();
+		const now = performance.now();
 		let pending = 0;
+		let fading = false;
 		for (let ty = Math.floor(upper / span); ty <= Math.floor(lower / span); ty++) {
 			for (let tx = Math.floor(left / span); tx <= Math.floor(right / span); tx++) {
 				if (!levels[level].has(`${tx},${ty}`)) continue;
 				const entry = tile(level, tx, ty);
 				if (entry.state === "loaded") {
 					place(entry.img, level, tx, ty, placed);
-					continue;
+					// While it fades in, the tile standing in for it stays underneath, so the
+					// paper doesn't show through.
+					if (!(entry.img.fadingUntil > now)) continue;
+					fading = true;
 				}
 				if (entry.state === "loading") pending++;
 				// Until it's in, the nearest loaded tile above it stands in, drawn larger.
@@ -270,6 +400,8 @@
 			}
 		}
 		for (const img of [...layer.children]) if (!placed.has(img)) img.remove();
+		// Once the fades are over, the tiles standing in under them can go.
+		if (fading) setTimeout(redraw, 160);
 		layer.classList.toggle("pixelated", cam.s * ratio > 1.01);
 		trimCache(placed);
 		if (failed && !loadedAny && !pending) {
@@ -279,6 +411,7 @@
 		showStatus(pending);
 		showCoords();
 		showScale();
+		showGrid();
 	}
 	// Edges are rounded to whole pixels, so neighbouring tiles meet without hairline gaps.
 	function place(img, level, x, y, placed) {
@@ -297,7 +430,10 @@
 			layer.append(img);
 			// A tile fades in the first time it's shown. It's only ever taken away off screen or
 			// under the tiles that replace it, so it never needs to fade out.
-			if (!img.dataset.shown && !reduceMotion.matches) img.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: "ease-out" });
+			if (!img.dataset.shown && !reduceMotion.matches) {
+				img.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: "ease-out" });
+				img.fadingUntil = performance.now() + 150;
+			}
 			img.dataset.shown = "1";
 		}
 		placed.add(img);
@@ -336,6 +472,35 @@
 		const blocks = [5, 2, 1].map((m) => m * power).find((b) => b <= widest) ?? power;
 		scaleBar.style.width = `${Math.round(blocks * cam.s)}px`;
 		scaleLabel.textContent = `${blocks.toLocaleString("en")} ${blocks === 1 ? "block" : "blocks"}`;
+	}
+
+	// The grid: a line every round number of blocks in the game's coordinates, 90 to 225 pixels
+	// apart, with the coordinates in the margin above and to the left of the sheet.
+	const gridLines = $("#grid-lines");
+	const ticks = $("#ticks");
+	function showGrid() {
+		const narrowest = 90 / cam.s;
+		const power = 10 ** Math.floor(Math.log10(narrowest));
+		const step = [1, 2, 5, 10].map((m) => m * power).find((b) => b >= narrowest);
+		// Screen position of a game coordinate; lines sit on half pixels to stay one pixel wide.
+		const sx = (x) => Math.round((x + centreX - cam.x) * cam.s + W / 2) + 0.5;
+		const sy = (z) => Math.round((z + centreZ - cam.y) * cam.s + H / 2) + 0.5;
+		const firstX = Math.ceil((cam.x - W / 2 / cam.s - centreX) / step) * step;
+		const firstZ = Math.ceil((cam.y - H / 2 / cam.s - centreZ) / step) * step;
+		const path = [];
+		const labels = [];
+		// Labels too near a corner would run into the other edge's.
+		const clear = 24;
+		for (let x = firstX; sx(x) < W; x += step) {
+			path.push(`M${sx(x)} 0V${H}`);
+			if (sx(x) > clear && sx(x) < W - clear) labels.push(`<span class="x" style="left:${origin.x + sx(x)}px">${number(x)}</span>`);
+		}
+		for (let z = firstZ; sy(z) < H; z += step) {
+			path.push(`M0 ${sy(z)}H${W}`);
+			if (sy(z) > clear && sy(z) < H - clear) labels.push(`<span class="z" style="top:${origin.y + sy(z)}px">${number(z)}</span>`);
+		}
+		gridLines.setAttribute("d", path.join(""));
+		ticks.innerHTML = labels.join("");
 	}
 
 	// The position under the pointer, or the centre of the screen without one, as the game shows it.
@@ -384,7 +549,7 @@
 		mapEl.classList.add("dragging");
 	});
 	mapEl.addEventListener("pointermove", (e) => {
-		if (e.pointerType === "mouse") pointer = { x: e.clientX, y: e.clientY };
+		if (e.pointerType === "mouse") pointer = { x: e.clientX - origin.x, y: e.clientY - origin.y };
 		const last = pointers.get(e.pointerId);
 		if (!last) return showCoords();
 		if (pointers.size === 1) {
@@ -399,7 +564,7 @@
 			cam.x -= (e.clientX - last.x) / 2 / cam.s;
 			cam.y -= (e.clientY - last.y) / 2 / cam.s;
 			pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-			if (before > 0) zoomAt((e.clientX + other.x) / 2, (e.clientY + other.y) / 2, after / before);
+			if (before > 0) zoomAt((e.clientX + other.x) / 2 - origin.x, (e.clientY + other.y) / 2 - origin.y, after / before);
 			else settle();
 			return;
 		}
@@ -422,9 +587,9 @@
 		e.preventDefault();
 		// Lines and pages scroll in bigger steps than pixels.
 		const delta = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1);
-		zoomAt(e.clientX, e.clientY, Math.exp(-delta * 0.0015));
+		zoomAt(e.clientX - origin.x, e.clientY - origin.y, Math.exp(-delta * 0.0015));
 	}, { passive: false });
-	mapEl.addEventListener("dblclick", (e) => zoomSmoothly(e.shiftKey ? 0.5 : 2, e.clientX, e.clientY));
+	mapEl.addEventListener("dblclick", (e) => zoomSmoothly(e.shiftKey ? 0.5 : 2, e.clientX - origin.x, e.clientY - origin.y));
 
 	$("#zoom-in").addEventListener("click", () => zoomSmoothly(2));
 	$("#zoom-out").addEventListener("click", () => zoomSmoothly(0.5));
@@ -476,6 +641,9 @@
 	new ResizeObserver(() => {
 		W = mapEl.clientWidth;
 		H = mapEl.clientHeight;
+		const box = mapEl.getBoundingClientRect();
+		origin.x = box.left + mapEl.clientLeft;
+		origin.y = box.top + mapEl.clientTop;
 		if (!started) {
 			started = true;
 			if (!restore()) fit();

@@ -20,6 +20,8 @@ worldWidth: u64 = 1024000,
 worldLength: u64 = 1024000,
 /// The world's name, as the player gave it (field 13).
 name: []const u8 = "",
+/// The version of the game that last saved the world, e.g. "1.22.7" (field 21).
+gameVersion: []const u8 = "",
 
 pub const maxWorldHeight = 1024 * 32;
 pub const maxWorldWidth = (1 << 27) * 32;
@@ -42,6 +44,7 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
     var worldWidth: u64 = 1024000;
     var worldLength: u64 = 1024000;
     var name: []const u8 = "";
+    var gameVersion: []const u8 = "";
 
     var parser: ProtoBuf = .{ .buf = data };
     while (try parser.next()) |msg| {
@@ -56,6 +59,7 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
             if (msg.field_number == 1) worldWidth = msg.data.VARINT else worldLength = msg.data.VARINT;
         }
         if (msg.field_number == 13 and msg.data == .LEN) name = try arena.allocator().dupe(u8, msg.data.LEN);
+        if (msg.field_number == 21 and msg.data == .LEN) gameVersion = try arena.allocator().dupe(u8, msg.data.LEN);
         // Field 11 holds named data entries: { 1: key, 2: value }.
         if (msg.field_number != 11 or msg.data != .LEN) continue;
         var key: []const u8 = "";
@@ -80,6 +84,7 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
         .worldWidth = worldWidth,
         .worldLength = worldLength,
         .name = name,
+        .gameVersion = gameVersion,
     };
 }
 
@@ -162,14 +167,15 @@ test "BlockIDs and ItemIDs in the layout real saves use" {
     try std.testing.expectEqual(1024000, gameData.worldWidth);
 }
 
-test "world size and name" {
-    // Then field 3 = 2,048 (world length) and field 13 = "Test".
-    const row = testRow ++ [_]u8{ 0x18, 0x80, 0x10, 0x6a, 0x04, 'T', 'e', 's', 't' };
+test "world size, name and game version" {
+    // Then field 3 = 2,048 (world length), field 13 = "Test" and field 21 = "1.22.7".
+    const row = testRow ++ [_]u8{ 0x18, 0x80, 0x10, 0x6a, 0x04, 'T', 'e', 's', 't', 0xaa, 0x01, 0x06, '1', '.', '2', '2', '.', '7' };
     const gameData = try parse(std.testing.allocator, &row);
     defer gameData.deinit();
     try std.testing.expectEqual(2048, gameData.worldLength);
     try std.testing.expectEqual(1024000, gameData.worldWidth);
     try std.testing.expectEqualStrings("Test", gameData.name);
+    try std.testing.expectEqualStrings("1.22.7", gameData.gameVersion);
     // A size of 0 is invalid.
     try std.testing.expectError(error.InvalidWorldSize, parse(std.testing.allocator, &.{ 0x08, 0x00 }));
 }

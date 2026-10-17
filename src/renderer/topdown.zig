@@ -66,7 +66,8 @@ pub fn render(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, output: 
             .name = gameData.name,
             .width = gameData.worldWidth,
             .length = gameData.worldLength,
-        }, &.{.{ .name = View.name, .title = "Top-down", .projection = "topdown", .written = written.items }}),
+            .gameVersion = gameData.gameVersion,
+        }, Io.Timestamp.now(io, .real).toSeconds(), &.{.{ .name = View.name, .title = "Top-down", .projection = "topdown", .written = written.items }}),
         .discard => {},
     }
 

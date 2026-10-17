@@ -17,6 +17,8 @@ pub const World = struct {
     /// world's centre, so the viewer needs these to match it.
     width: u64,
     length: u64,
+    /// The version of the game that last saved the world, e.g. "1.22.7".
+    gameVersion: []const u8,
 };
 
 /// One view's tiles, as the pipeline wrote them.
@@ -30,9 +32,11 @@ pub const View = struct {
     written: []const tiles.Written,
 };
 
-/// Writes `map.json` and `index.html` into `folder`.
-pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, world: World, views: []const View) !void {
-    const json = try describe(allocator, world, views);
+/// Writes `map.json` and `index.html` into `folder`. `rendered` is when, in seconds since 1970
+/// (UTC).
+pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, world: World, rendered: i64, views: []const View) !void {
+    var buffer: [24]u8 = undefined;
+    const json = try describe(allocator, world, utc(&buffer, rendered), views);
     defer allocator.free(json);
     try folder.writeFile(io, .{ .sub_path = "map.json", .data = json });
 
@@ -51,9 +55,30 @@ pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, world: World,
     try folder.writeFile(io, .{ .sub_path = "index.html", .data = page });
 }
 
+/// A time as an ISO 8601 UTC timestamp, which browsers read as it is, e.g.
+/// "2026-10-17T09:05:00Z".
+fn utc(buffer: *[24]u8, seconds: i64) []const u8 {
+    const clamped: u64 = @intCast(@max(seconds, 0));
+    const epoch: std.time.epoch.EpochSeconds = .{ .secs = clamped };
+    const yearDay = epoch.getEpochDay().calculateYearDay();
+    const monthDay = yearDay.calculateMonthDay();
+    const daySeconds = epoch.getDaySeconds();
+    return std.fmt.bufPrint(buffer, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+        yearDay.year,                 monthDay.month.numeric(),        monthDay.day_index + 1,
+        daySeconds.getHoursIntoDay(), daySeconds.getMinutesIntoHour(), daySeconds.getSecondsIntoMinute(),
+    }) catch unreachable;
+}
+
+test utc {
+    var buffer: [24]u8 = undefined;
+    try std.testing.expectEqualStrings("1970-01-01T00:00:00Z", utc(&buffer, 0));
+    // 2026-10-17 09:05:07 UTC.
+    try std.testing.expectEqualStrings("2026-10-17T09:05:07Z", utc(&buffer, 1792227907));
+}
+
 /// The map's description as JSON. Each view lists the tiles of each level as flat x, y pairs,
 /// so the viewer only asks for tiles that exist.
-fn describe(allocator: std.mem.Allocator, world: World, views: []const View) ![]u8 {
+fn describe(allocator: std.mem.Allocator, world: World, rendered: []const u8, views: []const View) ![]u8 {
     const JsonView = struct {
         name: []const u8,
         title: []const u8,
@@ -74,7 +99,7 @@ fn describe(allocator: std.mem.Allocator, world: World, views: []const View) ![]
         for (flat, perLevel) |*level, list| level.* = list.items;
         out.* = .{ .name = view.name, .title = view.title, .projection = view.projection, .tileSize = tiles.size, .tiles = flat };
     }
-    return std.json.Stringify.valueAlloc(allocator, .{ .world = world, .views = jsonViews }, .{});
+    return std.json.Stringify.valueAlloc(allocator, .{ .world = world, .rendered = rendered, .views = jsonViews }, .{});
 }
 
 test describe {
@@ -83,12 +108,12 @@ test describe {
         .{ .level = 0, .tile = .{ .x = 1000, .y = 1000 } },
         .{ .level = 1, .tile = .{ .x = 500, .y = 499 } },
     };
-    const json = try describe(std.testing.allocator, .{ .name = "A </script> world", .width = 1024000, .length = 1024000 }, &.{
+    const json = try describe(std.testing.allocator, .{ .name = "A </script> world", .width = 1024000, .length = 1024000, .gameVersion = "1.22.7" }, "2026-10-17T09:05:07Z", &.{
         .{ .name = "topdown", .title = "Top-down", .projection = "topdown", .written = &written },
     });
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        \\{"world":{"name":"A </script> world","width":1024000,"length":1024000},"views":[{"name":"topdown","title":"Top-down","projection":"topdown","tileSize":512,"tiles":[[1000,999,1000,1000],[500,499]]}]}
+        \\{"world":{"name":"A </script> world","width":1024000,"length":1024000,"gameVersion":"1.22.7"},"rendered":"2026-10-17T09:05:07Z","views":[{"name":"topdown","title":"Top-down","projection":"topdown","tileSize":512,"tiles":[[1000,999,1000,1000],[500,499]]}]}
     , json);
 }
 
