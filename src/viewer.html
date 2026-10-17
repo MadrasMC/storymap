@@ -499,8 +499,9 @@
 			return;
 		}
 		showStatus(pending);
-		showCoords();
+		// The scale first: it settles whether the panel is compact, which the coordinates follow.
 		showScale();
+		showCoords();
 		showZoom();
 		showGrid();
 	}
@@ -564,10 +565,13 @@
 	const labelWidth = (text) => measure.measureText(text).width;
 	// The width the scale's row has, from the panel's left edge to short of the zoom key: 1.5rem
 	// short side by side, or the panel's own padding where they share it. It changes only with
-	// the layout, so it's measured once for each.
+	// the layout, so it's measured once for each. Where it can't fit a 4rem bar beside
+	// "1,000 blocks", the panel is compact: the scale says "bl." and the coordinates drop their
+	// x and z, together and whatever the zoom, so neither flips as the numbers change.
 	let roomFor = "";
 	let room = 0;
 	let scaleGap = 0;
+	let compact = false;
 	function scaleRoom() {
 		const layout = `${merged} ${innerWidth}`;
 		if (roomFor !== layout) {
@@ -578,6 +582,8 @@
 			room = end - start;
 			scaleGap = parseFloat(getComputedStyle(scaleEl).columnGap);
 			measure.font = getComputedStyle(scaleLabel).font;
+			// A few pixels spare, as the label's measured width can differ slightly from how it's drawn.
+			compact = room - scaleGap - 4 - labelWidth("1,000 blocks") < 64;
 		}
 		return room;
 	}
@@ -587,21 +593,14 @@
 			const power = 10 ** Math.floor(Math.log10(widest));
 			return [5, 2, 1].map((m) => m * power).find((b) => b <= widest) ?? power;
 		};
-		const unit = (blocks) => (blocks === 1 ? "block" : "blocks");
-		// A few pixels spare, as the label's measured width can differ slightly from how it's drawn.
+		const unit = (blocks) => (compact ? "bl." : blocks === 1 ? "block" : "blocks");
 		const space = scaleRoom() - scaleGap - 4;
 		const cap = merged ? 64 : 128;
 		let blocks = roundest(cap);
-		let short = false;
-		let longest = Math.min(cap, space - labelWidth(`${blocks.toLocaleString("en")} ${unit(blocks)}`));
-		// The word stays only beside a bar of at least 4rem.
-		if (longest < 64) {
-			short = true;
-			longest = Math.min(cap, space - labelWidth(`${blocks.toLocaleString("en")} bl.`));
-		}
+		const longest = Math.min(cap, space - labelWidth(`${blocks.toLocaleString("en")} ${unit(blocks)}`));
 		if (longest < cap) blocks = roundest(Math.max(longest, 16));
 		scaleBar.style.width = `${Math.round(blocks * cam.s)}px`;
-		scaleLabel.textContent = `${blocks.toLocaleString("en")} ${short ? "bl." : unit(blocks)}`;
+		scaleLabel.textContent = `${blocks.toLocaleString("en")} ${unit(blocks)}`;
 	}
 
 	// The zoom as a scale of screen pixels to blocks, the same for every world, written as maps and
@@ -665,7 +664,9 @@
 		const py = pointer ? cam.y + (pointer.y - H / 2) / cam.s : cam.y;
 		const x = Math.floor(px) - centreX;
 		const z = Math.floor(py) - centreZ;
-		coordsEl.innerHTML = `<span class="k">x</span> ${number(x)} <span class="k">z</span> ${number(z)}`;
+		coordsEl.innerHTML = compact
+			? `${number(x)}<span class="k">,</span> ${number(z)}`
+			: `<span class="k">x</span> ${number(x)} <span class="k">z</span> ${number(z)}`;
 	}
 
 	// Zooming keeps the point under (sx, sy) where it is.
