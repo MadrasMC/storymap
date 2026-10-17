@@ -554,15 +554,54 @@
 	}
 
 	// The scale bar: the roundest length of 1, 2 or 5 times a power of ten that's at most 8rem
-	// wide on screen, or 4rem where it shares its panel with the zoom key.
+	// wide on screen, or 4rem where it shares its panel with the zoom key, and no longer than the
+	// panel has room for beside its label. Where even a short bar leaves no room for the word, it's
+	// shortened to "bl.", as printed scales abbreviate their units.
 	const scaleBar = $("#scale-bar");
 	const scaleLabel = $("#scale-label");
+	const scaleEl = $(".readout .scale");
+	const measure = document.createElement("canvas").getContext("2d");
+	const labelWidth = (text) => measure.measureText(text).width;
+	// The width the scale's row has, from the panel's left edge to short of the zoom key: 1.5rem
+	// short side by side, or the panel's own padding where they share it. It changes only with
+	// the layout, so it's measured once for each.
+	let roomFor = "";
+	let room = 0;
+	let scaleGap = 0;
+	function scaleRoom() {
+		const layout = `${merged} ${innerWidth}`;
+		if (roomFor !== layout) {
+			roomFor = layout;
+			const padding = parseFloat(getComputedStyle(readoutEl).paddingLeft);
+			const start = readoutEl.getBoundingClientRect().left + padding;
+			const end = controlsEl.getBoundingClientRect().left - padding - (merged ? 0 : 24);
+			room = end - start;
+			scaleGap = parseFloat(getComputedStyle(scaleEl).columnGap);
+			measure.font = getComputedStyle(scaleLabel).font;
+		}
+		return room;
+	}
 	function showScale() {
-		const widest = (merged ? 64 : 128) / cam.s;
-		const power = 10 ** Math.floor(Math.log10(widest));
-		const blocks = [5, 2, 1].map((m) => m * power).find((b) => b <= widest) ?? power;
+		const roundest = (longest) => {
+			const widest = longest / cam.s;
+			const power = 10 ** Math.floor(Math.log10(widest));
+			return [5, 2, 1].map((m) => m * power).find((b) => b <= widest) ?? power;
+		};
+		const unit = (blocks) => (blocks === 1 ? "block" : "blocks");
+		// A few pixels spare, as the label's measured width can differ slightly from how it's drawn.
+		const space = scaleRoom() - scaleGap - 4;
+		const cap = merged ? 64 : 128;
+		let blocks = roundest(cap);
+		let short = false;
+		let longest = Math.min(cap, space - labelWidth(`${blocks.toLocaleString("en")} ${unit(blocks)}`));
+		// The word stays only beside a bar of at least 4rem.
+		if (longest < 64) {
+			short = true;
+			longest = Math.min(cap, space - labelWidth(`${blocks.toLocaleString("en")} bl.`));
+		}
+		if (longest < cap) blocks = roundest(Math.max(longest, 16));
 		scaleBar.style.width = `${Math.round(blocks * cam.s)}px`;
-		scaleLabel.textContent = `${blocks.toLocaleString("en")} ${blocks === 1 ? "block" : "blocks"}`;
+		scaleLabel.textContent = `${blocks.toLocaleString("en")} ${short ? "bl." : unit(blocks)}`;
 	}
 
 	// The zoom as a scale of screen pixels to blocks, the same for every world, written as maps and
@@ -776,8 +815,9 @@
 	window.addEventListener("hashchange", restore);
 
 	// The coordinates' panel and the zoom key share one panel only where on their own they'd nearly
-	// meet. It's decided when the window changes size, not as the coordinates change, so the panels
-	// don't jump between the two while the pointer moves.
+	// meet: side by side, the scale's row couldn't fit a 4rem bar and its label in full. It's
+	// decided when the window changes size, not as the zoom or the coordinates change, so the
+	// panels don't jump between the two.
 	const root = document.documentElement;
 	const readoutEl = $(".readout");
 	const controlsEl = $(".controls");
@@ -785,10 +825,8 @@
 	function arrange() {
 		merged = false;
 		root.classList.remove("merged");
-		showCoords();
-		showScale();
-		const end = readoutEl.getBoundingClientRect().left + readoutEl.scrollWidth;
-		merged = controlsEl.getBoundingClientRect().left - end < 24;
+		scaleRoom();
+		merged = room - scaleGap < 64 + labelWidth("1,000 blocks");
 		root.classList.toggle("merged", merged);
 	}
 
