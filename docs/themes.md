@@ -51,7 +51,8 @@ A theme can still reach anywhere in the page if it needs to; `ui` is so it doesn
 | | |
 | --- | --- |
 | `map.element` | The map's element, `#map`, where the tiles are drawn. The theme's stylesheet places it. |
-| `map.world` | `{ name, gameVersion }`, or `null` when the page has no map. |
+| `map.game` | `{ name, version }` of the game the world is from, e.g. `"Vintage Story"`, `"1.22.7"`, the version that last saved the world, or `null`. |
+| `map.world` | `{ name }`, or `null` when the page has no map. |
 | `map.view` | `{ name, title }` of the view shown, e.g. `"topdown"`, `"Top-down"`, or `null`. |
 | `map.rendered` | When the map was rendered, as a `Date`, or `null`. |
 | `map.zoomIn()`, `map.zoomOut()` | Step the zoom, as the + and − keys do. |
@@ -59,7 +60,7 @@ A theme can still reach anywhere in the page if it needs to; `ui` is so it doesn
 | `map.toScreen(x, z)` | Where a position in the game is on the map, as `{ x, y }` in pixels from its top-left corner. |
 | `map.toGame(x, y)` | The position in the game at a point on the map, as `{ x, z }`. |
 
-Positions are the game's, relative to the world's centre, as the game shows them.
+Positions are as the game shows them, from its origin: in Vintage Story, the world's centre.
 
 ### What `update` is given
 

@@ -4,7 +4,7 @@
 //!
 //! A source is a game's save, opened for reading, with:
 //! - `tileList: []const tiles.Tile`, the tiles that may have something to draw;
-//! - `world() viewer.World` and `heights() columns.Heights`;
+//! - `game() viewer.Game`, `world() viewer.World` and `heights() columns.Heights`;
 //! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `liquid(id: i32) columns.Liquid`,
 //!   for the game's block IDs;
 //! - `Reader`, one per thread, with `init(source: *const Source, allocator) !Reader`,
@@ -48,7 +48,7 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
     const rendered = try tiles.render(View(Source), allocator, io, &view, source.tileList, output, &written);
     // The viewer page goes next to the tiles. With more views, it'll list them all.
     switch (output) {
-        .folder => |folder| try viewer.write(allocator, io, folder, source.world(), Io.Timestamp.now(io, .real).toSeconds(), &.{
+        .folder => |folder| try viewer.write(allocator, io, folder, source.game(), source.world(),Io.Timestamp.now(io, .real).toSeconds(), &.{
             .{ .name = View(Source).name, .title = "Top-down", .projection = "topdown", .written = written.items },
         }, options.theme),
         .discard => {},

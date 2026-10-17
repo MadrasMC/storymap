@@ -44,7 +44,7 @@ Storymap.theme((map, ui) => {
 	// The cartouche: the kind of map, the world, and what it was made from and when.
 	if (map.world?.name) q("#name").textContent = map.world.name;
 	if (map.view) q("#kind").textContent = `A ${map.view.title.toLowerCase()} view of`;
-	if (map.world?.gameVersion) q("#version").textContent = `Vintage Story ${map.world.gameVersion}`;
+	q("#version").textContent = [map.game?.name, map.game?.version].filter(Boolean).join(" ");
 	if (map.rendered) q("#rendered").textContent = `Rendered ${map.rendered.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
 
 	// A name cut short, or lines left out on a short screen, open the cartouche to show it in full;

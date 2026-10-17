@@ -14,7 +14,7 @@ Storymap.theme((map, ui) => {
 	const title = element(`<div class="plain plain-title"><h1></h1><p></p></div>`);
 	title.querySelector("h1").textContent = map.world?.name || "Storymap";
 	const about = [
-		map.world?.gameVersion && `Vintage Story ${map.world.gameVersion}`,
+		[map.game?.name, map.game?.version].filter(Boolean).join(" "),
 		map.rendered && `Rendered ${map.rendered.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`,
 	].filter(Boolean).join(" · ");
 	title.querySelector("p").textContent = about;

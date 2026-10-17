@@ -75,13 +75,17 @@ pub fn close(self: Save, allocator: std.mem.Allocator) void {
     self.db.deinit();
 }
 
-/// The world, as the viewer describes it.
+/// The game, and the version that last saved the world.
+pub fn game(self: *const Save) viewer.Game {
+    return .{ .name = "Vintage Story", .version = self.gameData.gameVersion };
+}
+
+/// The world, as the viewer describes it. The game shows positions relative to the world's
+/// centre (docs/save-format/README.md#2-positions).
 pub fn world(self: *const Save) viewer.World {
     return .{
         .name = self.gameData.name,
-        .width = self.gameData.worldWidth,
-        .length = self.gameData.worldLength,
-        .gameVersion = self.gameData.gameVersion,
+        .origin = .{ .x = @intCast(self.gameData.worldWidth / 2), .z = @intCast(self.gameData.worldLength / 2) },
     };
 }
 

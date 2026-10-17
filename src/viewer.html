@@ -52,24 +52,26 @@ function start(makeTheme) {
 		data = null;
 	}
 	const valid = data && data.world && Array.isArray(data.views) && data.views.length > 0;
+	const game = valid ? data.game : null;
 	const world = valid ? data.world : null;
 	const view = valid ? data.views[0] : null;
 	const rendered = valid ? new Date(data.rendered) : null;
 	if (world?.name) document.title = `${world.name} · Storymap`;
 
-	// The map as a theme sees it. Positions are the game's, relative to the world's centre, and
+	// The map as a theme sees it. Positions are as the game shows them, from its origin, and
 	// screen positions are in pixels from the map's top-left corner.
 	let stopped = false;
 	const map = {
 		element: mapEl,
-		world: world && { name: world.name, gameVersion: world.gameVersion },
+		game: game && { name: game.name, version: game.version },
+		world: world && { name: world.name },
 		view: view && { name: view.name, title: view.title },
 		rendered: rendered && !Number.isNaN(rendered.getTime()) ? rendered : null,
 		zoomIn: () => stopped || zoomStep(1),
 		zoomOut: () => stopped || zoomStep(-1),
 		fit: () => stopped || fit(),
-		toScreen: (x, z) => ({ x: (x + centreX - cam.x) * cam.s + W / 2, y: (z + centreZ - cam.y) * cam.s + H / 2 }),
-		toGame: (sx, sy) => ({ x: cam.x + (sx - W / 2) / cam.s - centreX, z: cam.y + (sy - H / 2) / cam.s - centreZ }),
+		toScreen: (x, z) => ({ x: (x + offsetX - cam.x) * cam.s + W / 2, y: (z + offsetZ - cam.y) * cam.s + H / 2 }),
+		toGame: (sx, sy) => ({ x: cam.x + (sx - W / 2) / cam.s - offsetX, z: cam.y + (sy - H / 2) / cam.s - offsetZ }),
 	};
 	const theme = makeTheme(map, q("#ui"));
 
@@ -100,9 +102,10 @@ function start(makeTheme) {
 	const top = levels.length - 1;
 
 	// Positions are in level-0 pixels, which in the top-down view are blocks: x east, y south.
-	// The game shows them relative to the world's centre.
-	const centreX = Math.floor(world.width / 2);
-	const centreZ = Math.floor(world.length / 2);
+	// The game shows them from its origin, the block it calls 0, 0: for some games the world's
+	// centre, for others the world's own 0, 0.
+	const offsetX = world.origin?.x ?? 0;
+	const offsetZ = world.origin?.z ?? 0;
 	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 	const full = view.tiles[0];
 	for (let i = 0; i < full.length; i += 2) {
@@ -441,7 +444,7 @@ function start(makeTheme) {
 			const zoom = atOwnFit()
 				? "fit"
 				: cam.s >= 1 ? `${Number(cam.s.toFixed(2))}:1` : `1:${Number((1 / cam.s).toFixed(2))}`;
-			const hash = `#${Math.floor(cam.x) - centreX},${Math.floor(cam.y) - centreZ},${zoom}`;
+			const hash = `#${Math.floor(cam.x) - offsetX},${Math.floor(cam.y) - offsetZ},${zoom}`;
 			if (hash !== location.hash) history.replaceState(null, "", hash);
 		}, 300);
 	}
@@ -452,8 +455,8 @@ function start(makeTheme) {
 		const [pixels, blocks] = parts[2].split(":");
 		const s = parts[2] === "fit" ? fitScale() : Number(pixels) / Number(blocks);
 		if (![x, z, s].every(Number.isFinite) || s <= 0) return false;
-		cam.x = x + centreX + 0.5;
-		cam.y = z + centreZ + 0.5;
+		cam.x = x + offsetX + 0.5;
+		cam.y = z + offsetZ + 0.5;
 		cam.s = s;
 		settle();
 		return true;

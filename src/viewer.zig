@@ -59,15 +59,19 @@ pub fn loadTheme(arena: std.mem.Allocator, io: Io, name: []const u8) !Theme {
     return theme;
 }
 
+/// The game a map's world is from, e.g. "Vintage Story", and the version that last saved the
+/// world, e.g. "1.22.7".
+pub const Game = struct {
+    name: []const u8,
+    version: []const u8,
+};
+
 /// The world a map shows.
 pub const World = struct {
     name: []const u8,
-    /// In blocks, east to west and north to south. The game shows positions relative to the
-    /// world's centre, so the viewer needs these to match it.
-    width: u64,
-    length: u64,
-    /// The version of the game that last saved the world, e.g. "1.22.7".
-    gameVersion: []const u8,
+    /// The block the game shows as position 0, 0, so the viewer shows positions as the game
+    /// does: x east, z south.
+    origin: struct { x: i64, z: i64 },
 };
 
 /// One view's tiles, as the pipeline wrote them.
@@ -83,9 +87,9 @@ pub const View = struct {
 
 /// Writes `map.json` and `index.html` into `folder`, the page drawn with `theme`. `rendered` is
 /// when, in seconds since 1970 (UTC).
-pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, world: World, rendered: i64, views: []const View, theme: Theme) !void {
+pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, game: Game, world: World, rendered: i64, views: []const View, theme: Theme) !void {
     var buffer: [24]u8 = undefined;
-    const json = try describe(allocator, world, utc(&buffer, rendered), views);
+    const json = try describe(allocator, game, world, utc(&buffer, rendered), views);
     defer allocator.free(json);
     try folder.writeFile(io, .{ .sub_path = "map.json", .data = json });
 
@@ -136,7 +140,7 @@ test utc {
 
 /// The map's description as JSON. Each view lists the tiles of each level as flat x, y pairs,
 /// so the viewer only asks for tiles that exist.
-fn describe(allocator: std.mem.Allocator, world: World, rendered: []const u8, views: []const View) ![]u8 {
+fn describe(allocator: std.mem.Allocator, game: Game, world: World, rendered: []const u8, views: []const View) ![]u8 {
     const JsonView = struct {
         name: []const u8,
         title: []const u8,
@@ -157,7 +161,7 @@ fn describe(allocator: std.mem.Allocator, world: World, rendered: []const u8, vi
         for (flat, perLevel) |*level, list| level.* = list.items;
         out.* = .{ .name = view.name, .title = view.title, .projection = view.projection, .tileSize = tiles.size, .tiles = flat };
     }
-    return std.json.Stringify.valueAlloc(allocator, .{ .world = world, .rendered = rendered, .views = jsonViews }, .{});
+    return std.json.Stringify.valueAlloc(allocator, .{ .game = game, .world = world, .rendered = rendered, .views = jsonViews }, .{});
 }
 
 test describe {
@@ -166,12 +170,12 @@ test describe {
         .{ .level = 0, .tile = .{ .x = 1000, .y = 1000 } },
         .{ .level = 1, .tile = .{ .x = 500, .y = 499 } },
     };
-    const json = try describe(std.testing.allocator, .{ .name = "A </script> world", .width = 1024000, .length = 1024000, .gameVersion = "1.22.7" }, "2026-10-17T09:05:07Z", &.{
+    const json = try describe(std.testing.allocator, .{ .name = "Vintage Story", .version = "1.22.7" }, .{ .name = "A </script> world", .origin = .{ .x = 512000, .z = 512000 } }, "2026-10-17T09:05:07Z", &.{
         .{ .name = "topdown", .title = "Top-down", .projection = "topdown", .written = &written },
     });
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        \\{"world":{"name":"A </script> world","width":1024000,"length":1024000,"gameVersion":"1.22.7"},"rendered":"2026-10-17T09:05:07Z","views":[{"name":"topdown","title":"Top-down","projection":"topdown","tileSize":512,"tiles":[[1000,999,1000,1000],[500,499]]}]}
+        \\{"game":{"name":"Vintage Story","version":"1.22.7"},"world":{"name":"A </script> world","origin":{"x":512000,"z":512000}},"rendered":"2026-10-17T09:05:07Z","views":[{"name":"topdown","title":"Top-down","projection":"topdown","tileSize":512,"tiles":[[1000,999,1000,1000],[500,499]]}]}
     , json);
 }
 
