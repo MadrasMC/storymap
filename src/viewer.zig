@@ -1,6 +1,7 @@
 //! The map viewer: `index.html` and `map.json`, written next to the tiles. The page is
-//! `viewer.html` with the map's description inlined, because a browser opening it straight
-//! from the disk won't let it fetch `map.json` beside it. `map.json` is for other tools.
+//! `viewer.html`, the map itself, with a theme drawing everything around it, and with the
+//! theme and the map's description inlined, because a browser opening it straight from the
+//! disk won't let it fetch files beside it. `map.json` is for other tools.
 const std = @import("std");
 const Io = std.Io;
 const tiles = @import("tiles.zig");
@@ -9,6 +10,23 @@ const template = @embedFile("viewer.html");
 /// Where the page expects the map's description. The template leaves it null, which the page
 /// shows as a missing map.
 const marker = "<script id=\"map-data\" type=\"application/json\">null</script>";
+/// Where the page expects its theme's stylesheet and script.
+const styleMarker = "<style id=\"theme-style\"></style>";
+const scriptMarker = "<script id=\"theme-script\"></script>";
+
+/// A theme: the stylesheet and script that draw everything around the map, as described in
+/// `docs/themes.md`.
+pub const Theme = struct {
+    style: []const u8,
+    script: []const u8,
+};
+
+/// The map as a printed sheet: a neatline, a grid labelled in the margin, a title cartouche and
+/// a key of hills for zooming.
+pub const printed: Theme = .{
+    .style = @embedFile("themes/printed/theme.css"),
+    .script = @embedFile("themes/printed/theme.js"),
+};
 
 /// The world a map shows.
 pub const World = struct {
@@ -43,16 +61,25 @@ pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, world: World,
     // "</" would end the script element early, and "<\/" means the same in JSON.
     const inlined = try std.mem.replaceOwned(u8, allocator, json, "</", "<\\/");
     defer allocator.free(inlined);
-    const at = std.mem.indexOf(u8, template, marker) orelse return error.ViewerTemplateHasNoMarker;
-    const page = try std.mem.concat(allocator, u8, &.{
-        template[0..at],
-        "<script id=\"map-data\" type=\"application/json\">",
-        inlined,
-        "</script>",
-        template[at + marker.len ..],
-    });
+    // The theme goes in first: it's ours, while the description holds the world's name, which
+    // could contain anything.
+    const themed = try fill(allocator, template, styleMarker, &.{ "<style id=\"theme-style\">", printed.style, "</style>" });
+    defer allocator.free(themed);
+    const scripted = try fill(allocator, themed, scriptMarker, &.{ "<script id=\"theme-script\">", printed.script, "</script>" });
+    defer allocator.free(scripted);
+    const page = try fill(allocator, scripted, marker, &.{ "<script id=\"map-data\" type=\"application/json\">", inlined, "</script>" });
     defer allocator.free(page);
     try folder.writeFile(io, .{ .sub_path = "index.html", .data = page });
+}
+
+/// `page` with its first `wanted` swapped for `parts`, joined.
+fn fill(allocator: std.mem.Allocator, page: []const u8, wanted: []const u8, parts: []const []const u8) ![]u8 {
+    const at = std.mem.indexOf(u8, page, wanted) orelse return error.ViewerTemplateHasNoMarker;
+    var pieces: [8][]const u8 = undefined;
+    pieces[0] = page[0..at];
+    @memcpy(pieces[1..][0..parts.len], parts);
+    pieces[1 + parts.len] = page[at + wanted.len ..];
+    return std.mem.concat(allocator, u8, pieces[0 .. parts.len + 2]);
 }
 
 /// A time as an ISO 8601 UTC timestamp, which browsers read as it is, e.g.
@@ -117,6 +144,14 @@ test describe {
     , json);
 }
 
-test "the template has the marker" {
-    try std.testing.expect(std.mem.indexOf(u8, template, marker) != null);
+test "the template has the markers" {
+    for ([_][]const u8{ marker, styleMarker, scriptMarker }) |wanted| {
+        try std.testing.expect(std.mem.indexOf(u8, template, wanted) != null);
+    }
+}
+
+test "the printed theme can be inlined" {
+    // Either closing tag would end its element early.
+    try std.testing.expect(std.mem.indexOf(u8, printed.style, "</style") == null);
+    try std.testing.expect(std.mem.indexOf(u8, printed.script, "</script") == null);
 }
