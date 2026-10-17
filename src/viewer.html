@@ -38,6 +38,8 @@
 		/* The paper margin around the sheet, wide enough for the grid's coordinates. */
 		--margin: clamp(1.25rem, 3vw, 2rem);
 		--inset: calc(var(--margin) + var(--s3));
+		/* The outer rule, a little outside the sheet; the grid's coordinates sit halfway between it and the screen's edge. */
+		--neatline: calc(var(--margin) - 0.3125rem);
 		color-scheme: light;
 	}
 	* { box-sizing: border-box; }
@@ -49,7 +51,7 @@
 		position: fixed; inset: var(--margin); overflow: hidden; touch-action: none; cursor: grab; outline: none;
 		border: 1px solid var(--ink);
 	}
-	.neatline { position: fixed; inset: calc(var(--margin) - 0.3125rem); border: 1.5px solid var(--ink); pointer-events: none; }
+	.neatline { position: fixed; inset: var(--neatline); border: 1.5px solid var(--ink); pointer-events: none; }
 	#map.dragging { cursor: grabbing; }
 	#map:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 	#tiles { position: absolute; inset: 0; }
@@ -63,8 +65,10 @@
 		position: fixed; font: var(--t-micro)/1 var(--mono); font-variant-numeric: tabular-nums;
 		color: var(--muted); white-space: nowrap; pointer-events: none;
 	}
-	.ticks .x { top: calc(var(--margin) / 2 - 0.3125rem); transform: translateX(-50%); }
-	.ticks .z { left: calc(var(--margin) / 2); transform: translate(-50%, -50%) rotate(-90deg); }
+	.ticks .x { top: calc(var(--neatline) / 2 - var(--t-micro) / 2); transform: translateX(-50%); }
+	.ticks .x.end { top: auto; bottom: calc(var(--neatline) / 2 - var(--t-micro) / 2); }
+	.ticks .z { left: calc(var(--neatline) / 2); transform: translate(-50%, -50%) rotate(-90deg); }
+	.ticks .z.end { left: auto; right: calc(var(--neatline) / 2); transform: translate(50%, -50%) rotate(90deg); }
 
 	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--lift); }
 	/* The title cartouche: a double-ruled box, as on the old map's corner. */
@@ -475,7 +479,7 @@
 	}
 
 	// The grid: a line every round number of blocks in the game's coordinates, 90 to 225 pixels
-	// apart, with the coordinates in the margin above and to the left of the sheet.
+	// apart, with the coordinates in the margin on all four sides of the sheet.
 	const gridLines = $("#grid-lines");
 	const ticks = $("#ticks");
 	function showGrid() {
@@ -493,11 +497,17 @@
 		const clear = 24;
 		for (let x = firstX; sx(x) < W; x += step) {
 			path.push(`M${sx(x)} 0V${H}`);
-			if (sx(x) > clear && sx(x) < W - clear) labels.push(`<span class="x" style="left:${origin.x + sx(x)}px">${number(x)}</span>`);
+			if (sx(x) > clear && sx(x) < W - clear) {
+			const label = `style="left:${origin.x + sx(x)}px">${number(x)}</span>`;
+			labels.push(`<span class="x" ${label}`, `<span class="x end" ${label}`);
+		}
 		}
 		for (let z = firstZ; sy(z) < H; z += step) {
 			path.push(`M0 ${sy(z)}H${W}`);
-			if (sy(z) > clear && sy(z) < H - clear) labels.push(`<span class="z" style="top:${origin.y + sy(z)}px">${number(z)}</span>`);
+			if (sy(z) > clear && sy(z) < H - clear) {
+			const label = `style="top:${origin.y + sy(z)}px">${number(z)}</span>`;
+			labels.push(`<span class="z" ${label}`, `<span class="z end" ${label}`);
+		}
 		}
 		gridLines.setAttribute("d", path.join(""));
 		ticks.innerHTML = labels.join("");
