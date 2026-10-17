@@ -33,6 +33,14 @@ Blocks are defined by data files, not code *(Wiki)*:
 
 These are the game developers' copyrighted assets, so storymap never ships them: every user points storymap at their own game install (and mods) and storymap extracts what it needs. That's also the only way modded blocks render correctly.
 
+To copy what the renderer needs (block types, shapes, textures) from your own install and mods into a folder, for example to render on a machine without the game:
+
+```bash
+zig build run -- extract-assets path/to/output [--game <install folder>] [--data <data folder>]
+```
+
+The output mirrors the game's own layout (`game/assets/...` and `data/Mods/...`); `--game` and `--data` default to the standard locations below.
+
 Where they live *(Verified (1.22.7): a fresh Windows install)*:
 
 - **Game install** (`%APPDATA%\Vintagestory` on Windows): `assets/<domain>/` with one folder per domain, `creative`, `game` and `survival`, each containing `blocktypes/`, `shapes/`, `textures/` and more. `assets/version-1.22.7.txt` names the version. The install's own `Mods/` folder holds only the built-in code (`VSSurvivalMod.dll`, `VSEssentials.dll`, `VSCreativeMod.dll`) and a `do_not_add_mods_here.txt`.

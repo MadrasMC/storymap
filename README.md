@@ -1,39 +1,52 @@
-# storymap
+<h1 align="center">storymap</h1>
 
-High Performance Vintage Story Map Renderer ⚡️
+<p align="center">
+	<img src="docs/images/viewer.webp" alt="storymap's viewer showing a Vintage Story world as a sepia relief map: lakes inked in blue-grey, hills shaded, a coordinate grid labelled in the margins and a title cartouche in the corner">
+</p>
 
-storymap renders a top-down relief map in sepia today, shaded by height; block colours, tiles and an isometric render are next ([TODO.md](TODO.md)). Tested on saves from Vintage Story 1.19 and 1.22.7.
+<p align="center"><strong>High Performance Vintage Story Map Renderer ⚡️</strong></p>
 
-To render a top-down heightmap of a save (Zig 0.17.0):
+<p align="center">Turn a Vintage Story save into a map you can explore, drawn like an old printed survey.</p>
 
-```bash
-zig build run -- path/to/save.vcdbs [output folder]
-```
+- **Fast.** Close to 100,000 chunks a second, using every core.
+- **Made to explore.** Pan and zoom in your browser, from one page that opens straight from the folder: no server, nothing to install.
+- **Drawn like a printed map.** Sepia relief with hill shading, inked coastlines, a coordinate grid and a title cartouche.
+- **Gentle with your saves.** storymap opens them read-only and never writes next to them.
 
-The map is written as 512 × 512-pixel tiles, `topdown/<level>/<x>/<y>.png` in the output folder (`out` when none is given): level 0 has one pixel per block, and each level above halves the resolution, up to a single tile for the whole world. Open `index.html` in the output folder to browse the map. Saves are in the game's data folder, under `Saves/`. storymap never writes next to a save.
+<h2 align="center">Getting started</h2>
 
-To copy the game assets the renderer needs (block types, shapes, textures) from your own Vintage Story install and mods into a folder, for example to render on a machine without the game:
+1. Install [Zig 0.17.0](https://ziglang.org/download/).
+2. Render a save:
 
-```bash
-zig build run -- extract-assets path/to/output [--game <install folder>] [--data <data folder>]
-```
+	```bash
+	git clone https://github.com/MadrasMC/storymap
+	cd storymap
+	zig build run -Doptimize=ReleaseFast -- path/to/save.vcdbs out
+	```
 
-The output mirrors the game's own layout (`game/assets/...` and `data/Mods/...`). `--game` and `--data` default to the standard locations. storymap never ships the game's assets.
+	Saves are in the game's data folder, under `Saves/` (`%APPDATA%\VintagestoryData\Saves` on Windows).
+3. Open `out/index.html` in your browser.
 
-## Save format
+Tested with saves from Vintage Story 1.19 and 1.22.7.
 
-[`docs/save-format/README.md`](docs/save-format/README.md) documents the `.vcdbs` format as far as storymap has worked it out: the SQLite schema, chunk positions, the Protobuf chunk fields, block palettes and bit planes, and block entities. Every claim is marked with its source: verified against a real save, read in the game's open-source code, from the wiki, or unverified.
+<h2 align="center">Documentation</h2>
 
-## Performance
+- **[Save format](docs/save-format/README.md):** the `.vcdbs` format as far as storymap has worked it out, from the SQLite schema to block palettes and block entities. Every claim is marked with its source: verified against a real save, read in the game's open-source code, from the wiki, or unverified.
+- **[Rendering](docs/rendering.md):** how the map is drawn, how it's split into tiles for the viewer, and where the time goes.
+- **[What's next](TODO.md):** block colours, an isometric render and more.
 
-A render of a 1.22.7 world (6,224 chunks, a 3,232 × 4,224 image), ReleaseFast on a 14-thread machine:
+<h2 align="center">Performance</h2>
+
+A render of a 1.22.7 world (29,192 chunks, drawn as 34 tiles in 5 levels), ReleaseFast on a 14-thread machine, the median of 7 runs:
 
 | Stage | Time |
 | --- | --- |
-| Decoding all chunks | 0.09 s (70,000 chunks/s) |
-| Finding each column's top block, with decoding | 0.14 s |
-| Shading the pixels and encoding the PNG | 0.64 s |
-| End to end | 0.80 s |
+| Opening the save | 0.016 s |
+| Drawing every tile: reading the surface, shading, building the zoomed-out levels and encoding the PNGs | 0.30 s |
+| End to end | 0.31 s (93,500 chunks/s) |
+| For comparison, decoding every chunk once | 0.45 s |
+
+storymap reads only the chunks that hold the surface, so drawing the whole map takes less time than decoding the save.
 
 To measure your own save:
 
@@ -43,6 +56,6 @@ zig build bench -Doptimize=ReleaseFast -- path/to/save.vcdbs [runs]
 
 More numbers and what they mean: [`docs/rendering.md`](docs/rendering.md#performance).
 
-## License
+<h2 align="center">License</h2>
 
-MIT, see [LICENSE](LICENSE).
+<p align="center">MIT, see <a href="LICENSE">LICENSE</a>.</p>
