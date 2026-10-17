@@ -275,6 +275,10 @@
 	}
 	.tag.ok { border-color: var(--z); color: var(--z); }
 	.tag.partial { border-color: var(--x); color: var(--x); }
+	a.tag { text-decoration: none; }
+	a.tag:hover { text-decoration: underline; }
+	#fields tr[id] { scroll-margin-top: var(--s5); }
+	#fields tbody tr:target, #fields tbody tr:target td { background: var(--accent-soft); }
 
 	/* 04 blob */
 	.seg-control { display: inline-flex; border: 1px solid var(--border); border-radius: 0.6rem; padding: 3px; gap: 3px; background: var(--soft); }
@@ -647,19 +651,19 @@
 			<table>
 				<thead><tr><th>#</th><th>name</th><th>status</th></tr></thead>
 				<tbody>
-					<tr class="key"><td>1</td><td><code>blocksCompressed</code></td><td><span class="tag ok">decoded</span></td></tr>
-					<tr><td>2</td><td><code>lightCompressed</code></td><td><span class="tag">zstd, not decoded</span></td></tr>
-					<tr><td>3</td><td><code>lightSatCompressed</code></td><td><span class="tag">zstd, not decoded</span></td></tr>
+					<tr class="key" id="field-1"><td>1</td><td><code>blocksCompressed</code></td><td><span class="tag ok">decoded</span></td></tr>
+					<tr><td>2</td><td><code>lightCompressed</code></td><td><span class="tag ok">light, the planes</span></td></tr>
+					<tr><td>3</td><td><code>lightSatCompressed</code></td><td><span class="tag ok">light, the palette</span></td></tr>
 					<tr><td>5</td><td><code>EntitiesCount</code></td><td><span class="tag ok">count</span></td></tr>
 					<tr><td>6</td><td><code>EntitiesSerialized</code></td><td><span class="tag">class, version, data</span></td></tr>
 					<tr><td>7</td><td><code>BlockEntitiesCount</code></td><td><span class="tag ok">count</span></td></tr>
-					<tr class="key"><td>8</td><td><code>BlockEntitiesSerialized</code></td><td><span class="tag ok">decoded, see 09</span></td></tr>
+					<tr class="key"><td>8</td><td><code>BlockEntitiesSerialized</code></td><td><a class="tag ok" href="#block-entities">decoded, see 09</a></td></tr>
 					<tr><td>10</td><td><code>lightPositions</code></td><td><span class="tag">unknown</span></td></tr>
 					<tr><td>12</td><td><code>GameVersionCreated</code></td><td><span class="tag ok">text, e.g. "1.19.1"</span></td></tr>
 					<tr><td>13</td><td><code>EmptyBeforeSave</code></td><td><span class="tag ok">bool</span></td></tr>
 					<tr><td>14</td><td><code>DecorsSerialized</code></td><td><span class="tag">not decoded</span></td></tr>
 					<tr><td>15</td><td><code>savedCompressionVersion</code></td><td><span class="tag ok">2</span></td></tr>
-					<tr><td>16</td><td><code>liquidsCompressed</code></td><td><span class="tag ok">liquids, same as 1</span></td></tr>
+					<tr><td>16</td><td><code>liquidsCompressed</code></td><td><a class="tag ok" href="#field-1">liquids, same as 1</a></td></tr>
 					<tr><td>17</td><td><code>BlocksPlaced</code></td><td><span class="tag ok">count</span></td></tr>
 					<tr><td>18</td><td><code>BlocksRemoved</code></td><td><span class="tag ok">count</span></td></tr>
 				</tbody>
@@ -885,7 +889,7 @@
 	<section id="unknown">
 		<h2><span class="num">12</span><span>Still unknown</span></h2>
 		<ul class="list">
-			<li><b>The other fields.</b> Light (2, 3), entities' data (6), field 10 and decor (14).</li>
+			<li><b>The other fields.</b> Entities' data (6), field 10, the empty flag (13), decor (14) and the colour of light.</li>
 			<li><b>The other tables.</b> The schema names every field, but <code>playerdata</code> hasn't been decoded, nor have the values of <code>mapregion</code>'s maps or a few fields newer than the schema.</li>
 			<li><b>Other dimensions.</b> No test save has chunks outside dimension 0.</li>
 			<li><b>Chiseled blocks and ground storage on 1.22.</b> The 1.22.7 test world has neither yet.</li>

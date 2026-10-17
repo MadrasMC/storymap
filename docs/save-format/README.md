@@ -125,8 +125,8 @@ The names are the schema's (`ServerChunk`).
 | # | Wire type | Name | Chunks containing it (of 6,880) | Status |
 | --- | --- | --- | --- | --- |
 | 1 | bytes | `blocksCompressed` | 6,880 | **Decoded** (§4) |
-| 2 | bytes | `lightCompressed` | 6,880 | Empty, or a single zstd frame with no length in front, unlike fields 1 and 16. Not decoded. |
-| 3 | bytes | `lightSatCompressed` | 6,880 | Like field 2 |
+| 2 | bytes | `lightCompressed` | 6,880 | **Light**, the bit planes (below) |
+| 3 | bytes | `lightSatCompressed` | 6,880 | **Light**, the palette (below) |
 | 5 | varint | `EntitiesCount` | 131 | Present in the chunks with field 6 |
 | 6 | bytes, repeated | `EntitiesSerialized` | 131 (312 entries) | One entity per entry: two strings, the entity's class (`EntityAgent`, `EntityItem`, `EntityFish`, …) and the game version that wrote it, then its data, not decoded. Strings as in §5. |
 | 7 | varint | `BlockEntitiesCount` | 539 | Present in the chunks with field 8 |
@@ -135,18 +135,37 @@ The names are the schema's (`ServerChunk`).
 | 10 | varint, repeated | `lightPositions` | 123 (27,951 entries) | Unknown |
 | 11 | | `ServerSideModdata` | 0 | Mods' data kept on the server |
 | 12 | bytes | `GameVersionCreated` | 6,880 | **Decoded:** UTF-8 text, e.g. `1.19.1`; by its name, the version that created the chunk, so one save can mix versions. |
-| 13 | varint | `EmptyBeforeSave` | 1,528 | A bool, 1 wherever it's present |
+| 13 | varint | `EmptyBeforeSave` | 1,528 | A bool, 1 wherever it's present. Only on chunks with light, nearly all of them sunlit throughout, so perhaps chunks of open air. *(Unverified.)* |
 | 14 | bytes | `DecorsSerialized` | 6,880 | Decor: a sparse map keyed by block position and decor index, the face of the block it's on and, for cave art, a spot on a 16 × 16 grid on that face *([Wiki: VCDBS format](https://wiki.vintagestory.at/Modding:VCDBS_format#chunk))*. Not decoded. |
 | 15 | varint | `savedCompressionVersion` | 6,880 | 2 in every chunk of every test save; `gamedata` field 37 is 2 as well (§6) |
 | 16 | bytes | `liquidsCompressed` | 6,880 | **Liquids**, same format as field 1 (§4). Above a deep lake bed in the 1.22.7 world, chunks y 0–3 have the liquid palette `[0, 2966]`; 2966 is `water-still-7` (§6). |
 | 17 | varint | `BlocksPlaced` | 8 | A count |
 | 18 | varint | `BlocksRemoved` | 2 | A count |
 
-*(Verified (1.19): counts and wire types from scanning every chunk in the sample. Verified (1.19, 1.22.7): fields 2, 3, 6 and 13 as described, in every chunk of every test save.)*
+*(Verified (1.19): counts and wire types from scanning every chunk in the sample. Verified (1.19, 1.22.7): fields 6 and 13 as described, in every chunk of every test save.)*
 
 **1.22.7:** the same field numbers with the same wire types. Field 12 is `1.22.7` in every chunk. Field 14 appears in only 350 of 6,224 chunks (every chunk in 1.19), and fields 17 and 18 don't appear. *(Verified (1.22.7).)*
 
-The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities, entities, decor, mod data and format version metadata. *([Wiki: Chunk Data Storage](https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage))* In memory the game holds a chunk's blocks, liquids and light in layers of the same palette-and-planes kind as §4. *([Forum](https://www.vintagestory.at/forums/topic/19778-understanding-and-improving-the-games-savefiles-serialization-and-compression/).)*
+The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities, entities, decor, mod data and format version metadata. *([Wiki: Chunk Data Storage](https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage))*
+
+### Light: fields 2 and 3
+
+Light is a layer of the same kind as blocks (§4), a palette and bit planes, but split across two fields, each one whole zstd frame with no length in front:
+
+- **Field 3 is the palette:** `i32` light values, the first always 0. Despite its name, it holds nothing but the palette.
+- **Field 2 is the bit planes:** planes of 1,024 `i32`s, as many as the palette needs by the same rule as blocks (§4), read the same way.
+
+A light value packs several levels into one number:
+
+| Bits | Value |
+| --- | --- |
+| 0–4 | Sunlight: 0–22 in the test saves, 22 under open sky |
+| 5–9 | Light from blocks, such as torches: 0–18 |
+| 10–14, 15–19 | Non-zero exactly where bits 5–9 are; probably the colour of that light *(Unverified)* |
+
+When both fields are empty, the chunk stores no light. Chunk columns get light when world generation reaches stage 4 (§7): every column at stage 4 or later has light, and in the 1.22.7 world no column before it does. In the 1.19 sample, 16 earlier columns have light in their lowest chunks only (y 0–2). In columns with light, most chunks at the bottom levels store none, presumably being dark all through. A few chunks hold frames that decompress to nothing.
+
+*(Verified (1.19, 1.22.7): in every chunk with light, 3,539 in the 1.19 sample and 2,519 in the 1.22.7 world, field 2 has exactly the planes field 3's palette needs, and the palette starts with 0. Stages checked column by column: in the 1.22.7 world the 490 columns with light are exactly those at stage 4 or later; in the sample, 624 at stage 4 or later and the 16 earlier ones.)*
 
 **Earlier observations** (from an older sample save, no longer in the repo): fields seen were 1, 2, 3, 6, 8, 12, 14, 16; fields 6 and 8 repeat; changing one solid block changed fields 1, 2 and 3. The 1.19 sample shows that fields 5, 7, 13, 17 and 18 also appear, but only in some chunks.
 
@@ -446,7 +465,7 @@ Each generated structure is `{ 1: Code, 2: Group, 3: Location, 4: SuppressRivule
 
 ## 9. Open questions
 
-- **Other chunk fields:** light (2, 3), entities' data (6), field 10, decor (14).
+- **Other chunk fields:** entities' data (6), field 10, the empty flag (13), decor (14), and the two light fields that are probably colour (§3).
 - **`playerdata`:** not decoded, though the schema names its fields. **`mapchunk`:** field 18 isn't in the schema. **`mapregion`:** fields 19–21 aren't in the schema, and the maps' values aren't interpreted. **`gamedata`:** the field-11 entries other than the ID lists aren't decoded.
 - **Other dimensions.** No test save has chunks outside dimension 0 (§2); a world with a time-switched alternate world or a vehicle would show how they're stored.
 - **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; a world with ruins or a placed chiseled block, and items on the ground, would cover them.
