@@ -9,7 +9,7 @@ Storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 ## Top-down map
 
-3. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`. The game's own client map cache (`mappiece` rows in `Maps/<id>.db`, [save format §7](docs/save-format/README.md#the-games-map-cache)) could serve as a colour reference once its data is decoded.
+3. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`. The game's own client map cache (`mappiece` rows in `Maps/<id>.db`, [save format §7](docs/save-format/README.md#the-games-map-cache)) could serve as a colour reference: each piece is an array of pixel colours.
 4. **Themed map colours.** After the colour map: let a theme carry a palette the renderer draws the tiles with, so the map's colours suit the theme around it (a plain map for the plain theme). Today a theme draws only the page around the map ([`docs/themes.md`](docs/themes.md)), and the tiles are always sepia.
 5. **Incremental rendering.** Re-render only the tiles whose chunks changed since the last render, and the zoomed-out tiles above them, instead of the whole world every time.
 6. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.

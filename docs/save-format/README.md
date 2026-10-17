@@ -9,7 +9,7 @@ The text reference for how a Vintage Story `.vcdbs` save is laid out, as far as 
 | 1.19.1, 1.19.2 | **Verified** against a sample save written by both versions (6,880 chunks: 4,928 by 1.19.1, 1,952 by 1.19.2). |
 | 1.22.7 (current) | **Verified** against a new world (6,224 chunks, all written by 1.22.7): schema, positions, chunk fields, block and liquid decoding, and the block entity format. That world has no chiseled blocks or ground storage, so those are verified on 1.19 only. Claims marked **Source** also come from the 1.22.7 code. |
 
-Version-specific differences are noted inline, in the section they affect, as **1.19:** / **1.22:** notes. If a later version changes the format so much that inline notes stop being readable, split that version into its own file.
+Version-specific differences are noted inline, in the section they affect, as **1.19:** / **1.22:** notes. If a later version changes the format so much that inline notes stop being readable, split that version into its own file. The game's developer has said they'll look at how saves are stored and compressed, likely for 1.23. *([Forum](https://www.vintagestory.at/forums/topic/19778-understanding-and-improving-the-games-savefiles-serialization-and-compression/), Tyron's reply.)*
 
 ## How claims are sourced
 
@@ -17,11 +17,13 @@ Every section says where its information comes from:
 
 - **Verified (1.19):** checked against a sample save written by 1.19.1 and 1.19.2, with how it was checked.
 - **Verified (1.22.7):** checked against a fresh 1.22.7 world with two explored areas far apart (6,224 chunks), or, where it says "the larger 1.22.7 world", a more compact one of 3,649 chunk columns and 29,192 chunks.
+- **Source:** read in Vintage Story's open-source code on GitHub ([vsapi](https://github.com/anegostudios/vsapi), [vssurvivalmod](https://github.com/anegostudios/vssurvivalmod), [vsessentialsmod](https://github.com/anegostudios/vsessentialsmod)). Links are pinned to the commits read on 2026-10-10, each repository's "Updated to Version 1.22.7" commit: vsapi `63d33f7`, vssurvivalmod `849fa8c`, vsessentialsmod `06673b6`. Pin new links to a commit or tag too, never `master`. The chunk storage code itself is in the closed engine library and isn't available.
+- **Schema:** the names, numbers and types of every table's Protobuf fields, from [vs-proto](https://github.com/bluelightning32/vs-proto), which generates a Protobuf schema from the serialisation attributes on the game's own classes. Its [`schema-1.21.0.rc.3.proto`](https://github.com/bluelightning32/vs-proto/blob/80ff05afa98af324425ef6f3e5f12b4bea9e6a3f/schema-1.21.0.rc.3.proto) (commit `80ff05a`) is for 1.21.0-rc.3; fields 1.22.7 writes that it doesn't list are marked as such.
+- **Wiki:** the [Vintage Story wiki](https://wiki.vintagestory.at/), above all its [VCDBS format](https://wiki.vintagestory.at/Modding:VCDBS_format) page (checked there for 1.19.8), which decodes each table with the schema above.
+- **Forum:** [Understanding and improving the game's savefiles](https://www.vintagestory.at/forums/topic/19778-understanding-and-improving-the-games-savefiles-serialization-and-compression/), a modder's study of how the game stores chunks, with a reply from the game's developer.
+- **Unverified:** an observation or guess that hasn't been confirmed.
 
 The test saves aren't in the repo.
-- **Source:** read in Vintage Story's open-source code on GitHub ([vsapi](https://github.com/anegostudios/vsapi), [vssurvivalmod](https://github.com/anegostudios/vssurvivalmod), [vsessentialsmod](https://github.com/anegostudios/vsessentialsmod)). Links are pinned to the commits read on 2026-10-10, each repository's "Updated to Version 1.22.7" commit: vsapi `63d33f7`, vssurvivalmod `849fa8c`, vsessentialsmod `06673b6`. Pin new links to a commit or tag too, never `master`. The chunk storage code itself is in the closed engine library and isn't available.
-- **Wiki:** the [Vintage Story wiki](https://wiki.vintagestory.at/).
-- **Unverified:** an observation or guess that hasn't been confirmed.
 
 ## 1. The save file
 
@@ -41,15 +43,15 @@ CREATE TABLE sqlite_sequence(name,seq)
 CREATE INDEX index_playeruid on playerdata(playeruid)
 ```
 
-| Table | Rows in sample | What it holds |
-| --- | --- | --- |
-| `chunk` | 6,880 | One 32 × 32 × 32 cube of blocks per row. "Chunks do not span the world height." *([Wiki: WorldGen Concept](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
-| `mapchunk` | 860 | One row per chunk column: "information on a chunk column, such as the rain height or snow accumulation." *([Wiki](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
-| `mapregion` | 20 | "Information over an area of 16x16 chunk columns, such as weather and maps required for world generation." *([Wiki](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
-| `gamedata` | 1 | The save's global data (429,515 bytes in the sample): the block and item names, world size and settings (§6). |
-| `playerdata` | 1 | Per-player data. Not decoded. |
+| Table | Rows in sample | `data` message | What it holds |
+| --- | --- | --- | --- |
+| `chunk` | 6,880 | `ServerChunk` | One 32 × 32 × 32 cube of blocks per row. "Chunks do not span the world height." *([Wiki: WorldGen Concept](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
+| `mapchunk` | 860 | `ServerMapChunk` | One row per chunk column: "information on a chunk column, such as the rain height or snow accumulation." *([Wiki](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
+| `mapregion` | 20 | `ServerMapRegion` | "Information over an area of 16x16 chunk columns, such as weather and maps required for world generation." *([Wiki](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* (§8) |
+| `gamedata` | 1 | `SaveGame` | The save's global data (429,515 bytes in the sample): the block and item names, world size and settings (§6). |
+| `playerdata` | 1 | `ServerWorldPlayerData` | One row per player who has joined, keyed by `playeruid`: their inventories, game mode, death count and the player entity, which holds their position. Privileges aren't here but in JSON files in the data folder's `Playerdata` folder. *([Wiki: VCDBS format](https://wiki.vintagestory.at/Modding:VCDBS_format).)* |
 
-`sqlite_sequence` is SQLite's own table for `AUTOINCREMENT`, not game data.
+`sqlite_sequence` is SQLite's own table for `AUTOINCREMENT`, not game data. The message names are the game's classes, from the schema; `gamedata` has a single row whose `savegameid` is 1. *(Schema; wiki.)*
 
 **1.22.7:** the new world has 6,224 chunks, 778 map chunks, 32 map regions, and one row each in `gamedata` and `playerdata`.
 
@@ -66,7 +68,7 @@ The world is a grid of blocks, stored at three scales:
 - **A chunk column** is the stack of chunks with the same x and z: 8 chunks in a 256-block-high world (y 0–7). Only generated chunks are saved, so a column can have gaps.
 - **`chunk` holds the blocks**, one row per cube (§3–§5). It's the only table with blocks in it.
 - **`mapchunk` holds per-column summaries**, one row per chunk column (§7): for each of its 32 × 32 block columns, a few numbers, such as the height of the highest block rain can't fall through. It's a 2D layer over the 3D chunks.
-- **`mapregion` holds coarser world generation data** over 16 × 16 chunk columns. Not decoded.
+- **`mapregion` holds coarser world generation data** over 16 × 16 chunk columns (§8).
 
 Finding things from a block position (x, y, z), all in absolute block coordinates:
 
@@ -77,61 +79,74 @@ This is what makes a top-down map cheap: the map chunk gives each block column's
 
 ## 2. Positions
 
-`chunk.position` is a 64-bit integer packing the chunk's coordinates *(Verified (1.19): decoding gives a contiguous block of chunks, and decoding the blocks with these coordinates renders continuous terrain; see [`src/vs/Chunk.zig`](../../src/vs/Chunk.zig))*:
+`chunk.position` is a 64-bit integer packing the chunk's coordinates and its dimension *([Wiki: VCDBS format](https://wiki.vintagestory.at/Modding:VCDBS_format#ChunkPos). Verified (1.19): decoding gives a contiguous block of chunks, and decoding the blocks with these coordinates renders continuous terrain. Verified (1.19, 1.22.7): in every test save, the guard, dimension and reserved bits are 0 in every `chunk`, `mapchunk` and `mapregion` position)*:
 
 | Bits | Field |
 | --- | --- |
-| 0–26 | x (27 bits) |
-| 27–53 | z (27 bits) |
-| 54–63 | y (10 bits) |
+| 0–20 | x (21 bits) |
+| 21 | guard, 0 |
+| 22–26 | dimension, low 5 bits |
+| 27–47 | z (21 bits) |
+| 48 | guard, 0 |
+| 49–53 | dimension, high 5 bits |
+| 54–62 | y (9 bits) |
+| 63 | reserved, 0 |
 
 ```zig
 const Position = packed struct(u64) {
-    x: u27,
-    z: u27,
-    y: u10,
+    x: u21,
+    guard1: u1,
+    dimensionLow: u5,
+    z: u21,
+    guard2: u1,
+    dimensionHigh: u5,
+    y: u9,
+    reserved: u1,
 };
 ```
 
-- These are chunk coordinates: chunk (x, y, z) holds blocks x·32 … x·32+31, and so on.
-- SQLite integers are signed, so a chunk with y ≥ 512 (top bit set) is stored as a negative number. *(Inferred from SQLite's integer type; the sample has no chunks that high, max y = 7.)*
+- These are chunk coordinates: chunk (x, y, z) holds blocks x·32 … x·32+31, and so on. The field widths are the game's limits: 2²⁶ blocks across (`MaxWorldSizeXZ`) is 2²¹ chunks, and 16,384 blocks high (`MaxWorldSizeY`) is 512 chunks. *(Source: [vsapi `GlobalConstants.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Config/GlobalConstants.cs).)*
+- Bit 63 is never set, so positions are never negative, though SQLite integers are signed.
+- **Dimensions** are separate block spaces stored in the same tables: 0 is the normal world, 1 holds mini-dimensions (WorldEdit previews, vehicles and the like, each a separate cube of blocks) and 2 the time-switched alternate world, such as the Devastation. *(Source: [vsapi `Dimensions.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Config/Dimensions.cs).)* A map of the world should only draw dimension 0. Reading the dimension bits as part of x and z, as a 27-bit split does, would put other dimensions' chunks millions of blocks away. The test saves have only dimension 0, though `gamedata` counts one mini-dimension created in the 1.22.7 worlds (§6).
 - Coordinates are absolute. The game shows coordinates shifted from these by half the world size, so that the world's centre, the default spawn point, is 0, 0. *(Checked roughly (1.22.7): in the larger 1.22.7 world, the spot where the player first spawned is at about 0, 0 in Storymap's viewer, which shifts positions this way using the world size from `gamedata` fields 1 and 3, §6. One spot, by eye.)*
 
 `mapchunk.position` uses the same packing with y = 0, one row per chunk column. *(Verified (1.19): the 860 `mapchunk` positions are exactly the 860 distinct (x, z) columns in `chunk`. Verified (1.22.7): likewise, 778 and 778.)*
 
 **1.22.7:** the new world's chunks form two separate areas: a 15 × 15-column square centred on chunk (16000, 16000), which is block (512,000, 512,000), the middle of a 1,024,000-block world; and a round area centred on the player at block (514,605, 120, 515,605), chunk (16081, 3, 16112), 2,605 blocks east and 3,606 blocks south of the centre. The player didn't move after spawning. The world's `spawnRadius` is 5,000 (§6), so the game places a new player up to 5,000 blocks from the centre; this one is about 4,450 blocks away. The square is presumably generated at the default spawn point before the game picks the actual one. *(Observed: the player's position is the only triple of doubles in the world's coordinate range in `playerdata`, stored three times; the player format itself isn't decoded. The spawn radius is verified; why the square is generated isn't.)*
 
-`mapregion.position` decodes to x 997–1001, z 998–1001 with the same packing, consistent with one region per 16 × 16 chunk columns (chunk x 15979–16010 ÷ 16). *(Inferred from the sample; the exact mapping isn't confirmed.)*
+`mapregion.position` uses the same packing with the region's own coordinates: chunk coordinates ÷ 16, rounded down. In the sample it decodes to x 997–1001, z 998–1001, where the chunks are at x 15979–16010. *(Verified (1.19, 1.22.7): in every test save the region keys span the chunks' coordinates ÷ 16, plus one region on each side.)* The wiki describes the key as the position of the region's north-west chunk instead, which would be about 16,000 here.
 
 ## 3. Chunk data: Protobuf fields
 
 `chunk.data` is a [Protobuf](https://protobuf.dev/programming-guides/encoding/) message: a sequence of `(field number, wire type, value)` entries with no schema in the file. Storymap parses it with [`src/ProtoBuf.zig`](../../src/ProtoBuf.zig).
 
-Field names come from the `fieldNames` list in [`src/vs/Chunk.zig`](../../src/vs/Chunk.zig), whose origin isn't recorded; treat them as best guesses unless the status says decoded.
+The names are the schema's (`ServerChunk`).
 
 | # | Wire type | Name | Chunks containing it (of 6,880) | Status |
 | --- | --- | --- | --- | --- |
-| 1 | bytes | `compressed_blocks` | 6,880 | **Decoded** (§4) |
-| 2 | bytes | `compressed_light` | 6,880 | Unknown |
-| 3 | bytes | `compressed_light_sat` | 6,880 | Unknown |
-| 5 | varint | `entities_count` | 131 | Unknown; same chunk count as field 6 |
-| 6 | bytes, repeated | `entities_serialized` | 131 (312 entries) | Unknown |
-| 7 | varint | `block_entities_count` | 539 | Unknown; same chunk count as field 8 |
-| 8 | bytes, repeated | `block_entities` | 539 (14,447 entries) | **Decoded** (§5) |
-| 10 | varint, repeated | `lights` | 123 (27,951 entries) | Unknown |
-| 12 | bytes | `game_version` | 6,880 | **Decoded:** UTF-8 text, e.g. `1.19.1`. The version that last wrote this chunk, so one save can mix versions. |
-| 13 | varint | `empty` | 1,528 | Unknown |
-| 14 | bytes | `decors` | 6,880 | Unknown |
-| 15 | varint | `saved_compression_version` | 6,880 | Unknown |
-| 16 | bytes | `compressed_liquids` | 6,880 | **Liquids**, same format as field 1 (§4). Above a deep lake bed in the 1.22.7 world, chunks y 0–3 have the liquid palette `[0, 2966]`; 2966 is `water-still-7` (§6). |
-| 17 | varint | `blocks_placed` | 8 | Unknown |
-| 18 | varint | `blocks_removed` | 2 | Unknown |
+| 1 | bytes | `blocksCompressed` | 6,880 | **Decoded** (§4) |
+| 2 | bytes | `lightCompressed` | 6,880 | Empty, or a single zstd frame with no length in front, unlike fields 1 and 16. Not decoded. |
+| 3 | bytes | `lightSatCompressed` | 6,880 | Like field 2 |
+| 5 | varint | `EntitiesCount` | 131 | Present in the chunks with field 6 |
+| 6 | bytes, repeated | `EntitiesSerialized` | 131 (312 entries) | One entity per entry: two strings, the entity's class (`EntityAgent`, `EntityItem`, `EntityFish`, …) and the game version that wrote it, then its data, not decoded. Strings as in §5. |
+| 7 | varint | `BlockEntitiesCount` | 539 | Present in the chunks with field 8 |
+| 8 | bytes, repeated | `BlockEntitiesSerialized` | 539 (14,447 entries) | **Decoded** (§5) |
+| 9 | | `moddata` | 0 | Mods' data, by mod |
+| 10 | varint, repeated | `lightPositions` | 123 (27,951 entries) | Unknown |
+| 11 | | `ServerSideModdata` | 0 | Mods' data kept on the server |
+| 12 | bytes | `GameVersionCreated` | 6,880 | **Decoded:** UTF-8 text, e.g. `1.19.1`; by its name, the version that created the chunk, so one save can mix versions. |
+| 13 | varint | `EmptyBeforeSave` | 1,528 | A bool, 1 wherever it's present |
+| 14 | bytes | `DecorsSerialized` | 6,880 | Decor: a sparse map keyed by block position and decor index, the face of the block it's on and, for cave art, a spot on a 16 × 16 grid on that face *([Wiki: VCDBS format](https://wiki.vintagestory.at/Modding:VCDBS_format#chunk))*. Not decoded. |
+| 15 | varint | `savedCompressionVersion` | 6,880 | 2 in every chunk of every test save; `gamedata` field 37 is 2 as well (§6) |
+| 16 | bytes | `liquidsCompressed` | 6,880 | **Liquids**, same format as field 1 (§4). Above a deep lake bed in the 1.22.7 world, chunks y 0–3 have the liquid palette `[0, 2966]`; 2966 is `water-still-7` (§6). |
+| 17 | varint | `BlocksPlaced` | 8 | A count |
+| 18 | varint | `BlocksRemoved` | 2 | A count |
 
-*(Verified (1.19): counts and wire types from scanning every chunk in the sample.)*
+*(Verified (1.19): counts and wire types from scanning every chunk in the sample. Verified (1.19, 1.22.7): fields 2, 3, 6 and 13 as described, in every chunk of every test save.)*
 
-**1.22.7:** the same field numbers with the same wire types. Field 12 is `1.22.7` in every chunk; field 15 is 2 in every chunk of both saves. Field 14 appears in only 350 of 6,224 chunks (every chunk in 1.19), and fields 17 and 18 don't appear. *(Verified (1.22.7).)*
+**1.22.7:** the same field numbers with the same wire types. Field 12 is `1.22.7` in every chunk. Field 14 appears in only 350 of 6,224 chunks (every chunk in 1.19), and fields 17 and 18 don't appear. *(Verified (1.22.7).)*
 
-The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities, entities, decor, mod data and format version metadata. *([Wiki: Chunk Data Storage](https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage))*
+The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities, entities, decor, mod data and format version metadata. *([Wiki: Chunk Data Storage](https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage))* In memory the game holds a chunk's blocks, liquids and light in layers of the same palette-and-planes kind as §4. *([Forum](https://www.vintagestory.at/forums/topic/19778-understanding-and-improving-the-games-savefiles-serialization-and-compression/).)*
 
 **Earlier observations** (from an older sample save, no longer in the repo): fields seen were 1, 2, 3, 6, 8, 12, 14, 16; fields 6 and 8 repeat; changing one solid block changed fields 1, 2 and 3. The 1.19 sample shows that fields 5, 7, 13, 17 and 18 also appear, but only in some chunks.
 
@@ -263,24 +278,45 @@ Every field is 4 bits except the material, so in hexadecimal each field is one d
 
 ## 6. Game data
 
-`gamedata` has a single row whose `data` is one Protobuf message. *(Verified (1.19, 1.22.7): it parses completely in both saves.)* The file has no field names; the meanings below come from the values, and the uncertain ones say so.
+`gamedata` has a single row whose `data` is one `SaveGame` message. *(Verified (1.19, 1.22.7): it parses completely in every test save.)* Names and types are the schema's; the values are from the test saves. *(Verified (1.19, 1.22.7).)*
 
-| # | Wire type | 1.22.7 value (1.19 sample) | Meaning |
+| # | Name | 1.22.7 value (1.19 sample) | Meaning |
 | --- | --- | --- | --- |
-| 1, 2, 3 | varint | 1,024,000 · 256 · 1,024,000 | World size in blocks: x, height, z |
-| 11 | bytes, repeated | 23 entries | Named data entries `{ 1: key, 2: value }`, including the block and item IDs (below) |
-| 13 | bytes | `Gloomy Cave Valley` | World name |
-| 17 | bytes | `2026-10-10T22:25:37.6821955+05:30` | A timestamp, probably the last save |
-| 18 | bytes | `1.22.7` (`1.19.1`) | Probably the version the world was created in |
-| 21 | bytes | `1.22.7` (`1.19.2`) | Probably the version that last saved it; the sample's chunks were written by both |
-| 22 | bytes | a player name | Unknown |
-| 29 | bytes | `homosapiens` (`surviveandbuild`) | Play style |
-| 30 | bytes | `standard` | World type |
-| 31 | bytes | a tree attribute | World configuration (below) |
-| 34 | bytes | a UUID | Same as the file name of the world's map cache in the data folder's `Maps/` (§7, [the game's map cache](#the-games-map-cache)) |
-| 36 | bytes, repeated | 48 entries `{ 1: name, 2: 1 }`, e.g. `game:v1.12clayplanters` | Names that are keys in the game's `config/remaps.json`; probably remaps already applied to this world |
+| 1, 2, 3 | `MapSizeX`, `MapSizeY`, `MapSizeZ` | 1,024,000 · 256 · 1,024,000 | World size in blocks: x, height, z |
+| 4 | `PlayerDataByUID` | none | Players are in `playerdata` instead |
+| 7 | `Seed` | a number | The world seed |
+| 8 | `SimulationCurrentFrame` | none | |
+| 10 | `LastEntityId` | 137 (422) | The last entity ID handed out |
+| 11 | `ModData` | 23 entries | Named data entries `{ 1: key, 2: value }`, including the block and item IDs (below) |
+| 12 | `TotalGameSeconds` | 3,140,135 (3,188,169) | The in-game clock, in game seconds |
+| 13 | `WorldName` | `Gloomy Cave Valley` | |
+| 14 | `TotalSecondsPlayed` | 101 (1,839) | Real time played |
+| 16 | `WorldPlayStyle` | none | |
+| 17 | `LastPlayed` | `2026-10-10T22:25:37.6821955+05:30` | |
+| 18 | `CreatedGameVersion` | `1.22.7` (`1.19.1`) | |
+| 19 | `GameTimeSpeed` | none | |
+| 20 | `MiniDimensionsCreated` | 1 (none) | Mini-dimensions created so far (§2) |
+| 21 | `LastSavedGameVersion` | `1.22.7` (`1.19.2`) | The sample's chunks were created by both versions |
+| 22 | `CreatedByPlayerName` | a player name | |
+| 23 | `EntitySpawning` | 1 | A bool |
+| 25 | `HoursPerDay` | 24.0 | |
+| 26 | `LastHerdId` | 77 (201) | |
+| 27 | `LandClaims` | none (1) | Each a list of boxes, an owner and permissions |
+| 28 | `TimeSpeedModifiers` | `baseline`: 60.0 | |
+| 29 | `PlayStyle` | `homosapiens` (`surviveandbuild`) | |
+| 30 | `WorldType` | `standard` | |
+| 31 | `WorldConfigBytes` | a tree attribute | World configuration (below) |
+| 32 | `PlayStyleLangCode` | `preset-homosapiens` (`preset-surviveandbuild`) | |
+| 33 | `LastBlockItemMappingVersion` | 1 | |
+| 34 | `SavegameIdentifier` | a UUID | Same as the file name of the world's map cache in the data folder's `Maps/` (§7, [the game's map cache](#the-games-map-cache)) |
+| 35 | `CalendarSpeedMul` | 0.5 | |
+| 36 | `RemappingsAppliedByCode` | 48 entries `{ 1: name, 2: 1 }`, e.g. `game:v1.12clayplanters` (30) | Remaps already applied to this world: keys in the game's `config/remaps.json`, each with `true` |
+| 37 | `HighestChunkdataVersion` | 2 | Chunks' field 15 is 2 as well (§3) |
+| 38 | `TotalGameSecondsStart` | 3,139,200 | The in-game clock when the world was created |
+| 39 | `CreatedWorldGenVersion` | 3 (2) | Map chunks' field 16 matches it (§7) |
+| 40 | `DefaultSpawn` | none | `{ x, y, z, yaw, pitch, roll, RemainingUses }`. The test saves' players spawned around the world's centre (§2). |
 
-The other fields are small numbers or fixed-width floats (field 25 is 24.0, field 35 is 0.5) and are unknown.
+"None" means the field isn't in the test saves. Field 21 is the version Storymap's viewer shows.
 
 ### Block and item IDs
 
@@ -299,7 +335,7 @@ The field-11 entry with key `BlockIDs` maps every block ID to its block code. It
 - **Completeness:** every ID in every solid and liquid palette (41,648 entries in the 1.22.7 world, 52,856 in the 1.19 sample) and every chiseled-block material (9,309 in the sample) has a code. *(Verified with Storymap's [`src/vs/GameData.zig`](../../src/vs/GameData.zig).)*
 - **No domain prefixes:** codes are written without one (`rock-granite`, not `game:rock-granite`) in both saves. Neither world has mods, so how modded codes appear is still open.
 
-The other field-11 keys (`worldeditworkspaces`, `ambient`, `temporalStormData`, `riftweather`, …) aren't decoded.
+The other field-11 keys (`worldeditworkspaces`, `ambient`, `temporalStormData`, `riftweather`, …) are mods' and game systems' own data, and aren't decoded.
 
 ### World configuration
 
@@ -307,29 +343,36 @@ Field 31 is a tree attribute (§5) whose values are all strings, e.g. `gameMode:
 
 ### Sea level
 
-The save doesn't store a sea level; neither the fields above nor the world configuration has one. *(Verified (1.19, 1.22.7).)* The game derives it from the world height (field 2): the world height × 0.4313725490196078 (= 110 / 255), rounded down, so **110** for the default height of 256. *(Wiki: [Sea level](https://wiki.vintagestory.at/Sea_level), checked there for 1.20.12; the API only calls it "the currently configured sea level" ([vsapi `IWorldAccessor.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IWorldAccessor.cs)).)*
+The save doesn't store a sea level; neither the fields above, the schema nor the world configuration has one. *(Verified (1.19, 1.22.7).)* The game derives it from the world height (field 2): the world height × 0.4313725490196078 (= 110 / 255), rounded down, so **110** for the default height of 256. *(Wiki: [Sea level](https://wiki.vintagestory.at/Sea_level), checked there for 1.20.12; the API only calls it "the currently configured sea level" ([vsapi `IWorldAccessor.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IWorldAccessor.cs)).)*
 
 Water fills the blocks below sea level: the top water block of a sea or lake is at y = 109, so the water surface is at height 110. *(Verified (1.19, 1.22.7): both worlds are 256 high; the highest liquid block in each column is water at y = 109 in 84% of the 1.22.7 world's 177,045 water columns and 89% of the 1.19 sample's 219,284. The rest are lakes and springs above sea level.)*
 
 ## 7. Map chunks
 
-`mapchunk.data` is one plain Protobuf message per chunk column, not compressed: ~10 KB per row in the 1.22.7 world, ~17 KB in the 1.19 sample. *(Verified (1.19, 1.22.7): every row parses completely.)* Its per-column maps hold 1,024 values, one per block column at index `z * 32 + x`, written as repeated varints (not packed). The names come from the game's [`IMapChunk`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IMapChunk.cs) interface, matched to fields by their values; the wire format itself is in the closed engine.
+`mapchunk.data` is one plain Protobuf message per chunk column, not compressed: ~10 KB per row in the 1.22.7 world, ~17 KB in the 1.19 sample. *(Verified (1.19, 1.22.7): every row parses completely.)* Its per-column maps hold 1,024 values, one per block column at index `z * 32 + x`, written as repeated varints (not packed). The message is `ServerMapChunk`; names and types are the schema's, and the meanings come from the game's [`IMapChunk`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IMapChunk.cs) interface.
 
-| # | Wire type | Per row | Values (1.22.7 · 1.19) | Probably |
+| # | Wire type | Per row | Values (1.22.7 · 1.19) | Name |
 | --- | --- | --- | --- | --- |
+| 1 | bytes, repeated | some rows | keys such as `lastSnowAccumUpdateTotalHours`, `hotspringlocations` | `Moddata`, game systems' and mods' data by key |
 | 3 | varint | 1,024 | 54–65,535 · 0–65,534 | `RainHeightMap` (below) |
-| 4 | varint | 1 | 2–6 | `CurrentPass`, the world-generation stage (below) |
+| 4 | varint | 1 | 2–6 | `currentpass`, the world-generation stage (below) |
+| 6 | varint | | none | `TopRockIdMapOld` |
 | 7 | varint | 1,024 | 3–151 · 46–236 | `WorldGenTerrainHeightMap` (below) |
+| 8 | bytes, repeated | some rows | | `ScheduledBlockUpdates`, block positions `{ X, InternalY, Z }` |
+| 9 | bytes, repeated | some rows | | `NewBlockEntities`, block positions as in field 8 |
 | 10 | varint | 1 | 109–166 · 109–236 | `YMax`, the highest non-air block |
 | 11 | bytes | 1 | always 1,024 bytes | `CaveHeightDistort` (a byte array) |
-| 12 | varint | 1,024 | always 0 | Unknown |
+| 12 | varint | 1,024 | always 0 | `SedimentaryThicknessMap`, unused *([Wiki: VCDBS format](https://wiki.vintagestory.at/Modding:VCDBS_format#mapchunk))* |
 | 13 | varint | 1,024 | block IDs, e.g. 6,763–6,769 in the 1.19 sample (6,769 is `rock-granite`) | `TopRockIdMap`, the top rock layer's block |
-| 16 | varint | 1 | 3 · 2 | Unknown; differs between the versions |
+| 15 | bytes, repeated | some rows (1.19 only) | | `SnowAccum`, `{ Key: { X, Y }, Value: float }` pairs |
+| 16 | varint | 1 | 3 · 2 | `WorldGenVersion`, the same as `gamedata` field 39 (§6) |
+| 17 | bytes, repeated | some rows | | `ScheduledBlockLightUpdates`, `{ X, Y, Z, W }` |
+| 18 | | some rows (1.22.7 only) | | Not in the 1.21 schema; unknown |
 
-Fields 1, 8, 9 and 15 appear in some rows only and aren't decoded.
+*(Verified (1.19, 1.22.7): fields and values in every test save.)*
 
-- **Field 3, the rain height:** "the last block that is not rain permeable before the first airblock" (`IMapChunk`). Rain stops at water but falls through plants and loose stones, so this is the water surface or the ground beneath them. A column with no blocks at all has 0. A few columns hold 65,531–65,535, far above the world (3 in the 1.22.7 world, 14 in the 1.19 sample); as signed 16-bit numbers those are −5 to −1, perhaps heights that went below 0. A reader should treat a height above the column's chunks as unknown. It's what the game's own world map draws *(Source: [vsessentialsmod `ChunkMapLayer.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs))*. *(Verified (1.19, 1.22.7), against the highest block of every column: in the 1.22.7 world it's the highest solid block in 422,000 columns and the water surface in 166,000; in nearly all of the other 208,000 it's below the highest block, which there is tall grass, loose stones or flints, reeds, tule or horsetail. 777 columns (0.1%) point at a block that's gone, presumably changed afterwards. In the 1.19 sample, the 49,161 columns of a cleared area hold 0 and no blocks. The index order `x * 32 + z` matches far fewer columns.)*
-- **Field 7, the terrain height:** "the last block before the first airblock before world gen pass Vegetation"; for seas and lakes, their bed (`IMapChunk`). *(Verified (1.19, 1.22.7): it's never a water surface; it equals the highest solid block in 65% of the 1.22.7 world's columns and 49% of the 1.19 sample's, the rest being under plants, water or later changes.)*
+- **Field 3, the rain height:** "the last block that is not rain permeable before the first airblock" (`IMapChunk`). Rain stops at water but falls through plants and loose stones, so this is the water surface or the ground beneath them. A column with no blocks at all has 0. A few columns hold 65,531–65,535, far above the world (3 in the 1.22.7 world, 14 in the 1.19 sample): the game holds these heights as unsigned 16-bit numbers *([Forum](https://www.vintagestory.at/forums/topic/19778-understanding-and-improving-the-games-savefiles-serialization-and-compression/))*, so those are −5 to −1, perhaps heights that went below 0. A reader should treat a height above the column's chunks as unknown. It's what the game's own world map draws *(Source: [vsessentialsmod `ChunkMapLayer.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs))*. *(Verified (1.19, 1.22.7), against the highest block of every column: in the 1.22.7 world it's the highest solid block in 422,000 columns and the water surface in 166,000; in nearly all of the other 208,000 it's below the highest block, which there is tall grass, loose stones or flints, reeds, tule or horsetail. 777 columns (0.1%) point at a block that's gone, presumably changed afterwards. In the 1.19 sample, the 49,161 columns of a cleared area hold 0 and no blocks. The index order `x * 32 + z` matches far fewer columns.)*
+- **Field 7, the terrain height:** "the last block before the first airblock before world gen pass Vegetation"; for seas and lakes, their bed (`IMapChunk`). Unlike the rain height, the game doesn't update it after generation *([Wiki](https://wiki.vintagestory.at/Modding:VCDBS_format#mapchunk))*. *(Verified (1.19, 1.22.7): it's never a water surface; it equals the highest solid block in 65% of the 1.22.7 world's columns and 49% of the 1.19 sample's, the rest being under plants, water or later changes.)*
 - **Stale rows:** map chunks stay when their chunks' blocks are removed, so a reader should check the block at the stored height.
 
 ### World-generation stages
@@ -360,13 +403,51 @@ Passes 2 to 5 need the neighbouring columns, so the game surrounds everything it
 
 ### The game's map cache
 
-The game's world map isn't drawn from the save. It's a cache on the client: `Maps/<id>.db` in the data folder, where `<id>` is `gamedata` field 34 (§6). It has two tables, `mappiece (position integer PRIMARY KEY, data BLOB)` and `blockidmapping` (empty in the larger world). `mappiece` positions use the map chunks' packing (x | z << 27, no y), one piece per chunk column. The pieces' data isn't decoded.
+The game's world map isn't drawn from the save. It's a cache on the client: `Maps/<id>.db` in the data folder, where `<id>` is `gamedata` field 34 (§6). It has two tables, `mappiece (position integer PRIMARY KEY, data BLOB)` and `blockidmapping` (empty in the larger world). `mappiece` positions use the map chunks' packing (§2, no y), one piece per chunk column. Each piece is a `MapPieceDB` message whose field 1, `Pixels`, is a repeated `int32`: the piece's colours. *(Schema; the pieces haven't been decoded with it.)*
 
 The larger world's cache has 2,694 pieces, all of them stage-6 columns. The other 35 Done columns have no piece: they're finished but were never sent to the client, so the game's map doesn't show them. *(Verified (1.22.7): the larger world's cache, copied out of the data folder.)* Matching the game's map exactly would take this per-player cache, which a server doesn't have, so Storymap draws the stage-6 columns instead.
 
-## 8. Open questions
+## 8. Map regions
 
-- **Other chunk fields:** light (2, 3), entities (5, 6), field 10, decor (14), and the small varint fields.
-- **`mapregion`, `playerdata`:** not decoded. **`mapchunk`:** fields 1, 8, 9, 12, 15 and 16 aren't understood. **`gamedata`:** only the ID lists, world size and world configuration are decoded.
+`mapregion.data` is a `ServerMapRegion` message: world-generation maps for one region of 16 × 16 chunk columns (512 × 512 blocks). Most fields are an `IntDataMap2D`, a square grid of numbers *(Schema; [Wiki: VCDBS format](https://wiki.vintagestory.at/Modding:VCDBS_format#mapregion))*:
+
+| # | Name | Type |
+| --- | --- | --- |
+| 1 | `Data` | `int32`, packed: `Size × Size` values |
+| 2 | `Size` | `int32`, the side of the grid |
+| 3 | `TopLeftPadding` | `int32`, extra rows above and columns to the left |
+| 4 | `BottomRightPadding` | `int32`, extra rows below and columns to the right |
+
+The padding repeats values that belong to the neighbouring regions, so world generation blends across region borders. What's left, the inner size, can be more than 16 for a finer grid than one value per chunk column; the game interpolates between values. *(Wiki.)*
+
+| # | Name | Size (padding) | Inner size |
+| --- | --- | --- | --- |
+| 1 | `LandformMap` | 40 (4, 4) | 32 |
+| 2 | `ForestMap` | 17 (0, 1) | 16 |
+| 3 | `ClimateMap` | 20 (2, 2) | 16 |
+| 4 | `GeologicProvinceMap` | 14 (3, 3) | 8 |
+| 5 | `BushMap` | 33 (0, 1) | 32 |
+| 6 | `FlowerMap` | 17 (0, 1) | 16 |
+| 8 | `OreMaps` | one map per ore, keyed by name: 31 ores, `alum` to `sulfur` | |
+| 9 | `ModData` | game systems' and mods' data by key: `weatherState`, `clothSystems`, `dungeonPlaceTasks` | |
+| 10 | `ModMaps` | mods' maps by key; none in the test saves | |
+| 11 | `GeneratedStructures` | structures placed by world generation (below) | |
+| 12 | `RockStrata` | one map per rock stratum, 16 in all, the variants in the game's `worldgen/rockstrata.json`: 36 (2, 2) | 32 |
+| 13, 14 | `OreMapVerticalDistortTop`, `…Bottom` | 260 (2, 2) | 256 |
+| 15 | `BeachMap` | 33 (0, 1) | 32 |
+| 16 | `BlockPatchMaps` | one map per block patch, keyed by name: 15 (7 in the 1.19 sample), e.g. `mush1`, `hornwort` | |
+| 17 | `UpheavelMap` | 22 (3, 3) | 16 |
+| 18 | `OceanMap` | 26 (5, 5) | 16 |
+| 19, 20, 21 | | not in the 1.21 schema; in 1.22.7 only. Field 21 repeats nine times per region. | |
+
+*(Verified (1.19, 1.22.7): the sizes and keys in every test save.)*
+
+Each generated structure is `{ 1: Code, 2: Group, 3: Location, 4: SuppressRivulets, 5: SuppressTreesAndShrubs }`. `Location` is the structure's box in absolute block coordinates, `{ X1, Y1, Z1, X2, Y2, Z2 }`. Codes are file names, such as `lakes/small5.json` in 1.19 and `small5.json/lakes` in 1.22.7, and include lakes, gates, ruins, traders and villages, so a map could label them. A structure is stored in the region its box starts in, nearly always: 87 of the larger 1.22.7 world's 2,524 start outside it. *(Schema. Verified (1.19, 1.22.7): the larger 1.22.7 world has 2,524 structures and the 1.19 sample 437; the other 1.22.7 world has none.)*
+
+## 9. Open questions
+
+- **Other chunk fields:** light (2, 3), entities' data (6), field 10, decor (14).
+- **`playerdata`:** not decoded, though the schema names its fields. **`mapchunk`:** field 18 isn't in the schema. **`mapregion`:** fields 19–21 aren't in the schema, and the maps' values aren't interpreted. **`gamedata`:** the field-11 entries other than the ID lists aren't decoded.
+- **Other dimensions.** No test save has chunks outside dimension 0 (§2); a world with a time-switched alternate world or a vehicle would show how they're stored.
 - **Chiseled blocks and ground storage on 1.22.7.** The 1.22.7 test world has neither; a world with ruins or a placed chiseled block, and items on the ground, would cover them.
 - **Mods.** How modded blocks appear in palettes and `gamedata` (with a domain prefix or without) needs a world created with a mod enabled.
