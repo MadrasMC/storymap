@@ -1,13 +1,7 @@
 const std = @import("std");
-const DB = @import("sqlite.zig");
-const Chunk = @import("Chunk.zig");
-const ProtoBuf = @import("ProtoBuf.zig");
-const BlockEntity = @import("BlockEntity.zig");
-const VS = @import("Compression.zig");
-const extract = @import("extract.zig");
+const extract = @import("vs/extract.zig");
 const bench = @import("bench.zig");
 const topdown = @import("renderer/topdown.zig");
-const GameData = @import("GameData.zig");
 const viewer = @import("viewer.zig");
 
 const usage =
@@ -80,16 +74,19 @@ fn exitWithUsage() noreturn {
     std.process.exit(2);
 }
 
+// Every file with tests, so `zig build test` runs them all.
 test {
-    _ = GameData;
-    _ = @import("MapChunk.zig");
-    _ = ProtoBuf;
-    _ = VS;
-    _ = Chunk;
-    _ = DB;
-    _ = extract;
-    _ = bench;
-    _ = topdown;
+    _ = @import("sqlite.zig");
+    _ = @import("ProtoBuf.zig");
+    _ = @import("vs/Compression.zig");
+    _ = @import("vs/Chunk.zig");
+    _ = @import("vs/MapChunk.zig");
+    _ = @import("vs/GameData.zig");
+    _ = @import("vs/TreeAttribute.zig");
+    _ = @import("vs/BlockEntity.zig");
+    _ = @import("vs/extract.zig");
+    _ = @import("bench.zig");
+    _ = @import("renderer/topdown.zig");
     _ = @import("tiles.zig");
     _ = @import("viewer.zig");
 }

@@ -7,7 +7,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const DB = @import("sqlite.zig");
-const Chunk = @import("Chunk.zig");
+const Chunk = @import("vs/Chunk.zig");
 const topdown = @import("renderer/topdown.zig");
 
 pub const usage =

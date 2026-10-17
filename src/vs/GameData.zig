@@ -3,8 +3,8 @@
 const GameData = @This();
 
 const std = @import("std");
-const ProtoBuf = @import("ProtoBuf.zig");
-const DB = @import("sqlite.zig");
+const ProtoBuf = @import("../ProtoBuf.zig");
+const DB = @import("../sqlite.zig");
 
 /// Owns everything below.
 arena: std.heap.ArenaAllocator,

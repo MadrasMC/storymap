@@ -624,7 +624,7 @@
 			<p class="stat" id="pos-range" style="margin: var(--s4) 0 0"></p>
 		</div>
 		<p class="muted">SQLite integers are signed, so a chunk with y ≥ 512 (top bit set) is stored as a negative number. <code>mapchunk</code> positions use the same packing with y = 0.</p>
-		<p class="source">Sources: verified against a 1.19 save · <a href="../../src/Chunk.zig">src/Chunk.zig</a> · <a href="README.md#2-positions">README §2</a></p>
+		<p class="source">Sources: verified against a 1.19 save · <a href="../../src/vs/Chunk.zig">src/vs/Chunk.zig</a> · <a href="README.md#2-positions">README §2</a></p>
 	</section>
 
 	<section id="fields">
@@ -653,7 +653,7 @@
 			</table>
 		</div>
 		<p style="margin-top: var(--s4)">Field <b>1</b> holds the solid blocks and field <b>8</b> the block entities. Field 12 records the game version that last wrote the chunk, so one save can mix versions. Not every field appears in every chunk.</p>
-		<p class="source">Sources: every chunk of a 1.19 save scanned · names from <a href="../../src/Chunk.zig">src/Chunk.zig</a> · <a href="https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage">wiki: Chunk Data Storage</a> · <a href="README.md#3-chunk-data-protobuf-fields">README §3</a></p>
+		<p class="source">Sources: every chunk of a 1.19 save scanned · names from <a href="../../src/vs/Chunk.zig">src/vs/Chunk.zig</a> · <a href="https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage">wiki: Chunk Data Storage</a> · <a href="README.md#3-chunk-data-protobuf-fields">README §3</a></p>
 	</section>
 
 	<section id="blob">
@@ -672,7 +672,7 @@
 			<div class="parts" id="blob-parts"></div>
 		</div>
 		<p class="muted">Both examples are real chunks from one column (x 15995, z 15999) of a 1.19.1 save.</p>
-		<p class="source">Sources: verified against a 1.19 save · <a href="../../src/Compression.zig">src/Compression.zig</a> · <a href="README.md#4-blocks-fields-1-and-16">README §4</a></p>
+		<p class="source">Sources: verified against a 1.19 save · <a href="../../src/vs/Compression.zig">src/vs/Compression.zig</a> · <a href="README.md#4-blocks-fields-1-and-16">README §4</a></p>
 	</section>
 
 	<section id="palette">
@@ -753,7 +753,7 @@
 			<div class="diff" id="pg-diff" aria-live="polite"></div>
 		</div>
 		<p>The format doesn't say why it uses planes, but they have clear advantages. When a chunk needs one more bit, a new plane of zeros is added and every existing bit stays where it is, while side-by-side packing would move every block's bits. Every block also sits at the same bit in every plane whatever the palette size. And planes tend to be long runs of the same bit, which zstd compresses well.</p>
-		<p class="source">Sources: verified against a 1.19 save · <code>Chunk.getBlock</code> in <a href="../../src/Chunk.zig">src/Chunk.zig</a> · <a href="README.md#block-order-and-bit-planes">README §4</a></p>
+		<p class="source">Sources: verified against a 1.19 save · <code>Chunk.getBlock</code> in <a href="../../src/vs/Chunk.zig">src/vs/Chunk.zig</a> · <a href="README.md#block-order-and-bit-planes">README §4</a></p>
 	</section>
 
 	<section id="example">
@@ -848,7 +848,7 @@
 		</div>
 		<p style="margin-top: var(--s4)">The same number means different blocks in different saves: 2966 is <code>water-still-7</code> in the 1.22.7 world but a snowy fireclay roof corner in the 1.19 sample. So every save has to be read with its own list. The same row also holds the world's settings, such as how far from the centre new players spawn.</p>
 		<p>It also holds the world's height, 256 blocks by default, but not its sea level. The game derives that: the height × 110 / 255, rounded down, so 110 in a default world. Water fills the blocks below it, so the top water block of a sea or lake is at y 109.</p>
-		<p class="source">Sources: every block ID in both saves has a code · <a href="../../src/GameData.zig">src/GameData.zig</a> · sea level from the <a href="https://wiki.vintagestory.at/Sea_level">wiki</a>, matching the water in both saves · <a href="README.md#6-game-data">README §6</a></p>
+		<p class="source">Sources: every block ID in both saves has a code · <a href="../../src/vs/GameData.zig">src/vs/GameData.zig</a> · sea level from the <a href="https://wiki.vintagestory.at/Sea_level">wiki</a>, matching the water in both saves · <a href="README.md#6-game-data">README §6</a></p>
 	</section>
 
 	<section id="map">

@@ -1,9 +1,9 @@
 const Chunk = @This();
 
 const std = @import("std");
-const ProtoBuf = @import("./ProtoBuf.zig");
-const Compression = @import("./Compression.zig");
-const BlockEntity = @import("./BlockEntity.zig");
+const ProtoBuf = @import("../ProtoBuf.zig");
+const Compression = @import("Compression.zig");
+const BlockEntity = @import("BlockEntity.zig");
 
 // NOTE: To keep in sync with the server per game version
 pub const fieldNames = [_][]const u8{

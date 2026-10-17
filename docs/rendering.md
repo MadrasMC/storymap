@@ -106,7 +106,7 @@ Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/
 
 | What | Grows with | Bound |
 | --- | --- | --- |
-| Palette and bit planes per layer | the format | At most 2¹⁵ palette entries (128 KB) and 15 planes of 4 KB; already enforced by `src/Compression.zig`. |
+| Palette and bit planes per layer | the format | At most 2¹⁵ palette entries (128 KB) and 15 planes of 4 KB; already enforced by `src/vs/Compression.zig`. |
 | zstd decompression context | nothing | Fixed size, built once per worker in a supplied buffer (`ZSTD_initStaticDCtx`). |
 | Decompression output | the format | The same caps as the palette and planes. |
 | A chunk record from SQLite | the chunk's contents | SQLite's memory; SQLite can run inside one fixed block (`SQLITE_ENABLE_MEMSYS5` with `SQLITE_CONFIG_HEAP`). |

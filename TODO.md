@@ -43,10 +43,10 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Blocks decoded from bit planes; greyscale top-down heightmap (`a314adf`).
 - Save format docs and interactive explainer (`e900272`, then the restructure into `docs/save-format/`).
 - Save path and output path as command-line arguments.
-- Tree attribute parser: every block entity in the 1.19 sample parses (`src/TreeAttribute.zig`).
+- Tree attribute parser: every block entity in the 1.19 sample parses (`src/vs/TreeAttribute.zig`).
 - Saves opened with SQLite's `immutable=1`, so Storymap never writes next to them; a warning if the game may still be running.
 - `storymap extract-assets`: copies blocktypes, itemtypes, shapes, textures (minus gui/icons), worldproperties, patches and `config/colormaps.json` (181 MB for 1.22.7) plus every mod, in the game's own layout. Verified byte-for-byte against the install.
-- Block ID → block code mapping from `gamedata` (`src/GameData.zig`); every ID in both test saves has a name.
+- Block ID → block code mapping from `gamedata` (`src/vs/GameData.zig`); every ID in both test saves has a name.
 - No allocation per chunk (memory stage 1): one `Chunk.Decoder` and one fixed-size `Chunk` per worker, reused for every chunk ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)).
 - Sepia relief map: pale at sea level, darker below, paler above, with hill shading. Sea level comes from the world height ([save format §6](docs/save-format/README.md#sea-level)), so colours don't depend on the rest of the map: tiles will match, and different worlds look alike.
 - Water from the liquid layer: shaded by depth, saltwater (seas) apart from other water, inked coastlines; water plants don't hide the water.

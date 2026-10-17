@@ -3,10 +3,10 @@
 const std = @import("std");
 const Io = std.Io;
 const DB = @import("../sqlite.zig");
-const Chunk = @import("../Chunk.zig");
-const Compression = @import("../Compression.zig");
-const MapChunk = @import("../MapChunk.zig");
-const GameData = @import("../GameData.zig");
+const Chunk = @import("../vs/Chunk.zig");
+const Compression = @import("../vs/Compression.zig");
+const MapChunk = @import("../vs/MapChunk.zig");
+const GameData = @import("../vs/GameData.zig");
 const tiles = @import("../tiles.zig");
 const viewer = @import("../viewer.zig");
 

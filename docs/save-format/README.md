@@ -77,7 +77,7 @@ This is what makes a top-down map cheap: the map chunk gives each block column's
 
 ## 2. Positions
 
-`chunk.position` is a 64-bit integer packing the chunk's coordinates *(Verified (1.19): decoding gives a contiguous block of chunks, and decoding the blocks with these coordinates renders continuous terrain; see [`src/Chunk.zig`](../../src/Chunk.zig))*:
+`chunk.position` is a 64-bit integer packing the chunk's coordinates *(Verified (1.19): decoding gives a contiguous block of chunks, and decoding the blocks with these coordinates renders continuous terrain; see [`src/vs/Chunk.zig`](../../src/vs/Chunk.zig))*:
 
 | Bits | Field |
 | --- | --- |
@@ -107,7 +107,7 @@ const Position = packed struct(u64) {
 
 `chunk.data` is a [Protobuf](https://protobuf.dev/programming-guides/encoding/) message: a sequence of `(field number, wire type, value)` entries with no schema in the file. Storymap parses it with [`src/ProtoBuf.zig`](../../src/ProtoBuf.zig).
 
-Field names come from the `fieldNames` list in [`src/Chunk.zig`](../../src/Chunk.zig), whose origin isn't recorded; treat them as best guesses unless the status says decoded.
+Field names come from the `fieldNames` list in [`src/vs/Chunk.zig`](../../src/vs/Chunk.zig), whose origin isn't recorded; treat them as best guesses unless the status says decoded.
 
 | # | Wire type | Name | Chunks containing it (of 6,880) | Status |
 | --- | --- | --- | --- | --- |
@@ -137,7 +137,7 @@ The wiki lists what a chunk contains: solid blocks, fluid blocks, block entities
 
 ## 4. Blocks: fields 1 and 16
 
-*(Verified (1.19) unless noted: decoding the one-block chunk at chunk (15995, 4, 15999) finds exactly one non-air block, palette ID 164, at local (5, 7, 18); decoding the whole save renders a continuous heightmap. Decoding code: [`src/Compression.zig`](../../src/Compression.zig). Read side: `Chunk.getBlock` in [`src/Chunk.zig`](../../src/Chunk.zig), commit `a314adf`.)*
+*(Verified (1.19) unless noted: decoding the one-block chunk at chunk (15995, 4, 15999) finds exactly one non-air block, palette ID 164, at local (5, 7, 18); decoding the whole save renders a continuous heightmap. Decoding code: [`src/vs/Compression.zig`](../../src/vs/Compression.zig). Read side: `Chunk.getBlock` in [`src/vs/Chunk.zig`](../../src/vs/Chunk.zig), commit `a314adf`.)*
 
 ### Layout
 
@@ -162,7 +162,7 @@ The y = 3 chunk shows that palettes aren't pruned: its blocks were removed, so e
 
 ### Palette rounding
 
-The number of planes is `bits = ceil(log2(palette entries))`, and the palette is treated as having `2^bits` slots; `Layer.decode` in `src/Compression.zig` computes this. Only the real entries are stored. Slots past them are never referenced in valid data, and a reader should treat them as air rather than read past the stored entries. (Storymap used to over-read here; fixed in commit `092de71`.)
+The number of planes is `bits = ceil(log2(palette entries))`, and the palette is treated as having `2^bits` slots; `Layer.decode` in `src/vs/Compression.zig` computes this. Only the real entries are stored. Slots past them are never referenced in valid data, and a reader should treat them as air rather than read past the stored entries. (Storymap used to over-read here; fixed in commit `092de71`.)
 
 ### Block order and bit planes
 
@@ -220,7 +220,7 @@ A tree is a list of entries `[u8 type id][string key][value]`, ended by a single
 | 15 | long array | `i32 count`, `i64`s |
 | 16 | bool array | `i32 count`, `u8`s |
 
-Every block entity in the sample starts with `posx`, `posy`, `posz` (int, absolute block coordinates) and `blockCode` (string). Storymap parses the full format in [`src/TreeAttribute.zig`](../../src/TreeAttribute.zig) and [`src/BlockEntity.zig`](../../src/BlockEntity.zig); parsing the sample with it gives the same counts as the Python check above.
+Every block entity in the sample starts with `posx`, `posy`, `posz` (int, absolute block coordinates) and `blockCode` (string). Storymap parses the full format in [`src/vs/TreeAttribute.zig`](../../src/vs/TreeAttribute.zig) and [`src/vs/BlockEntity.zig`](../../src/vs/BlockEntity.zig); parsing the sample with it gives the same counts as the Python check above.
 
 Classes in the 1.19 sample: MicroBlock 8,343 · Generic 4,364 · BerryBush 632 · GenericTypedContainer 370 · Crate 274 · GroundStorage 184 · Tapestry 59 · Chisel 39 · TorchHolder 33 · LocustNest 29 · Transient 24 · Mycelium 23 · Firepit 19 · Trough 15 · Bed 12 · Forge 8 · PlantContainer 8 · DynamicTreeBranch 4 · CoalPile 3 · DisplayCase 2 · Lantern 2.
 
@@ -296,7 +296,7 @@ The field-11 entry with key `BlockIDs` maps every block ID to its block code. It
 
 - **IDs are per save.** The same number means different blocks in different saves, so a reader must use each save's own list.
 - **Sizes:** 14,091 block codes and 4,468 item codes in the 1.22.7 world; 9,312 and 3,318 in the 1.19 sample. Block IDs run from 0 with no gaps.
-- **Completeness:** every ID in every solid and liquid palette (41,648 entries in the 1.22.7 world, 52,856 in the 1.19 sample) and every chiseled-block material (9,309 in the sample) has a code. *(Verified with Storymap's [`src/GameData.zig`](../../src/GameData.zig).)*
+- **Completeness:** every ID in every solid and liquid palette (41,648 entries in the 1.22.7 world, 52,856 in the 1.19 sample) and every chiseled-block material (9,309 in the sample) has a code. *(Verified with Storymap's [`src/vs/GameData.zig`](../../src/vs/GameData.zig).)*
 - **No domain prefixes:** codes are written without one (`rock-granite`, not `game:rock-granite`) in both saves. Neither world has mods, so how modded codes appear is still open.
 
 The other field-11 keys (`worldeditworkspaces`, `ambient`, `temporalStormData`, `riftweather`, …) aren't decoded.
