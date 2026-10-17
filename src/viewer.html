@@ -40,6 +40,9 @@
 		/* The paper margin around the sheet, wide enough for the grid's coordinates. */
 		--margin: clamp(1.25rem, 3vw, 2rem);
 		--inset: calc(var(--margin) + var(--s3));
+		/* The panels along the bottom: the coordinates and scale, and the zoom key, one height. */
+		--bar: 3.25rem;
+		--key: 2.75rem;
 		/* The outer rule, a little outside the sheet; the grid's coordinates sit halfway between it and the screen's edge. */
 		--neatline: calc(var(--margin) - 0.3125rem);
 		color-scheme: light;
@@ -100,10 +103,12 @@
 	.title .version:empty, .title .rendered:empty { display: none; }
 	/* The coordinates above the scale, so neither pushes the other as it changes. */
 	.readout {
-		position: fixed; left: var(--inset); bottom: var(--inset); max-width: calc(100vw - 2 * var(--inset) - 4.25rem);
-		display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); padding: var(--s2) var(--s3);
+		position: fixed; left: var(--inset); bottom: var(--inset); height: var(--bar);
+		max-width: calc(100vw - 2 * var(--inset) - 3 * var(--key) - 1.5rem);
+		display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: var(--s2); padding: 0 var(--s3);
 		font: var(--t-small)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
 	}
+	.readout .line { display: flex; gap: var(--s3); }
 	.readout .k { color: var(--muted); }
 	/* A bar the length of a round number of blocks, in alternating ink and paper, like a printed map's scale. */
 	.scale { display: flex; align-items: center; gap: var(--s2); }
@@ -118,16 +123,16 @@
 		.title { padding: var(--s2) var(--s3); }
 		.title .name { display: block; max-width: none; font-size: 1.25rem; letter-spacing: 0.08em; white-space: nowrap; text-overflow: ellipsis; }
 	}
-	/* The zoom key, ruled like the cartouche: hills as old maps draw them, one big hill to come
-	   closer and small ones to stand back, with the zoom between them showing the whole map. */
+	/* The zoom key, ruled like the cartouche: hills as old maps draw them, small ones to stand back
+	   and one big hill to come closer, with the zoom between them showing the whole map. */
 	.controls {
-		position: fixed; right: var(--inset); bottom: var(--inset); display: grid; padding: 0.375rem;
+		position: fixed; right: var(--inset); bottom: var(--inset); height: var(--bar); display: flex; padding: 0.375rem;
 		background: var(--panel); border: 1px solid var(--ink); box-shadow: var(--ruled), var(--lift);
 	}
 	.controls button {
 		/* The hills are filled with the button's own colour, so they hide what's behind them. */
 		--bg: var(--panel);
-		position: relative; width: 2.75rem; height: 2.5rem; display: grid; place-items: center; padding: 0;
+		position: relative; width: var(--key); display: grid; place-items: center; padding: 0;
 		border: 0; background: var(--bg); color: var(--ink); cursor: pointer; font: inherit;
 	}
 	.controls button:hover:not(:disabled) { --bg: #ede8db; }
@@ -144,7 +149,7 @@
 	}
 	/* The zoom as a printed scale, 1 : 16, set on its colon: the colon stays in the middle and the
 	   numbers grow away from it, so nothing shifts as they change or the ≈ comes and goes. */
-	.controls .zoom { height: 2rem; font: var(--t-small)/1 var(--serif); font-variant-numeric: lining-nums tabular-nums; color: var(--muted); white-space: nowrap; }
+	.controls .zoom { font: var(--t-small)/1 var(--serif); font-variant-numeric: lining-nums tabular-nums; color: var(--muted); white-space: nowrap; }
 	#zoom { justify-self: stretch; display: grid; grid-template-columns: 1fr auto 1fr; align-items: baseline; }
 	#zoom > :first-child { text-align: right; }
 	#zoom > :nth-child(2) { margin: 0 0.1875rem; }
@@ -155,6 +160,15 @@
 	.zoom .mark .hills { display: block; width: 1.375rem; height: 0.9375rem; }
 	.zoom.whole .mark { display: block; }
 	.zoom.whole #zoom { display: none; }
+	/* On a phone the zoom key moves into the coordinates' panel, at its right end. */
+	@media (max-width: 30rem) {
+		:root { --key: 2.5rem; }
+		.readout { right: var(--inset); max-width: none; padding-right: calc(3 * var(--key) + 0.5rem + 1px + var(--s3)); }
+		.controls {
+			right: calc(var(--inset) + 1px); bottom: calc(var(--inset) + 1px); height: calc(var(--bar) - 2px); padding: 0.25rem;
+			background: none; border: 0; border-left: 1px solid var(--rule); box-shadow: none;
+		}
+	}
 	.message {
 		position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
 		width: min(24rem, calc(100vw - 2 * var(--inset))); margin: 0; padding: var(--s4) 1.25rem;
@@ -171,16 +185,17 @@
 <div class="ticks" id="ticks" aria-hidden="true"></div>
 <h1 class="title" id="title"><span class="kind" id="kind">A view of</span><span class="name" id="name">storymap</span><span class="version" id="version"></span><span class="rendered" id="rendered"></span></h1>
 <div class="panel readout">
-	<span id="coords" aria-hidden="true"></span>
+	<span class="line"><span id="coords" aria-hidden="true"></span><span id="status" role="status"></span></span>
 	<span class="scale" aria-hidden="true"><i id="scale-bar"></i><span id="scale-label"></span></span>
-	<span id="status" role="status"></span>
 </div>
 <div class="controls">
-	<button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in (+)">
+	<button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out (−)">
 		<svg class="hills" viewBox="-14 -16 28 18" aria-hidden="true">
-			<g transform="scale(1.1)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+			<g transform="translate(-5.5 0) scale(0.55)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+			<g transform="translate(5.5 0) scale(0.55)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+			<g transform="translate(0 -4) scale(0.45)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
 		</svg>
-		<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M4.3 9.4C3.7 7.6 4.5 5.6 3.9 3"/><path d="M1.2 5.6C2.1 4.7 3 3.7 3.8 2.6"/><path d="M3.5 2.3C4.5 3.4 5.6 4.3 6.9 5"/></svg>
+		<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M3.7 0.8C4.5 3.2 3.5 5.4 4.2 7.6"/><path d="M1.1 5.1C2 6.1 3.1 7 4.3 8"/><path d="M4 8.3C4.8 7.2 5.8 6.3 6.9 5.5"/></svg>
 	</button>
 	<button type="button" class="zoom" id="fit" aria-label="Show the whole map" title="Whole map (0)">
 		<span id="zoom"></span>
@@ -194,13 +209,11 @@
 			</svg>
 		</span>
 	</button>
-	<button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out (−)">
+	<button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in (+)">
 		<svg class="hills" viewBox="-14 -16 28 18" aria-hidden="true">
-			<g transform="translate(-5.5 0) scale(0.55)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
-			<g transform="translate(5.5 0) scale(0.55)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
-			<g transform="translate(0 -4) scale(0.45)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+			<g transform="scale(1.1)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
 		</svg>
-		<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M3.7 0.8C4.5 3.2 3.5 5.4 4.2 7.6"/><path d="M1.1 5.1C2 6.1 3.1 7 4.3 8"/><path d="M4 8.3C4.8 7.2 5.8 6.3 6.9 5.5"/></svg>
+		<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M4.3 9.4C3.7 7.6 4.5 5.6 3.9 3"/><path d="M1.2 5.6C2.1 4.7 3 3.7 3.8 2.6"/><path d="M3.5 2.3C4.5 3.4 5.6 4.3 6.9 5"/></svg>
 	</button>
 </div>
 <p class="panel message" id="message" role="alert" hidden></p>
@@ -535,11 +548,12 @@
 	}
 
 	// The scale bar: the roundest length of 1, 2 or 5 times a power of ten that's at most 8rem
-	// wide on screen.
+	// wide on screen, or 4rem on a phone, where it shares its panel with the zoom key.
+	const phone = matchMedia("(max-width: 30rem)");
 	const scaleBar = $("#scale-bar");
 	const scaleLabel = $("#scale-label");
 	function showScale() {
-		const widest = 128 / cam.s;
+		const widest = (phone.matches ? 64 : 128) / cam.s;
 		const power = 10 ** Math.floor(Math.log10(widest));
 		const blocks = [5, 2, 1].map((m) => m * power).find((b) => b <= widest) ?? power;
 		scaleBar.style.width = `${Math.round(blocks * cam.s)}px`;
