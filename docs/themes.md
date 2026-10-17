@@ -25,11 +25,11 @@ Both are inlined, so the stylesheet can't contain `</style` and the script can't
 
 ## The script
 
-The script calls `Storymap.theme` once, with a function that's given the map. The function builds the theme's elements and returns what to call as the view changes:
+The script calls `Storymap.theme` once, with a function that's given the map and a layer to draw in. The function builds the theme's elements and returns what to call as the view changes:
 
 ```js
-Storymap.theme((map) => {
-	// Build the theme's elements, around map.element or inside it.
+Storymap.theme((map, ui) => {
+	// Build the theme's elements into ui.
 	return {
 		resize() {},       // Optional: the map's size changed, before the next update.
 		update(view) {},   // The view changed: draw from it.
@@ -38,11 +38,19 @@ Storymap.theme((map) => {
 });
 ```
 
+### The layer to draw in
+
+`ui` is an empty element over the whole window, above the map (`position: fixed; inset: 0`), so a theme places its elements with `position: absolute` and window coordinates, in the margins or over the map. It lets pointers through to the map, so dragging, the wheel and pinching still reach it, except on what the theme puts in it: its children take pointers again. That rule has no specificity, so a theme's own `pointer-events: none` wins, for something drawn over the map that shouldn't catch the pointer, like a frame.
+
+To draw on the map itself, lay an element over it using the map's box from `update` (`view.left`, `view.top`, `view.width`, `view.height`). Printed's grid is an SVG sized that way, with `overflow: hidden` so its lines stop at the map's edge.
+
+A theme can still reach anywhere in the page if it needs to; `ui` is so it doesn't have to.
+
 ### What the map gives a theme
 
 | | |
 | --- | --- |
-| `map.element` | The map's element, `#map`. Elements added inside it (a grid, say) sit over the tiles. |
+| `map.element` | The map's element, `#map`, where the tiles are drawn. The theme's stylesheet places it. |
 | `map.world` | `{ name, gameVersion }`, or `null` when the page has no map. |
 | `map.view` | `{ name, title }` of the view shown, e.g. `"topdown"`, `"Top-down"`, or `null`. |
 | `map.rendered` | When the map was rendered, as a `Date`, or `null`. |

@@ -1,7 +1,7 @@
 // The plain theme: the map filling the window, with its name, the position and a scale, and zoom
 // buttons in small panels over it. Short on purpose, as a place to start a theme of your own;
 // see docs/themes.md for what a theme is given and does.
-Storymap.theme((map) => {
+Storymap.theme((map, ui) => {
 	"use strict";
 	const element = (html) => {
 		const template = document.createElement("template");
@@ -37,7 +37,7 @@ Storymap.theme((map) => {
 	buttons[1].addEventListener("click", () => map.zoomOut());
 	buttons[2].addEventListener("click", () => map.fit());
 
-	document.body.append(title, status, zoom);
+	ui.append(title, status, zoom);
 	const number = (n) => (n < 0 ? `−${-n}` : String(n));
 	return {
 		update(view) {
@@ -55,7 +55,7 @@ Storymap.theme((map) => {
 			for (const button of buttons) button.disabled = true;
 			const note = element(`<p class="plain plain-message" role="alert"></p>`);
 			note.textContent = message;
-			document.body.append(note);
+			ui.append(note);
 		},
 	};
 });

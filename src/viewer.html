@@ -16,6 +16,10 @@
 	#tiles img { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; user-select: none; }
 	/* Zoomed in past one tile pixel per screen pixel, blocks show as crisp squares. */
 	#tiles.pixelated img { image-rendering: pixelated; }
+	/* The theme's layer, over the whole window. Pointers pass through it to the map, except on
+	   what the theme puts in it; with no specificity, a theme's own pointer-events wins. */
+	#ui { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+	:where(#ui) > * { pointer-events: auto; }
 </style>
 <style id="theme-style"></style>
 </head>
@@ -23,11 +27,13 @@
 <main id="map" tabindex="0" role="application" aria-roledescription="map" aria-label="Map. Arrow keys move, plus and minus zoom, 0 shows the whole map.">
 	<div id="tiles"></div>
 </main>
+<div id="ui"></div>
 <script id="map-data" type="application/json">null</script>
 <script>
 // The map: its tiles, the camera, panning and zooming, and the place in the address. Everything
-// around it is drawn by a theme, which registers with Storymap.theme() and is told whenever the
-// view changes; docs/themes.md describes what it's given. Storymap inlines the theme below.
+// around it is drawn by a theme, which registers with Storymap.theme(), draws into the layer it's
+// given and is told whenever the view changes; docs/themes.md describes what it's given.
+// Storymap inlines the theme below.
 window.Storymap = { theme: start };
 function start(makeTheme) {
 	"use strict";
@@ -65,7 +71,7 @@ function start(makeTheme) {
 		toScreen: (x, z) => ({ x: (x + centreX - cam.x) * cam.s + W / 2, y: (z + centreZ - cam.y) * cam.s + H / 2 }),
 		toGame: (sx, sy) => ({ x: cam.x + (sx - W / 2) / cam.s - centreX, z: cam.y + (sy - H / 2) / cam.s - centreZ }),
 	};
-	const theme = makeTheme(map);
+	const theme = makeTheme(map, q("#ui"));
 
 	function fail(text) {
 		stopped = true;

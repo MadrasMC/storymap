@@ -1,7 +1,7 @@
 // The printed theme: the map as a printed sheet, inside a double neatline on a paper margin, with
 // the grid's coordinates in the margin, a title cartouche, a panel with the position and a scale
 // bar, and a key of hills for zooming. See docs/themes.md for what a theme is given and does.
-Storymap.theme((map) => {
+Storymap.theme((map, ui) => {
 	"use strict";
 	const q = (selector) => document.querySelector(selector);
 	const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -12,8 +12,8 @@ Storymap.theme((map) => {
 			<g transform="translate(5.5 0) scale(0.55)"><path class="f" d="M-10.6 0C-7.6 -0.2 -5 -8.6 -2.2 -10.6C0 -11.9 2 -11.2 3 -10.2C5.4 -8 7 -1.8 10.8 0.3Z"/><path class="o" d="M-10.6 0C-7.6 -0.2 -5 -8.6 -2.2 -10.6M-3.4 -10.4C-1.6 -11.6 1.4 -11.6 3 -10.2C5.4 -8 7 -1.8 10.8 0.3"/><path class="h" d="M2.4 -9.6L2.2 0.1M4 -7.4L4.4 0M6.3 -4L6.5 0.1M8.1 -1.7L8.6 0.1"/></g>`,
 		in: `<g transform="scale(1.1)"><path class="f" d="M-10.5 0.3C-6.5 -0.8 -2.8 -11.6 0.6 -12.6C2.4 -13 6 -4 10.6 0.2Z"/><path class="o" d="M-10.5 0.3C-6.5 -0.8 -2.8 -11.6 0.6 -12.6C1.6 -12.9 2.5 -12 2.9 -10.3M-0.2 -12.3C1.2 -12.9 2.6 -11.6 4 -9.4C6 -6 7.4 -1.6 10.6 0.2"/><path class="h" d="M2 -11L1.6 0.1M3.6 -9.3L3.8 -0.1M5.2 -6.8L5.6 0.2M6.8 -4.2L7.1 0M8.4 -1.9L8.9 0.2"/></g>`,
 	};
-	map.element.insertAdjacentHTML("beforeend", `<svg id="grid" aria-hidden="true"><path id="grid-lines"/></svg>`);
-	document.body.insertAdjacentHTML("beforeend", `
+	ui.insertAdjacentHTML("beforeend", `
+		<svg id="grid" aria-hidden="true"><path id="grid-lines"/></svg>
 		<div class="neatline" aria-hidden="true"></div>
 		<div class="ticks" id="ticks" aria-hidden="true"></div>
 		<h1 class="title" id="title"><span class="kind" id="kind">A view of</span><span class="name" id="name">Storymap</span><span class="version" id="version"></span><span class="rendered" id="rendered"></span></h1>
@@ -124,16 +124,15 @@ Storymap.theme((map) => {
 	// meet: side by side, the scale's row couldn't fit a 4rem bar and its label in full. It's
 	// decided when the window changes size, not as the zoom or the coordinates change, so the
 	// panels don't jump between the two.
-	const root = document.documentElement;
 	const readoutEl = q(".readout");
 	const controlsEl = q(".controls");
 	let merged = false;
 	function arrange() {
 		merged = false;
-		root.classList.remove("merged");
+		ui.classList.remove("merged");
 		scaleRoom();
 		merged = room - scaleGap < 64 + labelWidth("1,000 blocks");
-		root.classList.toggle("merged", merged);
+		ui.classList.toggle("merged", merged);
 	}
 
 	// The scale bar: the roundest length of 1, 2 or 5 times a power of ten that's at most 8rem
@@ -212,10 +211,15 @@ Storymap.theme((map) => {
 	}
 
 	// The grid: a line every round number of blocks in the game's coordinates, 90 to 225 pixels
-	// apart, with the coordinates in the margin on all four sides of the sheet.
+	// apart, with the coordinates in the margin on all four sides of the sheet. It's laid over the
+	// map, which clips its lines at the map's edge.
+	const grid = q("#grid");
 	const gridLines = q("#grid-lines");
 	const ticks = q("#ticks");
+	let gridBox = "";
 	function showGrid(view) {
+		const box = `left:${view.left}px;top:${view.top}px;width:${view.width}px;height:${view.height}px`;
+		if (box !== gridBox) grid.style.cssText = gridBox = box;
 		const narrowest = 90 / view.scale;
 		const power = 10 ** Math.floor(Math.log10(narrowest));
 		const step = [1, 2, 5, 10].map((m) => m * power).find((b) => b >= narrowest);
