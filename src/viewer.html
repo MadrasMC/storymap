@@ -223,22 +223,22 @@
 <script>
 (() => {
 	"use strict";
-	const $ = (selector) => document.querySelector(selector);
+	const q = (selector) => document.querySelector(selector);
 	const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-	const mapEl = $("#map");
-	const layer = $("#tiles");
-	const coordsEl = $("#coords");
-	const statusEl = $("#status");
+	const mapEl = q("#map");
+	const layer = q("#tiles");
+	const coordsEl = q("#coords");
+	const statusEl = q("#status");
 	const buttons = [...document.querySelectorAll(".controls button")];
 	const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
 	function fail(text) {
-		const message = $("#message");
+		const message = q("#message");
 		message.textContent = text;
 		message.hidden = false;
-		$(".readout").hidden = true;
-		$("#ticks").hidden = true;
-		$("#grid-lines").removeAttribute("d");
+		q(".readout").hidden = true;
+		q("#ticks").hidden = true;
+		q("#grid-lines").removeAttribute("d");
 		for (const button of buttons) button.disabled = true;
 		mapEl.setAttribute("aria-label", text);
 	}
@@ -247,7 +247,7 @@
 	// the disk won't let it fetch map.json beside it.
 	let data = null;
 	try {
-		data = JSON.parse($("#map-data").textContent);
+		data = JSON.parse(q("#map-data").textContent);
 	} catch {
 		data = null;
 	}
@@ -258,20 +258,20 @@
 	const world = data.world;
 	if (world.name) {
 		document.title = `${world.name} · storymap`;
-		$("#name").textContent = world.name;
+		q("#name").textContent = world.name;
 	}
 	const view = data.views[0];
 	// The cartouche: the kind of map, the world, and what it was made from and when.
-	$("#kind").textContent = `A ${view.title.toLowerCase()} view of`;
-	if (world.gameVersion) $("#version").textContent = `Vintage Story ${world.gameVersion}`;
+	q("#kind").textContent = `A ${view.title.toLowerCase()} view of`;
+	if (world.gameVersion) q("#version").textContent = `Vintage Story ${world.gameVersion}`;
 	const rendered = new Date(data.rendered);
-	if (!Number.isNaN(rendered.getTime())) $("#rendered").textContent = `Rendered ${rendered.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
+	if (!Number.isNaN(rendered.getTime())) q("#rendered").textContent = `Rendered ${rendered.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
 
 	// A name cut short, or lines left out on a short screen, open the cartouche to show it in full;
 	// tapping again, outside or Escape closes it.
-	const titleEl = $("#title");
-	const nameEl = $("#name");
-	const leftOut = [$("#kind"), $("#rendered")];
+	const titleEl = q("#title");
+	const nameEl = q("#name");
+	const leftOut = [q("#kind"), q("#rendered")];
 	let titleOpen = false;
 	let sizing = null;
 	function checkTruncated() {
@@ -558,9 +558,9 @@
 	// wide on screen, or 4rem where it shares its panel with the zoom key, and no longer than the
 	// panel has room for beside its label. Where even a short bar leaves no room for the word, it's
 	// shortened to "bl.", as printed scales abbreviate their units.
-	const scaleBar = $("#scale-bar");
-	const scaleLabel = $("#scale-label");
-	const scaleEl = $(".readout .scale");
+	const scaleBar = q("#scale-bar");
+	const scaleLabel = q("#scale-label");
+	const scaleEl = q(".readout .scale");
 	const measure = document.createElement("canvas").getContext("2d");
 	const labelWidth = (text) => measure.measureText(text).width;
 	// The width the scale's row has, from the panel's left edge to short of the zoom key: 1.5rem
@@ -609,8 +609,8 @@
 	// left between whole numbers shows the nearest one in italic over a dotted line; the address
 	// keeps the exact value. At the view of the whole map it's circled. Pressing the zoom shows the
 	// whole map.
-	const zoomEl = $("#zoom");
-	const fitEl = $("#fit");
+	const zoomEl = q("#zoom");
+	const fitEl = q("#fit");
 	function showZoom() {
 		fitEl.classList.toggle("fitted", atFit());
 		const ratio = cam.s >= 1 ? cam.s : 1 / cam.s;
@@ -623,8 +623,8 @@
 
 	// The grid: a line every round number of blocks in the game's coordinates, 90 to 225 pixels
 	// apart, with the coordinates in the margin on all four sides of the sheet.
-	const gridLines = $("#grid-lines");
-	const ticks = $("#ticks");
+	const gridLines = q("#grid-lines");
+	const ticks = q("#ticks");
 	function showGrid() {
 		const narrowest = 90 / cam.s;
 		const power = 10 ** Math.floor(Math.log10(narrowest));
@@ -760,9 +760,9 @@
 	}, { passive: false });
 	mapEl.addEventListener("dblclick", (e) => zoomStep(e.shiftKey ? -1 : 1, e.clientX - origin.x, e.clientY - origin.y));
 
-	$("#zoom-in").addEventListener("click", () => zoomStep(1));
-	$("#zoom-out").addEventListener("click", () => zoomStep(-1));
-	$("#fit").addEventListener("click", fit);
+	q("#zoom-in").addEventListener("click", () => zoomStep(1));
+	q("#zoom-out").addEventListener("click", () => zoomStep(-1));
+	q("#fit").addEventListener("click", fit);
 
 	const panKeys = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], a: [-1, 0], d: [1, 0], w: [0, -1], s: [0, 1] };
 	document.addEventListener("keydown", (e) => {
@@ -820,8 +820,8 @@
 	// decided when the window changes size, not as the zoom or the coordinates change, so the
 	// panels don't jump between the two.
 	const root = document.documentElement;
-	const readoutEl = $(".readout");
-	const controlsEl = $(".controls");
+	const readoutEl = q(".readout");
+	const controlsEl = q(".controls");
 	let merged = false;
 	function arrange() {
 		merged = false;
