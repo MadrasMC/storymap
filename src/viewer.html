@@ -137,8 +137,12 @@
 	.controls button:disabled { opacity: 0.5; cursor: default; }
 	.controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 	.hills { width: 2rem; height: 1.375rem; overflow: visible; }
-	.hills .o { fill: var(--bg); stroke: currentColor; stroke-width: 1.1; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-	.hills .h { fill: none; stroke: currentColor; stroke-width: 0.7; vector-effect: non-scaling-stroke; }
+	/* Each hill is drawn like the arrows, as if with a pen: its flanks two uneven strokes crossing
+	   at the top, its shading slanted strokes of uneven length, over a fill that hides what's
+	   behind it, so hills drawn later stand in front. */
+	.hills .f { fill: var(--bg); }
+	.hills .o { fill: none; stroke: currentColor; stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+	.hills .h { fill: none; stroke: currentColor; stroke-width: 0.7; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 	/* Small arrows as if drawn with a pen, at the hill's top right. */
 	.arrow {
 		position: absolute; top: 0.3125rem; right: 0.125rem; width: 0.5rem; height: 0.625rem; overflow: visible;
@@ -152,10 +156,11 @@
 	#zoom span { margin: 0 0.1875rem; }
 	#zoom.near { font-style: italic; border-bottom-color: var(--muted); }
 	/* At the view of the whole map the zoom is circled, as if by hand; the circle stands in for the
-	   dotted line. */
+	   dotted line. It's centred on the number's figures, which sit a little above the middle of the
+	   button, lifted by the dotted line's room. */
 	.ring {
-		position: absolute; left: 50%; top: 50%; width: calc(var(--key) - 0.125rem); height: 1.625rem; transform: translate(-50%, -50%);
-		overflow: visible; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; opacity: 0;
+		position: absolute; left: 50%; top: calc(50% - 0.05rem); width: calc(var(--key) - 0.125rem); height: 1.625rem; transform: translate(-50%, -50%);
+		overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; opacity: 0;
 	}
 	.ring path { vector-effect: non-scaling-stroke; }
 	.zoom.fitted .ring { opacity: 1; }
@@ -190,19 +195,19 @@
 <div class="panel controls">
 	<button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out (−)">
 		<svg class="hills" viewBox="-14 -16 28 18" aria-hidden="true">
-			<g transform="translate(-5.5 0) scale(0.55)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
-			<g transform="translate(5.5 0) scale(0.55)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
-			<g transform="translate(0 -4) scale(0.45)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+			<g transform="translate(0 -4) scale(0.45)"><path class="f" d="M-9.8 -0.1C-7.2 -1.6 -4.8 -10.2 -1.6 -11.4C1 -12 6.2 -2.2 10.1 -0.3Z"/><path class="o" d="M-9.8 -0.1C-7.2 -1.6 -4.8 -10.2 -1.6 -11.4C-0.9 -11.7 -0.3 -11.6 0.1 -11.3M0.9 -10.9C3.3 -8.6 6.2 -2.2 10.1 -0.3"/><path class="h" d="M1.8 -9.2L2.1 0M4.4 -6.1L4.6 -0.1M7 -2.9L7.3 0.1"/></g>
+			<g transform="translate(-5.5 0) scale(0.55)"><path class="f" d="M-9.6 0.2C-6.2 -1.4 -3.4 -12.8 -0.4 -13.2C2.8 -11.8 5.6 -3 9.8 -0.2Z"/><path class="o" d="M-9.6 0.2C-6.2 -1.4 -3.4 -12.8 -0.4 -13.2C0.2 -13.3 0.6 -12.9 0.4 -12.5M0.2 -12.9C2.8 -11.8 5.6 -3 9.8 -0.2"/><path class="h" d="M1.4 -11.6L0.9 0M3 -9.4L3.1 0.1M4.8 -6.4L5.3 0M6.7 -3.4L7.2 0.2"/></g>
+			<g transform="translate(5.5 0) scale(0.55)"><path class="f" d="M-10.6 0C-7.6 -0.2 -5 -8.6 -2.2 -10.6C0 -11.9 2 -11.2 3 -10.2C5.4 -8 7 -1.8 10.8 0.3Z"/><path class="o" d="M-10.6 0C-7.6 -0.2 -5 -8.6 -2.2 -10.6M-3.4 -10.4C-1.6 -11.6 1.4 -11.6 3 -10.2C5.4 -8 7 -1.8 10.8 0.3"/><path class="h" d="M2.4 -9.6L2.2 0.1M4 -7.4L4.4 0M6.3 -4L6.5 0.1M8.1 -1.7L8.6 0.1"/></g>
 		</svg>
 		<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M3.7 0.8C4.5 3.2 3.5 5.4 4.2 7.6"/><path d="M1.1 5.1C2 6.1 3.1 7 4.3 8"/><path d="M4 8.3C4.8 7.2 5.8 6.3 6.9 5.5"/></svg>
 	</button>
 	<button type="button" class="zoom" id="fit" aria-label="Show the whole map" title="Whole map (0)">
 		<span id="zoom"></span>
-		<svg class="ring" viewBox="0 0 60 26" preserveAspectRatio="none" aria-hidden="true"><path d="M48 4.5C37 0 13 1.5 6 8C0.5 13.5 4 21.5 19 23.8C34 26 53 22.5 57 15.5C60.5 9.5 55 5.5 44 3.6C40 3 35 3.2 30 4.4"/></svg>
+		<svg class="ring" viewBox="0 0 60 26" preserveAspectRatio="none" aria-hidden="true"><path d="M47.5 4.2C38 0.6 16 0.9 7.4 7.2C1.6 11.6 2.4 19.8 15.6 23.1C29 26.4 49.8 24.2 56.2 17.4C61.2 12 57.6 6.2 46.2 3.5C41.4 2.4 35.8 2.7 29.8 4.2"/></svg>
 	</button>
 	<button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in (+)">
 		<svg class="hills" viewBox="-14 -16 28 18" aria-hidden="true">
-			<g transform="scale(1.1)"><path class="o" d="M-10 0C-6 -1 -3 -12 0 -12C3 -12 6 -1 10 0"/><path class="h" d="M1.5 -11L1 0M3.5 -9L3.5 0M5.5 -6L6 0M7.5 -3L8 0"/></g>
+			<g transform="scale(1.1)"><path class="f" d="M-10.5 0.3C-6.5 -0.8 -2.8 -11.6 0.6 -12.6C2.4 -13 6 -4 10.6 0.2Z"/><path class="o" d="M-10.5 0.3C-6.5 -0.8 -2.8 -11.6 0.6 -12.6C1.6 -12.9 2.5 -12 2.9 -10.3M-0.2 -12.3C1.2 -12.9 2.6 -11.6 4 -9.4C6 -6 7.4 -1.6 10.6 0.2"/><path class="h" d="M2 -11L1.6 0.1M3.6 -9.3L3.8 -0.1M5.2 -6.8L5.6 0.2M6.8 -4.2L7.1 0M8.4 -1.9L8.9 0.2"/></g>
 		</svg>
 		<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M4.3 9.4C3.7 7.6 4.5 5.6 3.9 3"/><path d="M1.2 5.6C2.1 4.7 3 3.7 3.8 2.6"/><path d="M3.5 2.3C4.5 3.4 5.6 4.3 6.9 5"/></svg>
 	</button>
