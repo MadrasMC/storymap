@@ -73,7 +73,7 @@ A save names the mods its blocks and items come from: their codes carry the mod'
 
 Preparing reads the assets in place, from the install and the data folder (`--game` and `--data`, defaulting to the standard locations above). [`src/vs/Assets.zig`](../src/vs/Assets.zig) does this:
 
-- **Mods:** each zip or folder in `Mods` is read in place, zips without unpacking them. Its `assets/<domain>/` folders count like the game's.
+- **Mods:** each zip or folder in `Mods` is read in place, zips without unpacking them. Its `assets/<domain>/` folders count like the game's. All of them are used, enabled or not.
 - **Files are read by path:** most of what rendering needs is named exactly, such as a block type's shape and textures, or `config/colormaps.json`. Only the files in the table above are read. Mods' `compatibility/` folders are left out for now.
 - **Some files are listed instead:** nothing in a save's block code says which file defines it (`survival/blocktypes/stone/rock.json` defines every `rock-*`), so block types are found by listing every domain's `blocktypes/`. Patches are listed the same way, and so is a folder of numbered texture alternates.
 - **A zip has no lookup by name**, so the entries rendering needs are mapped when it's opened, from its central directory.
