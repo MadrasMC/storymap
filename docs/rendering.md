@@ -80,12 +80,14 @@ A save names the mods its blocks and items come from: their codes carry the mod'
 The renderer reads the assets in place, from the install and the data folder (`--game` and `--data`, defaulting to the standard locations above) or from an `extract-assets` copy (`--game <copy>/game --data <copy>/data`). [`src/vs/Assets.zig`](../src/vs/Assets.zig) does this:
 
 - **Mods:** each zip or folder in `Mods` is read in place, zips without unpacking them. Its `assets/<domain>/` folders count like the game's.
-- **One index** of every file rendering needs, the same ones `extract-assets` copies (the table above), by domain and path. Mods' `compatibility/` folders are left out for now.
-- **Case doesn't matter**, as in the game, which lowercases every asset location *(Source: [vsapi `AssetLocation.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Assets/AssetLocation.cs))*.
+- **Files are read by path:** most of what rendering needs is named exactly, such as a block type's shape and textures, or `config/colormaps.json`. Only the files rendering needs are read, the same ones `extract-assets` copies (the table above), so the install and a copy answer alike. Mods' `compatibility/` folders are left out for now.
+- **Some files are listed instead:** nothing in a save's block code says which file defines it (`survival/blocktypes/stone/rock.json` defines every `rock-*`), so block types are found by listing every domain's `blocktypes/`. Patches are listed the same way, and so is a folder of numbered texture alternates.
+- **A zip has no lookup by name**, so the entries rendering needs are mapped when it's opened, from its central directory.
+- **Case doesn't matter**, as in the game, which lowercases every asset location *(Source: [vsapi `AssetLocation.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Assets/AssetLocation.cs))*. A few of the game's files aren't lowercase, such as `survival/shapes/block/clutter/pipes/h-EW.json`, 34 of the files rendering needs in 1.22.7; where the file system minds case, a file not found by its lowercase path is looked for by its own name.
 - **A mod's file replaces the game's** of the same domain and path, and mods are taken in name order, so which one wins when two mods have the same file doesn't depend on the file system. In what order the game itself applies mods isn't checked.
 - **A missing mod is reported:** when a save's block or item codes name a domain no installed mod has files for, the render warns, since those blocks can't look as they do in the game.
 
-Building the index takes about 0.33 s for 1.22.7 with Primitive Survival (17,321 files: 16,805 from the game and 516 from the mod), most of it walking the install's folders. *(Verified (1.22.7): files read through the index match the same files read from the install and from inside the zip, byte for byte.)*
+Opening the assets takes about 2 ms for 1.22.7 with Primitive Survival, and listing every block type, 543 from the game and 69 from the mod, about 4 ms. *(Verified (1.22.7): files read this way match the same files read from the install and from inside the zip, byte for byte.)*
 
 ## Block entities that change how things look
 
