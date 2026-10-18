@@ -1,6 +1,6 @@
 //! How a theme colours the top-down map: `topdown/style.txt` in the theme's folder
 //! (docs/themes.md#map-colours). A drawing style, and a colour for each map type and for the
-//! two inks, one per line:
+//! two inks, one per line; colours left out are the game's own:
 //!
 //!     # Comments start with #.
 //!     style relief
@@ -34,6 +34,24 @@ wateredge: Rgb,
 
 pub const Rgb = [3]u8;
 
+/// The game's own map colours (vsessentialsmod `ChunkMapLayer`), for every entry a style
+/// file leaves out.
+pub const gameColours: std.EnumArray(columns.MapType, Rgb) = .init(.{
+    .land = .{ 0xAC, 0x88, 0x58 },
+    .desert = .{ 0xC4, 0xA4, 0x68 },
+    .forest = .{ 0x98, 0x84, 0x4C },
+    .plant = .{ 0x80, 0x86, 0x50 },
+    .settlement = .{ 0x85, 0x68, 0x44 },
+    .road = .{ 0x80, 0x50, 0x30 },
+    .devastation = .{ 0x75, 0x5C, 0x3C },
+    .glacier = .{ 0xE0, 0xE0, 0xC0 },
+    .lake = .{ 0xCC, 0xC8, 0x90 },
+    .ocean = .{ 0xCC, 0xC8, 0x90 },
+    .lava = .{ 0xCC, 0xC8, 0x90 },
+});
+/// The game's ink, which it draws water's edges in.
+pub const gameInk: Rgb = .{ 0x48, 0x30, 0x18 };
+
 /// The Printed theme's style, the default.
 pub const printed = parsed(@embedFile("../themes/printed/topdown/style.txt"));
 /// The plain theme's: the game's own map colours, drawn as the game draws them.
@@ -54,9 +72,10 @@ pub const Problem = struct {
     name: []const u8 = "",
 };
 
-/// Parses a style file. Every entry must be there, once; on an error, `problem` says what's wrong.
+/// Parses a style file. The style must be named; each colour may be given once, and those left
+/// out are the game's. On an error, `problem` says what's wrong.
 pub fn parse(text: []const u8, problem: *Problem) error{InvalidStyle}!Style {
-    var style: Style = .{ .kind = .relief, .colours = .initFill(.{ 0, 0, 0 }), .ink = .{ 0, 0, 0 }, .wateredge = .{ 0, 0, 0 } };
+    var style: Style = .{ .kind = .relief, .colours = gameColours, .ink = gameInk, .wateredge = gameInk };
     var seenKind = false;
     var seenColours: std.EnumSet(columns.MapType) = .empty;
     var seenInk = false;
@@ -96,11 +115,6 @@ pub fn parse(text: []const u8, problem: *Problem) error{InvalidStyle}!Style {
     }
 
     if (!seenKind) return fail(problem, 0, "doesn't name its style", "style");
-    for (std.enums.values(columns.MapType)) |mapType| {
-        if (!seenColours.contains(mapType)) return fail(problem, 0, "has no colour for", @tagName(mapType));
-    }
-    if (!seenInk) return fail(problem, 0, "has no colour for", "ink");
-    if (!seenEdge) return fail(problem, 0, "has no colour for", "wateredge");
     return style;
 }
 
@@ -145,8 +159,15 @@ test parse {
     try std.testing.expectEqual(Rgb{ 1, 2, 3 }, style.colours.get(.land));
     try std.testing.expectEqual(Rgb{ 255, 255, 255 }, style.wateredge);
 
-    try std.testing.expectError(error.InvalidStyle, parse("style relief\nland #000000\n", &problem));
-    try std.testing.expectEqualStrings("desert", problem.name);
+    const partial = try parse("style shaded\nland #010203\n", &problem);
+    try std.testing.expectEqual(Rgb{ 1, 2, 3 }, partial.colours.get(.land));
+    try std.testing.expectEqual(gameColours.get(.desert), partial.colours.get(.desert));
+    try std.testing.expectEqual(gameInk, partial.wateredge);
+    try std.testing.expectEqualDeep(plain.colours, (try parse("style shaded\n", &problem)).colours);
+
+    try std.testing.expectError(error.InvalidStyle, parse("land #000000\n", &problem));
+    try std.testing.expectError(error.InvalidStyle, parse("style relief\nland #000000\nland #000000\n", &problem));
+    try std.testing.expectEqual(3, problem.line);
     try std.testing.expectError(error.InvalidStyle, parse("style relief\nfield #000000\n", &problem));
     try std.testing.expectEqual(2, problem.line);
     try std.testing.expectEqualStrings("field", problem.name);
