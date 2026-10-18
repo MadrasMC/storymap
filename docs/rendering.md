@@ -44,7 +44,7 @@ The output mirrors the game's own layout (`game/assets/...` and `data/Mods/...`)
 Where they live *(Verified (1.22.7): a fresh Windows install)*:
 
 - **Game install** (`%APPDATA%\Vintagestory` on Windows): `assets/<domain>/` with one folder per domain, `creative`, `game` and `survival`, each containing `blocktypes/`, `shapes/`, `textures/` and more. `assets/version-1.22.7.txt` names the version. The install's own `Mods/` folder holds only the built-in code (`VSSurvivalMod.dll`, `VSEssentials.dll`, `VSCreativeMod.dll`) and a `do_not_add_mods_here.txt`.
-- **Data folder** (`%APPDATA%\VintagestoryData`): `Saves/`, and `Mods/` with user mods as zip files (e.g. `primitivesurvival_5.1.4.zip`). How a mod zip lays out its assets is still to be checked. There's also a `Maps/` folder with one small `.db` file per world, probably the client's world-map cache; not looked into.
+- **Data folder** (`%APPDATA%\VintagestoryData`): `Saves/`, and `Mods/` with user mods as zip files (e.g. `primitivesurvival_5.1.4.zip`), laid out as in [Mods](#mods) below. There's also a `Maps/` folder with one small `.db` file per world, probably the client's world-map cache; not looked into.
 
 ### What the renderer needs from them
 
@@ -72,6 +72,20 @@ A mod is a zip in the data folder's `Mods/`, e.g. `primitivesurvival_5.1.4.zip`:
 - `modinfo.json` at the top: `modid`, `name`, `version`, `type` (`code` here, so it also ships `primitivesurvival.dll`).
 - `assets/<modid>/` with the same folder names as the base game (`blocktypes`, `shapes`, `textures`, `patches`, …), plus `compatibility/`, assets that apply only when another mod is present.
 - Files in other domains, e.g. `assets/game/textures/` and `assets/game/lang/`, which override or add to the base game's assets.
+
+A save names the mods its blocks and items come from: their codes carry the mod's domain, as in `primitivesurvival:treehollowgrown-…` ([save format §6](save-format/README.md#block-and-item-ids)).
+
+### Reading them
+
+The renderer reads the assets in place, from the install and the data folder (`--game` and `--data`, defaulting to the standard locations above) or from an `extract-assets` copy (`--game <copy>/game --data <copy>/data`). [`src/vs/Assets.zig`](../src/vs/Assets.zig) does this:
+
+- **Mods:** each zip or folder in `Mods` is read in place, zips without unpacking them. Its `assets/<domain>/` folders count like the game's.
+- **One index** of every file rendering needs, the same ones `extract-assets` copies (the table above), by domain and path. Mods' `compatibility/` folders are left out for now.
+- **Case doesn't matter**, as in the game, which lowercases every asset location *(Source: [vsapi `AssetLocation.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Assets/AssetLocation.cs))*.
+- **A mod's file replaces the game's** of the same domain and path, and mods are taken in name order, so which one wins when two mods have the same file doesn't depend on the file system. In what order the game itself applies mods isn't checked.
+- **A missing mod is reported:** when a save's block or item codes name a domain no installed mod has files for, the render warns, since those blocks can't look as they do in the game.
+
+Building the index takes about 0.33 s for 1.22.7 with Primitive Survival (17,321 files: 16,805 from the game and 516 from the mod), most of it walking the install's folders. *(Verified (1.22.7): files read through the index match the same files read from the install and from inside the zip, byte for byte.)*
 
 ## Block entities that change how things look
 

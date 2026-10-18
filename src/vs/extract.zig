@@ -1,12 +1,14 @@
 //! `storymap extract-assets`: copies what rendering needs from a Vintage Story install and
 //! the user's mods into a folder with the same layout as the originals, so the renderer can
-//! read either one the same way. Which folders and why: docs/rendering.md#assets.
+//! read either one the same way (see Assets.zig). Which folders and why:
+//! docs/rendering.md#assets.
 //!
 //! The game and data folders are only ever read.
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const Dir = std.Io.Dir;
+const Assets = @import("Assets.zig");
 
 pub const usage =
     \\usage: storymap extract-assets <output folder> [--game <install folder>] [--data <data folder>]
@@ -39,9 +41,9 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     }
     const out = outPath orelse fail(2, usage, .{});
 
-    const game = gamePath orelse findFolder(arena, io, init.environ_map, .game) orelse
+    const game = gamePath orelse Assets.findFolder(arena, io, init.environ_map, .game) orelse
         fail(1, "storymap: couldn't find Vintage Story; pass its install folder with --game\n", .{});
-    const data = dataPath orelse findFolder(arena, io, init.environ_map, .data);
+    const data = dataPath orelse Assets.findFolder(arena, io, init.environ_map, .data);
 
     var gameDir = Dir.cwd().openDir(io, game, .{}) catch |err|
         fail(1, "storymap: can't open the game folder {s} ({s})\n", .{ game, @errorName(err) });
@@ -62,7 +64,7 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     var outDir = try openEmptyOutput(io, out);
     defer outDir.close(io);
 
-    const version = try findVersion(arena, io, assetsDir) orelse "(unknown version)";
+    const version = try Assets.findVersion(arena, io, assetsDir) orelse "(unknown version)";
     var outAssets = try outDir.createDirPathOpen(io, "game/assets", .{});
     defer outAssets.close(io);
     const assetFiles = try copyAssets(init.gpa, io, assetsDir, outAssets);
@@ -84,52 +86,6 @@ fn fail(status: u8, comptime format: []const u8, args: anytype) noreturn {
     std.process.exit(status);
 }
 
-/// What to do with a path below `assets/`, given as its components (domain, category, ...).
-const Action = enum { copy, enter, skip };
-
-const wholeCategories = [_][]const u8{ "blocktypes", "itemtypes", "shapes", "textures", "worldproperties", "patches" };
-const skippedTextures = [_][]const u8{ "gui", "icons" };
-
-fn actionFor(parts: []const []const u8, isDir: bool) Action {
-    const eql = std.mem.eql;
-    switch (parts.len) {
-        0 => return .skip,
-        // assets/version-1.22.7.txt, and the domain folders.
-        1 => return if (isDir) .enter else if (std.mem.startsWith(u8, parts[0], "version-")) .copy else .skip,
-        2 => {
-            if (!isDir) return .skip;
-            for (wholeCategories) |category| if (eql(u8, parts[1], category)) return .enter;
-            return if (eql(u8, parts[1], "config")) .enter else .skip;
-        },
-        else => {
-            // Only the colour map definitions are needed from config/.
-            if (eql(u8, parts[1], "config"))
-                return if (parts.len == 3 and !isDir and eql(u8, parts[2], "colormaps.json")) .copy else .skip;
-            if (parts.len == 3 and isDir and eql(u8, parts[1], "textures")) {
-                for (skippedTextures) |skipped| if (eql(u8, parts[2], skipped)) return .skip;
-            }
-            return if (isDir) .enter else .copy;
-        },
-    }
-}
-
-test actionFor {
-    const cases = .{
-        .{ &.{"version-1.22.7.txt"}, false, Action.copy },
-        .{ &.{"gameicon.png"}, false, Action.skip },
-        .{ &.{"survival"}, true, Action.enter },
-        .{ &.{ "survival", "music" }, true, Action.skip },
-        .{ &.{ "survival", "blocktypes" }, true, Action.enter },
-        .{ &.{ "survival", "blocktypes", "stone", "rock.json" }, false, Action.copy },
-        .{ &.{ "game", "textures", "gui" }, true, Action.skip },
-        .{ &.{ "game", "textures", "block" }, true, Action.enter },
-        .{ &.{ "survival", "config", "colormaps.json" }, false, Action.copy },
-        .{ &.{ "survival", "config", "traits.json" }, false, Action.skip },
-        .{ &.{ "survival", "config", "handbook" }, true, Action.skip },
-    };
-    inline for (cases) |case| try std.testing.expectEqual(case[2], actionFor(case[0], case[1]));
-}
-
 fn copyAssets(gpa: std.mem.Allocator, io: Io, assetsDir: Dir, outAssets: Dir) !usize {
     var walker = try assetsDir.walkSelectively(gpa);
     defer walker.deinit();
@@ -140,7 +96,7 @@ fn copyAssets(gpa: std.mem.Allocator, io: Io, assetsDir: Dir, outAssets: Dir) !u
         parts.clearRetainingCapacity();
         var it = std.mem.tokenizeScalar(u8, entry.path, std.fs.path.sep);
         while (it.next()) |part| try parts.append(gpa, part);
-        switch (actionFor(parts.items, entry.kind == .directory)) {
+        switch (Assets.actionFor(parts.items, entry.kind == .directory)) {
             .skip => {},
             .enter => try walker.enter(io, entry),
             .copy => {
@@ -204,48 +160,6 @@ fn openEmptyOutput(io: Io, path: []const u8) !Dir {
         },
         else => return err,
     }
-}
-
-/// The game version, from the name of assets/version-<version>.txt, or null without one.
-fn findVersion(allocator: std.mem.Allocator, io: Io, assetsDir: Dir) !?[]const u8 {
-    var it = assetsDir.iterate();
-    while (try it.next(io)) |entry| {
-        if (entry.kind == .file and std.mem.startsWith(u8, entry.name, "version-") and std.mem.endsWith(u8, entry.name, ".txt"))
-            return try allocator.dupe(u8, entry.name["version-".len .. entry.name.len - ".txt".len]);
-    }
-    return null;
-}
-
-const Folder = enum { game, data };
-
-/// The first standard location that exists. The Windows paths are verified on a 1.22.7
-/// install; the Linux data folders come from https://wiki.vintagestory.at/VintagestoryData_folder
-/// and the Linux game folders from forum reports, unverified.
-fn findFolder(arena: std.mem.Allocator, io: Io, env: *const std.process.Environ.Map, folder: Folder) ?[]const u8 {
-    var candidates: std.ArrayList([]const u8) = .empty;
-    const join = std.fs.path.join;
-    if (builtin.os.tag == .windows) {
-        if (env.get("APPDATA")) |appData| candidates.append(arena, join(arena, &.{ appData, switch (folder) {
-            .game => "Vintagestory",
-            .data => "VintagestoryData",
-        } }) catch return null) catch return null;
-    } else if (env.get("HOME")) |home| {
-        const paths: []const []const u8 = switch (folder) {
-            .game => &.{ ".local/share/vintagestory", ".local/share/flatpak/app/at.vintagestory.VintageStory/current/active/files/extra/vintagestory" },
-            .data => &.{ ".config/VintagestoryData", ".var/app/at.vintagestory.VintageStory/config/VintagestoryData" },
-        };
-        if (folder == .data) {
-            if (env.get("XDG_CONFIG_HOME")) |config|
-                candidates.append(arena, join(arena, &.{ config, "VintagestoryData" }) catch return null) catch return null;
-        }
-        for (paths) |path| candidates.append(arena, join(arena, &.{ home, path }) catch return null) catch return null;
-    }
-    for (candidates.items) |candidate| {
-        const marker = if (folder == .game) join(arena, &.{ candidate, "assets" }) catch return null else candidate;
-        Dir.cwd().access(io, marker, .{}) catch continue;
-        return candidate;
-    }
-    return null;
 }
 
 fn realPath(allocator: std.mem.Allocator, io: Io, dir: Dir) ![]const u8 {
