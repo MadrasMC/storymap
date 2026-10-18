@@ -4,11 +4,11 @@ Storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 ## Assets
 
-1. **Mod settings.** Honour `modPaths` and `disabledMods` in the data folder's `clientsettings.json` instead of taking every mod in `<data>/Mods`, both when rendering and in `extract-assets`.
+1. **Mod settings.** Honour `modPaths` and `disabledMods` in the data folder's `clientsettings.json` instead of taking every mod in `<data>/Mods` when preparing blocks.
 
 ## Top-down map
 
-2. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Block names come from `GameData`. The game's own client map cache (`mappiece` rows in `Maps/<id>.db`, [save format §7](docs/save-format/README.md#the-games-map-cache)) could serve as a colour reference: each piece is an array of pixel colours.
+2. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Each block's colour is worked out when preparing blocks and kept with them, so rendering never reads a texture ([`docs/rendering.md`](docs/rendering.md#preparing-blocks)); a save's IDs map to codes through `GameData`. The game's own client map cache (`mappiece` rows in `Maps/<id>.db`, [save format §7](docs/save-format/README.md#the-games-map-cache)) could serve as a colour reference: each piece is an array of pixel colours.
 3. **Themed map colours.** After the colour map: let a theme carry a palette the renderer draws the tiles with, so the map's colours suit the theme around it (a plain map for the plain theme). Today a theme draws only the page around the map ([`docs/themes.md`](docs/themes.md)), and the tiles are always sepia.
 4. **Incremental rendering.** Re-render only the tiles whose chunks changed since the last render, and the zoomed-out tiles above them, instead of the whole world every time.
 5. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
@@ -39,7 +39,7 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Save path and output path as command-line arguments.
 - Tree attribute parser: every block entity in the 1.19 sample parses (`src/vs/TreeAttribute.zig`).
 - Saves opened with SQLite's `immutable=1`, so Storymap never writes next to them; a warning if the game may still be running.
-- `storymap extract-assets`: copies blocktypes, itemtypes, shapes, textures (minus gui/icons), worldproperties, patches and `config/colormaps.json` (181 MB for 1.22.7) plus every mod, in the game's own layout. Verified byte-for-byte against the install.
+- `storymap extract-assets`: copied blocktypes, itemtypes, shapes, textures (minus gui/icons), worldproperties, patches and `config/colormaps.json` (181 MB for 1.22.7) plus every mod, in the game's own layout. Since replaced by preparing blocks.
 - Block ID → block code mapping from `gamedata` (`src/vs/GameData.zig`); every ID in both test saves has a name.
 - No allocation per chunk (memory stage 1): one `Chunk.Decoder` and one fixed-size `Chunk` per worker, reused for every chunk ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)).
 - Sepia relief map: pale at sea level, darker below, paler above, with hill shading. Sea level comes from the world height ([save format §6](docs/save-format/README.md#sea-level)), so colours don't depend on the rest of the map: tiles will match, and different worlds look alike.
@@ -54,5 +54,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Chunk decoding on every core, one SQLite connection per worker; timings in [`docs/rendering.md`](docs/rendering.md#performance).
 - Format checked against 1.22.7: schema, positions, chunk fields, block and liquid decoding and block entities all hold; differences are noted in the docs.
 - Chiseled blocks and ground storage checked on 1.22.7, in the larger test world's ruins: every block entity parses, every cuboid decodes, and the new keys are documented ([save format §5](docs/save-format/README.md#chiseled-blocks-microblock-chisel)).
-- The renderer reads assets in place from `--game`/`--data` (found in the standard locations by default) or an `extract-assets` copy: files read by path or listed by folder, mod zips read without unpacking, mods replacing the game's files, and a warning when a save uses a mod that isn't installed ([`docs/rendering.md`](docs/rendering.md#reading-them)).
+- Assets read in place from `--game`/`--data` (found in the standard locations by default): files read by path or listed by folder, mod zips read without unpacking, mods replacing the game's files ([`docs/rendering.md`](docs/rendering.md#reading-them)).
+- Preparing blocks, as Mapcrafter's Blockcrafter does: every block type of the game and mods expanded into the block codes the game makes, exactly those in the test saves, kept in a blocks folder (`blocks` in the current folder by default), one set per game version and mods; a render prepares on demand (`--prepare` to force, `storymap prepare` alone) and reports blocks the save has that the game and mods don't ([`docs/rendering.md`](docs/rendering.md#preparing-blocks)).
 - A modded world: the larger 1.22.7 test world was created with Primitive Survival. Mods' block and item codes carry their domain, and their IDs follow the game's ([save format §6](docs/save-format/README.md#block-and-item-ids)).

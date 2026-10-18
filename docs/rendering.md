@@ -31,19 +31,11 @@ Blocks are defined by data files, not code *(Wiki)*:
 - **Shapes:** JSON in `shapes/`, normally made with the official Model Creator: boxes with per-face texture references, rotations and nested children. *([Wiki: Asset Type – Shapes](https://wiki.vintagestory.at/Modding:Asset_Type_-_Shapes))*
 - **Textures:** PNG in `textures/`, referenced from block types and shapes by name. *([Wiki: Asset Type – Textures](https://wiki.vintagestory.at/Modding:Asset_Type_-_Textures))*
 
-These are the game developers' copyrighted assets, so Storymap never ships them: every user points Storymap at their own game install (and mods) and Storymap extracts what it needs. That's also the only way modded blocks render correctly.
-
-To copy what the renderer needs (block types, shapes, textures) from your own install and mods into a folder, for example to render on a machine without the game:
-
-```bash
-zig build run -- extract-assets path/to/output [--game <install folder>] [--data <data folder>]
-```
-
-The output mirrors the game's own layout (`game/assets/...` and `data/Mods/...`); `--game` and `--data` default to the standard locations below.
+These are the game developers' copyrighted assets, so Storymap never ships them: every user's own install and mods are read. That's also the only way modded blocks render correctly. They're read once, to prepare what a map needs, and a render reads only that ([Preparing blocks](#preparing-blocks)). Mapcrafter works the same way: a separate tool, Blockcrafter, renders every block's image from the game's assets once, and the renderer only loads those images.
 
 Where they live *(Verified (1.22.7): a fresh Windows install)*:
 
-- **Game install** (`%APPDATA%\Vintagestory` on Windows): `assets/<domain>/` with one folder per domain, `creative`, `game` and `survival`, each containing `blocktypes/`, `shapes/`, `textures/` and more. `assets/version-1.22.7.txt` names the version. The install's own `Mods/` folder holds only the built-in code (`VSSurvivalMod.dll`, `VSEssentials.dll`, `VSCreativeMod.dll`) and a `do_not_add_mods_here.txt`.
+- **Game install** (`%APPDATA%\Vintagestory` on Windows): `assets/` with three folders, `creative`, `game` and `survival`, each containing `blocktypes/`, `shapes/`, `textures/` and more. All three are the `game` domain: block types in `survival/blocktypes/` make codes without a domain, such as `rock-granite`, and refer to each other's files without one *(Verified (1.22.7): the block codes they make are those in the saves, [Block codes](#block-codes))*. `assets/version-1.22.7.txt` names the version. The install's own `Mods/` folder holds only the built-in code (`VSSurvivalMod.dll`, `VSEssentials.dll`, `VSCreativeMod.dll`) and a `do_not_add_mods_here.txt`.
 - **Data folder** (`%APPDATA%\VintagestoryData`): `Saves/`, and `Mods/` with user mods as zip files (e.g. `primitivesurvival_5.1.4.zip`), laid out as in [Mods](#mods) below. There's also a `Maps/` folder with one small `.db` file per world, probably the client's world-map cache; not looked into.
 
 ### What the renderer needs from them
@@ -61,7 +53,7 @@ The base game's `assets/` is 838 MB, mostly music (489 MB), world generation (70
 | `config/colormaps.json` | small | Maps colour map names used by block types (`climatePlantTint`, `seasonalGrass`, …) to textures in `textures/environment/`. Some block types also name separate `climateColorMapForMap` / `seasonColorMapForMap`, presumably for the world map. |
 | `patches/` | small | JSON edits applied to other assets at load time. The base game's are gameplay settings; mods use them to change base-game blocks. |
 
-**The JSON isn't standard JSON.** Asset files use unquoted keys and trailing commas, so a strict JSON parser (like Zig's `std.json`) rejects them; the renderer needs a lenient reader.
+**The JSON isn't standard JSON.** Asset files use unquoted keys, single-quoted strings, numbers like `.5`, comments and trailing commas, so a strict JSON parser (like Zig's `std.json`) rejects them. [`src/vs/Json.zig`](../src/vs/Json.zig) reads them. *(Verified (1.22.7): every block type, item type, world property and patch file of the game and Primitive Survival, 1,025 files.)*
 
 **Variant syntax:** block types generate one block per variant combination. Properties can be keyed by variant pattern (`texturesByType: { "rock-*": … }`, regex keys like `"@rock-(claystone|sandstone)"`), use `{rock}`-style placeholders, and a texture path ending in `*` means "all numbered alternates" (e.g. `block/stone/rock/{rock}*`).
 
@@ -77,17 +69,38 @@ A save names the mods its blocks and items come from: their codes carry the mod'
 
 ### Reading them
 
-The renderer reads the assets in place, from the install and the data folder (`--game` and `--data`, defaulting to the standard locations above) or from an `extract-assets` copy (`--game <copy>/game --data <copy>/data`). [`src/vs/Assets.zig`](../src/vs/Assets.zig) does this:
+Preparing reads the assets in place, from the install and the data folder (`--game` and `--data`, defaulting to the standard locations above). [`src/vs/Assets.zig`](../src/vs/Assets.zig) does this:
 
 - **Mods:** each zip or folder in `Mods` is read in place, zips without unpacking them. Its `assets/<domain>/` folders count like the game's.
-- **Files are read by path:** most of what rendering needs is named exactly, such as a block type's shape and textures, or `config/colormaps.json`. Only the files rendering needs are read, the same ones `extract-assets` copies (the table above), so the install and a copy answer alike. Mods' `compatibility/` folders are left out for now.
+- **Files are read by path:** most of what rendering needs is named exactly, such as a block type's shape and textures, or `config/colormaps.json`. Only the files in the table above are read. Mods' `compatibility/` folders are left out for now.
 - **Some files are listed instead:** nothing in a save's block code says which file defines it (`survival/blocktypes/stone/rock.json` defines every `rock-*`), so block types are found by listing every domain's `blocktypes/`. Patches are listed the same way, and so is a folder of numbered texture alternates.
 - **A zip has no lookup by name**, so the entries rendering needs are mapped when it's opened, from its central directory.
 - **Case doesn't matter**, as in the game, which lowercases every asset location *(Source: [vsapi `AssetLocation.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Assets/AssetLocation.cs))*. A few of the game's files aren't lowercase, such as `survival/shapes/block/clutter/pipes/h-EW.json`, 34 of the files rendering needs in 1.22.7; where the file system minds case, a file not found by its lowercase path is looked for by its own name.
 - **A mod's file replaces the game's** of the same domain and path, and mods are taken in name order, so which one wins when two mods have the same file doesn't depend on the file system. In what order the game itself applies mods isn't checked.
-- **A missing mod is reported:** when a save's block or item codes name a domain no installed mod has files for, the render warns, since those blocks can't look as they do in the game.
 
 Opening the assets takes about 2 ms for 1.22.7 with Primitive Survival, and listing every block type, 543 from the game and 69 from the mod, about 4 ms. *(Verified (1.22.7): files read this way match the same files read from the install and from inside the zip, byte for byte.)*
+
+### Block codes
+
+A save names its blocks by code (`rock-granite`), and nothing in a code says which file defines it, so every block type is expanded into its codes as the game does it, by [`src/vs/BlockTypes.zig`](../src/vs/BlockTypes.zig) *(Source: vsessentialsmod's [`RegistryObjectTypeLoader.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Loading/RegistryObjectTypeLoader.cs) and [`RegistryObjectType.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Loading/RegistryObjectType.cs))*:
+
+- **A block type** is a file in any domain's `blocktypes/`, with a `code` in the file's domain unless it names another. One with `enabled: false` (or `0`) makes no blocks. `inheritFrom` lays the file over another one first.
+- **Variant groups** each give a list of states: their own `states`, or a world property's variants (`loadFromProperties: "block/rock"` is `worldproperties/block/rock.json`, in the `game` domain unless it names another; `loadFromPropertiesCombine` joins several). Groups that multiply (the default) give every combination of their states; groups that add give one block per state. A block's code is the type's code and its states, joined with `-`; an empty state adds nothing. `selectiveMultiply` splits one state of another group; nothing in 1.22.7 or Primitive Survival uses it.
+- **`skipVariants` and `allowedVariants`** then filter the codes, by exact code or by wildcard, `*` standing for any run of characters. A pattern starting with `@` is a regular expression; none of these use one, and Storymap reports one rather than read it.
+- **Patches aren't applied.** Mods can patch block types, but no patch in 1.22.7 or Primitive Survival changes which codes there are.
+
+The result is exactly the block codes in the saves: the 14,089 of the 1.22.7 world, and the 14,781 of the larger one created with Primitive Survival, beside `air` and `mantle`, which the game registers itself. *(Verified (1.22.7): both worlds' `BlockIDs`, code by code.)*
+
+### Preparing blocks
+
+Everything a map needs from the assets is prepared once, by [`src/vs/Prepared.zig`](../src/vs/Prepared.zig), into a blocks folder: `blocks` in the current folder, beside a render's `out`, or the one given (`--blocks` when rendering, the folder argument of `storymap prepare`). For now that's the block codes and the files that define them, in `<blocks folder>/<key>/blocks.txt`; colours come next.
+
+- **One set per game and mods:** the key changes with the game version and the mods (their names, sizes and times), so updating either prepares a new set, and switching back finds the old one.
+- **On demand:** a render prepares the set it needs if it isn't there yet. `--prepare` prepares it again anyway, and `storymap prepare` does only that.
+- **Without the game**, a render uses the newest set prepared before, so a set copied from another machine works.
+- **A save's unknown blocks are reported:** those of mods that aren't installed, and any others the prepared set doesn't have.
+
+Preparing 1.22.7 with Primitive Survival takes about 0.2 s, for 14,781 blocks.
 
 ## Block entities that change how things look
 

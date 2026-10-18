@@ -1,8 +1,8 @@
 //! The game's assets and the user's mods, read in place: the files rendering needs from the
-//! install's `assets/<domain>/…`, and from each mod in the data folder's `Mods`, a zip or a
-//! folder with an `assets/<domain>/…` of its own. An `extract-assets` copy has the same
-//! layout. A file is read by its domain and path, ignoring case as the game does, and a mod's
-//! file replaces the game's (docs/rendering.md#reading-them).
+//! install's `assets/`, and from each mod in the data folder's `Mods`, a zip or a folder with
+//! an `assets/<domain>/…` of its own. The install's `creative`, `game` and `survival` folders
+//! are all the `game` domain. A file is read by its domain and path, ignoring case as the
+//! game does, and a mod's file replaces the game's (docs/rendering.md#reading-them).
 //!
 //! The game and data folders are only ever read.
 const Assets = @This();
@@ -15,8 +15,7 @@ const Dir = Io.Dir;
 arena: std.heap.ArenaAllocator,
 /// The game, then the mods in name order, so a later one's files replace an earlier one's.
 sources: std.ArrayList(Source) = .empty,
-/// The domains the sources have folders for: the game's "game", "survival" and "creative",
-/// and the mods'.
+/// The domains the sources have files in: "game", and the mods'.
 domains: std.StringArrayHashMapUnmanaged(void) = .empty,
 /// The game version, from assets/version-<version>.txt.
 version: ?[]const u8 = null,
@@ -25,11 +24,20 @@ pub const Source = struct {
     /// "Vintage Story", or a mod's zip or folder name in Mods.
     name: []const u8,
     kind: union(enum) {
-        /// The source's `assets` folder, read by path.
-        folder: Dir,
+        /// The folders in the source's `assets` folder, read by path, in name order.
+        folders: []const Folder,
         zip: Zip,
     },
 };
+
+/// A folder in an `assets` folder, and the domain its files are in.
+pub const Folder = struct {
+    domain: []const u8,
+    dir: Dir,
+};
+
+/// The domain the install's own folders are in.
+pub const gameDomain = "game";
 
 /// A zip has no lookup by name, so the entries rendering needs are mapped once, when it's
 /// opened, by lowercased "domain/path" below its `assets` folder.
@@ -48,17 +56,17 @@ pub const Name = struct {
 /// The largest asset file read; the biggest in 1.22.7 is a few MB.
 const maxFileBytes = 64 << 20;
 
-/// Opens the assets in `game` (an install, or an extract-assets copy's `game`) and the mods in
-/// `data`'s `Mods`. A mod that can't be read is skipped with a warning.
+/// Opens the assets in `game`, an install, and the mods in `data`'s `Mods`. A mod that can't
+/// be read is skipped with a warning.
 pub fn open(allocator: std.mem.Allocator, io: Io, game: Dir, data: ?Dir) !Assets {
     var self: Assets = .{ .arena = .init(allocator) };
     errdefer self.close(io);
     const arena = self.arena.allocator();
 
-    const assets = game.openDir(io, "assets", .{ .iterate = true }) catch return error.NoAssetsFolder;
-    try self.sources.append(arena, .{ .name = "Vintage Story", .kind = .{ .folder = assets } });
+    var assets = game.openDir(io, "assets", .{ .iterate = true }) catch return error.NoAssetsFolder;
+    defer assets.close(io);
     self.version = try findVersion(arena, io, assets);
-    try self.addDomains(io, assets);
+    try self.addFolders(io, "Vintage Story", assets, gameDomain);
 
     var mods = (data orelse return self).openDir(io, "Mods", .{ .iterate = true }) catch return self;
     defer mods.close(io);
@@ -80,7 +88,7 @@ pub fn open(allocator: std.mem.Allocator, io: Io, game: Dir, data: ?Dir) !Assets
 
 pub fn close(self: *Assets, io: Io) void {
     for (self.sources.items) |source| switch (source.kind) {
-        .folder => |dir| dir.close(io),
+        .folders => |folders| for (folders) |folder| folder.dir.close(io),
         .zip => |zip| zip.file.close(io),
     };
     self.arena.deinit();
@@ -104,22 +112,33 @@ fn addMod(self: *Assets, io: Io, mods: Dir, name: []const u8) !void {
     } else {
         var mod = try mods.openDir(io, name, .{});
         defer mod.close(io);
-        const assets = mod.openDir(io, "assets", .{ .iterate = true }) catch return;
-        errdefer assets.close(io);
-        try self.sources.append(arena, .{ .name = name, .kind = .{ .folder = assets } });
-        try self.addDomains(io, assets);
+        var assets = mod.openDir(io, "assets", .{ .iterate = true }) catch return;
+        defer assets.close(io);
+        try self.addFolders(io, name, assets, null);
     }
 }
 
-/// Records the domain folders in an `assets` folder.
-fn addDomains(self: *Assets, io: Io, assets: Dir) !void {
+/// Adds a source of the folders in `assets`: all in `domain`, or each its own domain, named
+/// as the folder.
+fn addFolders(self: *Assets, io: Io, name: []const u8, assets: Dir, domain: ?[]const u8) !void {
     const arena = self.arena.allocator();
+    var names: std.ArrayList([]const u8) = .empty;
     var it = assets.iterate();
     while (try it.next(io)) |entry| {
-        if (entry.kind != .directory) continue;
-        const domain = try arena.dupe(u8, entry.name);
-        try self.domains.put(arena, std.ascii.lowerString(domain, domain), {});
+        if (entry.kind == .directory) try names.append(arena, try arena.dupe(u8, entry.name));
     }
+    std.mem.sort([]const u8, names.items, {}, lessThan);
+    var folders: std.ArrayList(Folder) = .empty;
+    errdefer for (folders.items) |folder| folder.dir.close(io);
+    for (names.items) |folderName| {
+        const folderDomain = domain orelse lowered: {
+            const copy = try arena.dupe(u8, folderName);
+            break :lowered std.ascii.lowerString(copy, copy);
+        };
+        try folders.append(arena, .{ .domain = folderDomain, .dir = try assets.openDir(io, folderName, .{ .iterate = true }) });
+        try self.domains.put(arena, folderDomain, {});
+    }
+    try self.sources.append(arena, .{ .name = name, .kind = .{ .folders = folders.items } });
 }
 
 fn domainOf(key: []const u8) []const u8 {
@@ -145,8 +164,8 @@ fn mapZip(arena: std.mem.Allocator, io: Io, file: Io.File) !std.StringHashMapUnm
 }
 
 /// Whether rendering needs the file at `path` below an `assets` folder, e.g.
-/// "survival/blocktypes/stone/rock.json": every folder on the way is entered, and the file
-/// is copied, as `extract-assets` would.
+/// "survival/blocktypes/stone/rock.json", by `actionFor`: every folder on the way is
+/// entered, and the file is taken.
 fn needed(path: []const u8) bool {
     var parts: [maxDepth][]const u8 = undefined;
     var count: usize = 0;
@@ -157,7 +176,7 @@ fn needed(path: []const u8) bool {
     }
     if (count < 3) return false;
     for (1..count) |depth| if (actionFor(parts[0..depth], true) != .enter) return false;
-    return actionFor(parts[0..count], false) == .copy;
+    return actionFor(parts[0..count], false) == .take;
 }
 
 const maxDepth = 32;
@@ -177,13 +196,22 @@ pub fn read(self: *const Assets, allocator: std.mem.Allocator, io: Io, domain: [
     var buffer: [Dir.max_path_bytes]u8 = undefined;
     const key = std.fmt.bufPrint(&buffer, "{s}/{s}", .{ domain, path }) catch return null;
     if (!needed(std.ascii.lowerString(key, key))) return null;
+    const lowerDomain = key[0..domain.len];
+    const lowerPath = key[domain.len + 1 ..];
     // The last mod first: its file replaces the others'.
     var i = self.sources.items.len;
     while (i > 0) {
         i -= 1;
         switch (self.sources.items[i].kind) {
             .zip => |zip| if (zip.entries.get(key)) |entry| return try readZip(allocator, io, zip.file, entry),
-            .folder => |dir| if (try readFolder(allocator, io, dir, key)) |bytes| return bytes,
+            .folders => |folders| {
+                var j = folders.len;
+                while (j > 0) {
+                    j -= 1;
+                    if (!std.mem.eql(u8, folders[j].domain, lowerDomain)) continue;
+                    if (try readFolder(allocator, io, folders[j].dir, lowerPath)) |bytes| return bytes;
+                }
+            },
         }
     }
     return null;
@@ -200,16 +228,16 @@ fn readZip(allocator: std.mem.Allocator, io: Io, file: Io.File, entry: std.zip.I
     return bytes;
 }
 
-/// The file at the lowercase `path` below `assets`, or null without one. The game names
-/// nearly all its assets in lowercase, but not all (`survival/shapes/block/clutter/pipes/h-EW.json`),
+/// The file at the lowercase `path` below a domain folder, or null without one. The game
+/// names nearly all its assets in lowercase, but not all (`shapes/block/clutter/pipes/h-EW.json`),
 /// so where the file system minds case, a file that isn't found by its lowercase path is
 /// looked for by its own name.
-fn readFolder(allocator: std.mem.Allocator, io: Io, assets: Dir, path: []const u8) !?[]u8 {
-    return assets.readFileAlloc(io, path, allocator, .limited(maxFileBytes)) catch |err| switch (err) {
+fn readFolder(allocator: std.mem.Allocator, io: Io, folder: Dir, path: []const u8) !?[]u8 {
+    return folder.readFileAlloc(io, path, allocator, .limited(maxFileBytes)) catch |err| switch (err) {
         error.FileNotFound => {
             var buffer: [Dir.max_path_bytes]u8 = undefined;
-            const named = try findIgnoringCase(io, assets, path, &buffer) orelse return null;
-            return try assets.readFileAlloc(io, named, allocator, .limited(maxFileBytes));
+            const named = try findIgnoringCase(io, folder, path, &buffer) orelse return null;
+            return try folder.readFileAlloc(io, named, allocator, .limited(maxFileBytes));
         },
         else => return err,
     };
@@ -259,7 +287,7 @@ pub fn list(self: *const Assets, arena: std.mem.Allocator, io: Io, folder: []con
                     try keys.put(arena, key.*, {});
             }
         },
-        .folder => |assets| try listFolder(arena, io, assets, folder, &keys),
+        .folders => |folders| for (folders) |domainFolder| try listFolder(arena, io, domainFolder, folder, &keys),
     };
     const sorted = keys.keys();
     std.mem.sort([]const u8, sorted, {}, lessThan);
@@ -271,40 +299,18 @@ pub fn list(self: *const Assets, arena: std.mem.Allocator, io: Io, folder: []con
     return names;
 }
 
-/// Adds the files rendering needs in `folder` of each domain in `assets` to `keys`.
-fn listFolder(arena: std.mem.Allocator, io: Io, assets: Dir, folder: []const u8, keys: *std.StringArrayHashMapUnmanaged(void)) !void {
-    var domains = assets.iterate();
-    while (try domains.next(io)) |domain| {
-        if (domain.kind != .directory) continue;
-        const prefix = try std.fmt.allocPrint(arena, "{s}/{s}", .{ domain.name, folder });
-        var dir = assets.openDir(io, prefix, .{ .iterate = true }) catch continue;
-        defer dir.close(io);
-        var walker = try dir.walk(arena);
-        defer walker.deinit();
-        while (try walker.next(io)) |entry| {
-            if (entry.kind == .directory) continue;
-            const key = try std.fmt.allocPrint(arena, "{s}/{s}", .{ prefix, entry.path });
-            std.mem.replaceScalar(u8, key, std.fs.path.sep, '/');
-            if (needed(std.ascii.lowerString(key, key))) try keys.put(arena, key, {});
-        }
+/// Adds the files rendering needs in `folder` of a domain folder to `keys`.
+fn listFolder(arena: std.mem.Allocator, io: Io, domainFolder: Folder, folder: []const u8, keys: *std.StringArrayHashMapUnmanaged(void)) !void {
+    var dir = domainFolder.dir.openDir(io, folder, .{ .iterate = true }) catch return;
+    defer dir.close(io);
+    var walker = try dir.walk(arena);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind == .directory) continue;
+        const key = try std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ domainFolder.domain, folder, entry.path });
+        std.mem.replaceScalar(u8, key, std.fs.path.sep, '/');
+        if (needed(std.ascii.lowerString(key, key))) try keys.put(arena, key, {});
     }
-}
-
-/// The mods a save's block and item codes come from (the domain before the colon, as in
-/// `primitivesurvival:treehollowgrown-…`) that no source has files for, each once.
-pub fn missingMods(self: *const Assets, allocator: std.mem.Allocator, codeLists: []const []const ?[]const u8) ![]const []const u8 {
-    var missing: std.ArrayList([]const u8) = .empty;
-    errdefer missing.deinit(allocator);
-    for (codeLists) |codes| for (codes) |maybeCode| {
-        const code = maybeCode orelse continue;
-        const colon = std.mem.indexOfScalar(u8, code, ':') orelse continue;
-        const domain = code[0..colon];
-        if (self.domains.contains(domain)) continue;
-        for (missing.items) |seen| {
-            if (std.mem.eql(u8, seen, domain)) break;
-        } else try missing.append(allocator, domain);
-    };
-    return missing.toOwnedSlice(allocator);
 }
 
 test "assets from the game, a mod zip and a mod folder" {
@@ -315,6 +321,7 @@ test "assets from the game, a mod zip and a mod folder" {
         .{ "game/assets/version-1.22.7.txt", "" },
         .{ "game/assets/survival/blocktypes/a.json", "rock" },
         .{ "game/assets/survival/blocktypes/stone/b.json", "stone" },
+        .{ "game/assets/creative/blocktypes/c.json", "creative" },
         .{ "game/assets/survival/shapes/block/pipes/h-EW.json", "pipe" },
         .{ "game/assets/game/textures/block/override.png", "from the game" },
         .{ "game/assets/game/music/song.ogg", "music" },
@@ -339,45 +346,46 @@ test "assets from the game, a mod zip and a mod folder" {
     // Vintage Story, the folder mod and the zip; the code-only mod has no assets.
     try std.testing.expectEqual(3, assets.sources.items.len);
 
-    const rock = (try assets.read(allocator, io, "Survival", "blocktypes/A.json")).?;
+    // The install's survival and creative folders are the game domain.
+    const rock = (try assets.read(allocator, io, "Game", "blocktypes/A.json")).?;
     defer allocator.free(rock);
     try std.testing.expectEqualStrings("rock", rock);
-    const pipe = (try assets.read(allocator, io, "survival", "shapes/block/pipes/h-ew.json")).?;
+    const pipe = (try assets.read(allocator, io, "game", "shapes/block/pipes/h-ew.json")).?;
     defer allocator.free(pipe);
     try std.testing.expectEqualStrings("pipe", pipe);
     // The zip's own file, deflated, and its override of the game's, named in another case.
     const thing = (try assets.read(allocator, io, "testmod", "blocktypes/thing.json")).?;
     defer allocator.free(thing);
-    try std.testing.expectEqual(360, thing.len);
+    try std.testing.expectEqual(394, thing.len);
     const override = (try assets.read(allocator, io, "game", "textures/block/override.png")).?;
     defer allocator.free(override);
     try std.testing.expectEqualStrings("from the mod", override);
     const shape = (try assets.read(allocator, io, "othermod", "shapes/s.json")).?;
     defer allocator.free(shape);
     try std.testing.expectEqualStrings("shape", shape);
-    // What rendering doesn't need isn't read, even from the install, as in an extract-assets copy.
+    // What rendering doesn't need isn't read, from the install or a mod.
     try std.testing.expectEqual(null, try assets.read(allocator, io, "game", "music/song.ogg"));
     try std.testing.expectEqual(null, try assets.read(allocator, io, "testmod", "lang/en.json"));
-    try std.testing.expectEqual(null, try assets.read(allocator, io, "survival", "blocktypes/missing.json"));
+    try std.testing.expectEqual(null, try assets.read(allocator, io, "game", "blocktypes/missing.json"));
+    try std.testing.expectEqual(null, try assets.read(allocator, io, "survival", "blocktypes/a.json"));
 
     var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
     const blocktypes = try assets.list(arena.allocator(), io, "blocktypes");
-    try std.testing.expectEqual(3, blocktypes.len);
-    try std.testing.expectEqualStrings("survival", blocktypes[0].domain);
+    try std.testing.expectEqual(4, blocktypes.len);
+    try std.testing.expectEqualStrings("game", blocktypes[0].domain);
     try std.testing.expectEqualStrings("blocktypes/a.json", blocktypes[0].path);
-    try std.testing.expectEqualStrings("blocktypes/stone/b.json", blocktypes[1].path);
-    try std.testing.expectEqualStrings("testmod", blocktypes[2].domain);
+    try std.testing.expectEqualStrings("blocktypes/c.json", blocktypes[1].path);
+    try std.testing.expectEqualStrings("blocktypes/stone/b.json", blocktypes[2].path);
+    try std.testing.expectEqualStrings("testmod", blocktypes[3].domain);
     const textures = try assets.list(arena.allocator(), io, "textures");
     try std.testing.expectEqual(1, textures.len);
     try std.testing.expectEqualStrings("textures/block/override.png", textures[0].path);
 
-    const blocks = [_]?[]const u8{ "rock-granite", "testmod:thing", "primitivesurvival:treehollowgrown-x", null, "primitivesurvival:other" };
-    const items = [_]?[]const u8{ "primitivesurvival:item", "othermod:item" };
-    const missing = try assets.missingMods(allocator, &.{ &blocks, &items });
-    defer allocator.free(missing);
-    try std.testing.expectEqual(1, missing.len);
-    try std.testing.expectEqualStrings("primitivesurvival", missing[0]);
+    try std.testing.expect(assets.domains.contains("game"));
+    try std.testing.expect(assets.domains.contains("testmod"));
+    try std.testing.expect(assets.domains.contains("othermod"));
+    try std.testing.expect(!assets.domains.contains("survival"));
 }
 
 test findIgnoringCase {
@@ -393,18 +401,18 @@ test findIgnoringCase {
 }
 
 /// What to do with a path below `assets/`, given as its components (domain, category, ...).
-pub const Action = enum { copy, enter, skip };
+const Action = enum { take, enter, skip };
 
 const wholeCategories = [_][]const u8{ "blocktypes", "itemtypes", "shapes", "textures", "worldproperties", "patches" };
 const skippedTextures = [_][]const u8{ "gui", "icons" };
 
 /// Which assets rendering needs: why each is, in docs/rendering.md#what-the-renderer-needs-from-them.
-pub fn actionFor(parts: []const []const u8, isDir: bool) Action {
+fn actionFor(parts: []const []const u8, isDir: bool) Action {
     const eql = std.mem.eql;
     switch (parts.len) {
         0 => return .skip,
         // assets/version-1.22.7.txt, and the domain folders.
-        1 => return if (isDir) .enter else if (std.mem.startsWith(u8, parts[0], "version-")) .copy else .skip,
+        1 => return if (isDir) .enter else if (std.mem.startsWith(u8, parts[0], "version-")) .take else .skip,
         2 => {
             if (!isDir) return .skip;
             for (wholeCategories) |category| if (eql(u8, parts[1], category)) return .enter;
@@ -413,26 +421,26 @@ pub fn actionFor(parts: []const []const u8, isDir: bool) Action {
         else => {
             // Only the colour map definitions are needed from config/.
             if (eql(u8, parts[1], "config"))
-                return if (parts.len == 3 and !isDir and eql(u8, parts[2], "colormaps.json")) .copy else .skip;
+                return if (parts.len == 3 and !isDir and eql(u8, parts[2], "colormaps.json")) .take else .skip;
             if (parts.len == 3 and isDir and eql(u8, parts[1], "textures")) {
                 for (skippedTextures) |skipped| if (eql(u8, parts[2], skipped)) return .skip;
             }
-            return if (isDir) .enter else .copy;
+            return if (isDir) .enter else .take;
         },
     }
 }
 
 test actionFor {
     const cases = .{
-        .{ &.{"version-1.22.7.txt"}, false, Action.copy },
+        .{ &.{"version-1.22.7.txt"}, false, Action.take },
         .{ &.{"gameicon.png"}, false, Action.skip },
         .{ &.{"survival"}, true, Action.enter },
         .{ &.{ "survival", "music" }, true, Action.skip },
         .{ &.{ "survival", "blocktypes" }, true, Action.enter },
-        .{ &.{ "survival", "blocktypes", "stone", "rock.json" }, false, Action.copy },
+        .{ &.{ "survival", "blocktypes", "stone", "rock.json" }, false, Action.take },
         .{ &.{ "game", "textures", "gui" }, true, Action.skip },
         .{ &.{ "game", "textures", "block" }, true, Action.enter },
-        .{ &.{ "survival", "config", "colormaps.json" }, false, Action.copy },
+        .{ &.{ "survival", "config", "colormaps.json" }, false, Action.take },
         .{ &.{ "survival", "config", "traits.json" }, false, Action.skip },
         .{ &.{ "survival", "config", "handbook" }, true, Action.skip },
     };
@@ -440,7 +448,7 @@ test actionFor {
 }
 
 /// The game version, from the name of assets/version-<version>.txt, or null without one.
-pub fn findVersion(allocator: std.mem.Allocator, io: Io, assetsDir: Dir) !?[]const u8 {
+fn findVersion(allocator: std.mem.Allocator, io: Io, assetsDir: Dir) !?[]const u8 {
     var it = assetsDir.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind == .file and std.mem.startsWith(u8, entry.name, "version-") and std.mem.endsWith(u8, entry.name, ".txt"))
@@ -449,12 +457,12 @@ pub fn findVersion(allocator: std.mem.Allocator, io: Io, assetsDir: Dir) !?[]con
     return null;
 }
 
-pub const Folder = enum { game, data };
+pub const StandardFolder = enum { game, data };
 
 /// The first standard location that exists. The Windows paths are verified on a 1.22.7
 /// install; the Linux data folders come from https://wiki.vintagestory.at/VintagestoryData_folder
 /// and the Linux game folders from forum reports, unverified.
-pub fn findFolder(arena: std.mem.Allocator, io: Io, env: *const std.process.Environ.Map, folder: Folder) ?[]const u8 {
+pub fn findFolder(arena: std.mem.Allocator, io: Io, env: *const std.process.Environ.Map, folder: StandardFolder) ?[]const u8 {
     var candidates: std.ArrayList([]const u8) = .empty;
     const join = std.fs.path.join;
     if (builtin.os.tag == .windows) {

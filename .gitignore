@@ -3,4 +3,5 @@ zig-out
 zig-pkg
 content
 /out/
+/blocks/
 CLAUDE.md
