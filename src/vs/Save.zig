@@ -21,7 +21,7 @@ gameData: GameData,
 tileList: []tiles.Tile,
 /// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else from
 /// what its code says.
-types: []columns.MapType,
+looks: []columns.Look,
 /// How many chunk levels the world has: chunks have y 0 to `levels` − 1.
 levels: usize,
 
@@ -57,21 +57,21 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Save {
         std.process.exit(1);
     };
     errdefer gameData.deinit();
-    const types = try typesByCode(allocator, gameData);
+    const looks = try looksByCode(allocator, gameData);
 
     return .{
         .path = path,
         .db = db,
         .gameData = gameData,
         .tileList = list,
-        .types = types,
+        .looks = looks,
         // Chunk levels in the world: 8 for the default height of 256.
         .levels = std.math.divCeil(usize, gameData.worldHeight, 32) catch unreachable,
     };
 }
 
 pub fn close(self: Save, allocator: std.mem.Allocator) void {
-    allocator.free(self.types);
+    allocator.free(self.looks);
     self.gameData.deinit();
     allocator.free(self.tileList);
     self.db.deinit();
@@ -106,17 +106,25 @@ pub fn blockName(self: *const Save, id: i32) ?[]const u8 {
     return self.gameData.blockCode(id);
 }
 
-/// What a block ID is on the map. Anything unknown is land.
-pub fn mapType(self: *const Save, id: i32) columns.MapType {
-    return if (id >= 0 and id < self.types.len) self.types[@intCast(id)] else .land;
+/// What a block ID looks like on the map. Anything unknown is land.
+pub fn look(self: *const Save, id: i32) columns.Look {
+    return if (id >= 0 and id < self.looks.len) self.looks[@intCast(id)] else .{ .mapType = .land };
 }
 
-/// Takes each block's map type from the prepared blocks: its map colour code
-/// (docs/rendering.md#block-colours). Blocks they don't have keep what their code says.
+/// Takes each block's look from the prepared blocks: its map type is its map colour code
+/// (docs/rendering.md#block-colours), and it's drawn as a lake if it's water, or ice other
+/// than glacier ice, and looked under if it's snow, as the game's map has it. Blocks they
+/// don't have keep what their code says.
 pub fn useBlocks(self: *Save, prepared: *const Prepared) void {
-    for (self.types, self.gameData.blockCodes) |*mapTypeOfBlock, code| {
-        const block = prepared.blocks.get(code orelse continue) orelse continue;
-        mapTypeOfBlock.* = std.meta.stringToEnum(columns.MapType, block.colorCode) orelse .land;
+    for (self.looks, self.gameData.blockCodes) |*blockLook, maybeCode| {
+        const code = maybeCode orelse continue;
+        const block = prepared.blocks.get(code) orelse continue;
+        const ice = std.mem.eql(u8, block.material, "Ice");
+        blockLook.* = .{
+            .mapType = std.meta.stringToEnum(columns.MapType, block.colorCode) orelse .land,
+            .lake = std.mem.eql(u8, block.material, "Water") or (ice and !std.mem.eql(u8, code, "glacierice")),
+            .cover = std.mem.eql(u8, block.material, "Snow"),
+        };
     }
 }
 
@@ -143,32 +151,43 @@ fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
     return allocator.dupe(tiles.Tile, set.keys());
 }
 
-/// Each block ID's map type from its code alone, for when there are no prepared blocks:
+/// Each block ID's look from its code alone, for when there are no prepared blocks:
 /// saltwater is `ocean` and lava `lava` (docs/rendering.md#how-the-game-draws-its-own-world-map),
-/// other water `lake`, and everything else `land`. A liquid surface that isn't one of those
+/// other water `lake`, snow layers `glacier` and looked under, and everything else `land`. A liquid surface that isn't one of those
 /// is drawn as a lake.
-fn typesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]columns.MapType {
-    const types = try allocator.alloc(columns.MapType, gameData.blockCodes.len);
-    for (types, gameData.blockCodes) |*mapTypeOfBlock, code| {
+fn looksByCode(allocator: std.mem.Allocator, gameData: GameData) ![]columns.Look {
+    const looks = try allocator.alloc(columns.Look, gameData.blockCodes.len);
+    for (looks, gameData.blockCodes) |*blockLook, code| {
         const name = code orelse "";
-        mapTypeOfBlock.* = if (std.mem.startsWith(u8, name, "saltwater-"))
-            .ocean
+        blockLook.* = if (std.mem.startsWith(u8, name, "saltwater-"))
+            .{ .mapType = .ocean, .lake = true }
         else if (std.mem.startsWith(u8, name, "lava-"))
-            .lava
+            .{ .mapType = .lava }
         else if (std.mem.startsWith(u8, name, "water-") or std.mem.startsWith(u8, name, "boilingwater-"))
-            .lake
+            .{ .mapType = .lake, .lake = true }
+        else if (std.mem.startsWith(u8, name, "snowlayer-"))
+            .{ .mapType = .glacier, .cover = true }
         else
-            .land;
+            .{ .mapType = .land };
     }
-    return types;
+    return looks;
 }
 
-test typesByCode {
-    const codes = [_]?[]const u8{ "air", "water-still-7", "saltwater-n-3", "lava-still-7", "boilingwater-still-7", null };
+test looksByCode {
+    const codes = [_]?[]const u8{ "air", "water-still-7", "saltwater-n-3", "lava-still-7", "boilingwater-still-7", "snowlayer-1", null };
     const gameData: GameData = .{ .arena = undefined, .blockCodes = &codes, .itemCodes = &.{}, .worldHeight = 256 };
-    const types = try typesByCode(std.testing.allocator, gameData);
-    defer std.testing.allocator.free(types);
-    try std.testing.expectEqualSlices(columns.MapType, &.{ .land, .lake, .ocean, .lava, .lake, .land }, types);
+    const looks = try looksByCode(std.testing.allocator, gameData);
+    defer std.testing.allocator.free(looks);
+    const expected = [_]columns.Look{
+        .{ .mapType = .land },
+        .{ .mapType = .lake, .lake = true },
+        .{ .mapType = .ocean, .lake = true },
+        .{ .mapType = .lava },
+        .{ .mapType = .lake, .lake = true },
+        .{ .mapType = .glacier, .cover = true },
+        .{ .mapType = .land },
+    };
+    try std.testing.expectEqualSlices(columns.Look, &expected, looks);
 }
 
 /// One thread's connection, decoder and buffers, reused for every tile it reads.
@@ -325,8 +344,21 @@ fn recordChunk(area: columns.Area, chunk: *const Chunk, stored: *MapChunk, span:
         // from above, the water shows, and its depth goes down to the ground below them.
         recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &area.top[index], &area.topBlock[index]);
         recordTop(&chunk.liquids, null, chunk.position.y, x, z, &area.liquidTop[index], &area.liquidBlock[index]);
+        if (area.top[index]) |top| if (top / 32 == chunk.position.y) {
+            area.underBlock[index] = blockBelow(chunk, x, top % 32, z);
+        };
     };
     return stale;
+}
+
+/// The block under local height `y` in a chunk, liquid first, as the game's map reads it; 0
+/// if it's in the chunk below.
+fn blockBelow(chunk: *const Chunk, x: usize, y: usize, z: usize) i32 {
+    if (y == 0) return 0;
+    const at = ((y - 1) * 32 + z) * 32 + x;
+    const liquid = if (chunk.liquids.bits == 0) 0 else chunk.liquids.get(at);
+    if (liquid != 0) return liquid;
+    return if (chunk.blocks.bits == 0) 0 else chunk.blocks.get(at);
 }
 
 /// Records a column from its stored heights: the block at the rain height, in the chunk that
@@ -346,6 +378,26 @@ fn recordStored(area: columns.Area, chunk: *const Chunk, x: usize, y: usize, z: 
     } else {
         area.top[index] = rain;
         area.topBlock[index] = solid;
+        area.underBlock[index] = blockBelow(chunk, x, y, z);
+        // Liquid under the top block, such as a lake under a tree's leaves: the highest
+        // liquid in the column, though the solid block above it is what shows. It can only
+        // be above the terrain height, the ground before trees and plants grew, which for
+        // most columns is the top itself, so only the blocks between are looked at, within
+        // the chunk.
+        if (chunk.liquids.bits != 0 and terrain != MapChunk.unset and terrain < rain) {
+            // The chunk's lowest height, and the terrain's within it.
+            const base: usize = rain - y;
+            const floor = @max(@as(usize, terrain), base) - base;
+            var below = y;
+            while (below > floor) {
+                below -= 1;
+                const liquidBelow = chunk.liquids.get((below * 32 + z) * 32 + x);
+                if (liquidBelow == 0) continue;
+                area.liquidTop[index] = rain - @as(u16, @intCast(y - below));
+                area.liquidBlock[index] = liquidBelow;
+                break;
+            }
+        }
     }
     return true;
 }

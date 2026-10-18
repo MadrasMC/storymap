@@ -8,27 +8,26 @@ Storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 ## Top-down map
 
-2. **Colour map.** Look under snow and through lily pads, colour per block (the game's `mapColorCode` palette or the average texture colour) and add hill shading, as the game's own map does ([`docs/rendering.md`](docs/rendering.md)). Each block's colour is worked out when preparing blocks and kept with them, so rendering never reads a texture ([`docs/rendering.md`](docs/rendering.md#preparing-blocks)); a save's IDs map to codes through `GameData`. Done: every block's material and map colour code ([`docs/rendering.md`](docs/rendering.md#block-colours)), and the relief style colouring each by its type from the theme's `topdown/style.txt` ([`docs/themes.md`](docs/themes.md#map-colours)). Left: the game's own style (palette colours, the game's hill shading, looking under snow, lake edges), then the game's colour-accurate mode: the average texture colour, then the climate and season tint. The game's own client map cache (`mappiece` rows in `Maps/<id>.db`, [save format §7](docs/save-format/README.md#the-games-map-cache)) could serve as a colour reference: each piece is an array of pixel colours.
-3. **Themed map colours.** A theme's `topdown/style.txt` colours its map ([`docs/themes.md`](docs/themes.md#map-colours)). Left: a look of its own for the plain theme, with the game's style.
-4. **Incremental rendering.** Re-render only the tiles whose chunks changed since the last render, and the zoomed-out tiles above them, instead of the whole world every time.
-5. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
+2. **Colour-accurate map.** The game's other map mode, as a style: each block's average texture colour, worked out when preparing blocks so rendering never reads a texture, with a grain of random texture colours; then the climate and season tint ([`docs/rendering.md`](docs/rendering.md#how-the-game-draws-its-own-world-map)). A world in that mode would let its map cache check it, as the shaded style was checked.
+3. **Incremental rendering.** Re-render only the tiles whose chunks changed since the last render, and the zoomed-out tiles above them, instead of the whole world every time.
+4. **Measure on a large world.** Threaded decoding barely shows on the small test worlds; confirm it scales on a save with many more chunks.
 
 ## Memory
 
 No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). Stage 1, no allocation per chunk, is done.
 
-6. **Fixed buffers throughout.** Tiles already reuse per-worker buffers, and every waiting half is set aside before any work starts, but those are sized and allocated per render, and the PNG encoder allocates per tile.
-7. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
+5. **Fixed buffers throughout.** Tiles already reuse per-worker buffers, and every waiting half is set aside before any work starts, but those are sized and allocated per render, and the PNG encoder allocates per tile.
+6. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
 
 ## Block entities
 
-8. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
-9. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
+7. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
+8. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
 
 ## Isometric render
 
-10. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
-11. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
+9. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
+10. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
 
 ## Done
 
@@ -56,4 +55,5 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Chiseled blocks and ground storage checked on 1.22.7, in the larger test world's ruins: every block entity parses, every cuboid decodes, and the new keys are documented ([save format §5](docs/save-format/README.md#chiseled-blocks-microblock-chisel)).
 - Assets read in place from `--game`/`--data` (found in the standard locations by default): files read by path or listed by folder, mod zips read without unpacking, mods replacing the game's files ([`docs/rendering.md`](docs/rendering.md#reading-them)).
 - Preparing blocks, as Mapcrafter's Blockcrafter does: every block type of the game and mods expanded into the block codes the game makes, exactly those in the test saves, kept in a blocks folder (`blocks` in the current folder by default), one set per game version and mods; a render prepares on demand (`--prepare` to force, `storymap prepare` alone) and reports blocks the save has that the game and mods don't ([`docs/rendering.md`](docs/rendering.md#preparing-blocks)).
+- Map colours from the theme's `topdown/style.txt`: a colour per map type, drawn as a relief (Printed) or shaded as the game draws its own map (plain, with the game's colours), the shaded style matching the game's own map cache on 99.65% of a test world's pixels ([`docs/themes.md`](docs/themes.md#map-colours), [`docs/rendering.md`](docs/rendering.md#how-the-game-draws-its-own-world-map)).
 - A modded world: the larger 1.22.7 test world was created with Primitive Survival. Mods' block and item codes carry their domain, and their IDs follow the game's ([save format §6](docs/save-format/README.md#block-and-item-ids)).

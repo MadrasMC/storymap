@@ -1,16 +1,17 @@
-# The map's colours: for now, the same as the Printed theme's.
-style relief
+# The map as the game draws its own: its colours, whatever the height, with its hill shading
+# (vsessentialsmod ChunkMapLayer).
+style shaded
 
-land        #E4D2A0
-desert      #E4D2A0
-forest      #E4D2A0
-plant       #E4D2A0
-settlement  #E4D2A0
-road        #E4D2A0
-devastation #E4D2A0
-glacier     #E4D2A0
-lake        #B8C8B8
-ocean       #B0C2C6
-lava        #B85A30
-ink         #4A301A
-wateredge   #5C462E
+land        #AC8858
+desert      #C4A468
+forest      #98844C
+plant       #808650
+settlement  #856844
+road        #805030
+devastation #755C3C
+glacier     #E0E0C0
+lake        #CCC890
+ocean       #CCC890
+lava        #CCC890
+ink         #483018
+wateredge   #483018

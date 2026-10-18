@@ -112,6 +112,10 @@ fn View(comptime Source: type) type {
             view: *const Self,
             reader: Source.Reader,
             area: columns.Area,
+            /// The shaded style's shading, a byte per pixel as the game keeps it, and a copy of
+            /// it before blurring.
+            shade: []u8,
+            unblurred: []u8,
 
             surface: []usize,
             lowest: u16 = std.math.maxInt(u16),
@@ -122,13 +126,19 @@ fn View(comptime Source: type) type {
                 errdefer reader.deinit(allocator);
                 var area: columns.Area = try .init(allocator);
                 errdefer area.deinit(allocator);
+                const shade = try allocator.alloc(u8, tiles.size * tiles.size);
+                errdefer allocator.free(shade);
+                const unblurred = try allocator.alloc(u8, tiles.size * tiles.size);
+                errdefer allocator.free(unblurred);
                 const surface = try allocator.alloc(usize, view.surface.len);
                 @memset(surface, 0);
-                return .{ .view = view, .reader = reader, .area = area, .surface = surface };
+                return .{ .view = view, .reader = reader, .area = area, .shade = shade, .unblurred = unblurred, .surface = surface };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
                 allocator.free(self.surface);
+                allocator.free(self.unblurred);
+                allocator.free(self.shade);
                 self.area.deinit(allocator);
                 self.reader.deinit(allocator);
             }
@@ -137,12 +147,24 @@ fn View(comptime Source: type) type {
             /// pixels. Returns false if it has nothing on it.
             pub fn draw(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) !bool {
                 try self.reader.read(tile, &self.area);
-                return self.paint(pixels);
+                return switch (self.view.style.kind) {
+                    .relief => self.paintRelief(pixels),
+                    .shaded => self.paintShaded(pixels),
+                };
             }
 
-            /// Colours the tile's pixels from the area, and counts what it shows. Returns false
-            /// if nothing is drawn.
-            fn paint(self: *Worker, pixels: *tiles.Pixels) bool {
+            /// Counts what a column shows from above, for the summary.
+            fn count(self: *Worker, i: usize, block: i32) void {
+                if (self.area.top[i]) |solid| {
+                    self.lowest = @min(self.lowest, solid);
+                    self.highest = @max(self.highest, solid);
+                }
+                if (block >= 0 and block < self.surface.len) self.surface[@intCast(block)] += 1;
+            }
+
+            /// Colours the tile's pixels from the area as a relief map, and counts what it
+            /// shows. Returns false if nothing is drawn.
+            fn paintRelief(self: *Worker, pixels: *tiles.Pixels) bool {
                 const area = &self.area;
                 const view = self.view;
                 const side = columns.Area.side;
@@ -161,15 +183,11 @@ fn View(comptime Source: type) type {
                     const east: Surface = .of(area.top[i + 1], area.liquidTop[i + 1]);
                     const south: Surface = .of(area.top[i + side], area.liquidTop[i + side]);
 
-                    if (area.top[i]) |solid| {
-                        self.lowest = @min(self.lowest, solid);
-                        self.highest = @max(self.highest, solid);
-                    }
                     const block = if (here == .liquid) area.liquidBlock[i] else area.topBlock[i];
-                    if (block >= 0 and block < self.surface.len) self.surface[@intCast(block)] += 1;
+                    self.count(i, block);
 
                     const style = &view.style;
-                    const mapType = view.source.mapType(block);
+                    const mapType = view.source.look(block).mapType;
                     if (here == .liquid) {
                         // Where water meets land, its edge, as an old map inks its coastlines.
                         const shore = west == .land or north == .land or east == .land or south == .land;
@@ -187,8 +205,170 @@ fn View(comptime Source: type) type {
                 };
                 return any;
             }
+
+            /// Colours the tile's pixels from the area as the game draws its own map, and
+            /// counts what it shows. Returns false if nothing is drawn. As in vsessentialsmod's
+            /// `ChunkMapLayer.GenerateChunkImage`: each column takes its type's colour; a
+            /// column higher than its north-west, west and north neighbours, as a whole, is
+            /// lit, and one lower shaded, more for steeper slopes; the shading is blurred within
+            /// each chunk and multiplied in. Lakes aren't shaded, and are edged in `wateredge`
+            /// where they meet anything else.
+            fn paintShaded(self: *Worker, pixels: *tiles.Pixels) bool {
+                const area = &self.area;
+                const view = self.view;
+                const style = &view.style;
+                const side = columns.Area.side;
+                var any = false;
+                for (0..tiles.size) |py| for (0..tiles.size) |px| {
+                    const i = (py + 1) * side + px + 1;
+                    const p = py * tiles.size + px;
+                    self.shade[p] = 128;
+                    const here = Surface.of(area.top[i], area.liquidTop[i]);
+                    const y = here.height() orelse {
+                        pixels[p] = tiles.transparent;
+                        continue;
+                    };
+                    any = true;
+                    const top = if (here == .liquid) area.liquidBlock[i] else area.topBlock[i];
+                    self.count(i, top);
+                    var look = view.source.look(top);
+                    // Under a cover such as snow, what's beneath shows, one block lower.
+                    var at = y;
+                    if (here == .land and look.cover and area.underBlock[i] != 0) {
+                        look = view.source.look(area.underBlock[i]);
+                        at = y - 1;
+                    }
+                    if (look.lake or (here == .liquid and !look.mapType.isLiquid())) {
+                        // An edge where any neighbour isn't lake at the same height. Next to a
+                        // column that isn't drawn, the game draws water, as it can't tell.
+                        const neighbours = [_]usize{ i - 1, i + 1, i - side, i + side };
+                        var surrounded = true;
+                        for (neighbours) |j| {
+                            if (area.top[j] == null and area.liquidTop[j] == null) {
+                                surrounded = true;
+                                break;
+                            }
+                            if (!self.lakeAt(j, at)) surrounded = false;
+                        }
+                        const lakeType = if (look.mapType.isLiquid() or look.lake) look.mapType else .lake;
+                        pixels[p] = rgb(if (surrounded) style.colours.get(lakeType) else style.wateredge);
+                        continue;
+                    }
+                    pixels[p] = rgb(style.colours.get(look.mapType));
+                    const nw = rise(y, area, i - side - 1);
+                    const w = rise(y, area, i - 1);
+                    const n = rise(y, area, i - side);
+                    const direction = signOf(nw) + signOf(w) + signOf(n);
+                    const steepness: f32 = @floatFromInt(@max(@abs(nw), @abs(w), @abs(n)));
+                    const light: f32 = if (direction > 0)
+                        1.08 + @min(0.5, steepness / 10) / 1.25
+                    else if (direction < 0)
+                        0.92 - @min(0.5, steepness / 10) / 1.25
+                    else
+                        1;
+                    self.shade[p] = @intFromFloat(128 * light);
+                };
+                if (!any) return false;
+
+                @memcpy(self.unblurred, self.shade);
+                var y: usize = 0;
+                while (y < tiles.size) : (y += 32) {
+                    var x: usize = 0;
+                    while (x < tiles.size) : (x += 32) blurChunk(self.shade, x, y);
+                }
+                for (pixels, self.shade, self.unblurred) |*pixel, blurred, original| {
+                    if (pixel.* == tiles.transparent) continue;
+                    // The blurred shading in fifths, and the unblurred one's remainder.
+                    const coarse = @trunc((@as(f32, @floatFromInt(blurred)) / 128 - 1) * 5) / 5;
+                    const fine = @rem((@as(f32, @floatFromInt(original)) / 128 - 1) * 5, 1) / 5;
+                    pixel.* = multiply(pixel.*, coarse + fine + 1);
+                }
+                return true;
+            }
+
+            /// Whether the block at height `y` in column `i`, which is drawn, is drawn as a lake.
+            fn lakeAt(self: *const Worker, i: usize, y: u16) bool {
+                const area = &self.area;
+                const source = self.view.source;
+                if (area.liquidTop[i]) |liquid| {
+                    // Liquid reaches down to `y` unless the solid block is in the way: below
+                    // it is the ground it stands on, above it something over it, like leaves.
+                    const solid = area.top[i];
+                    if (liquid >= y and (solid == null or solid.? < y or solid.? > liquid)) return source.look(area.liquidBlock[i]).lake;
+                }
+                if (area.top[i]) |solid| if (solid == y) return source.look(area.topBlock[i]).lake;
+                return false;
+            }
         };
     };
+}
+
+/// -1, 0 or 1.
+fn signOf(value: i32) i32 {
+    return @as(i32, @intFromBool(value > 0)) - @intFromBool(value < 0);
+}
+
+/// How much higher a column at height `y` is than column `i`, or 0 if `i` isn't drawn.
+fn rise(y: u16, area: *const columns.Area, i: usize) i32 {
+    const other = Surface.of(area.top[i], area.liquidTop[i]).height() orelse return 0;
+    return @as(i32, y) - other;
+}
+
+/// Each channel of `pixel` times `factor`, kept within 0 to 255 and rounded down, as the
+/// game's `ColorUtil.ColorMultiply3Clamped` does.
+fn multiply(pixel: u32, factor: f32) u32 {
+    // Red, green, blue and alpha bytes in memory order (tiles.rgba).
+    const channels = std.mem.asBytes(&pixel);
+    var out: Rgb = undefined;
+    for (&out, channels[0..3]) |*channel, value| {
+        channel.* = @intFromFloat(std.math.clamp(@as(f32, @floatFromInt(value)) * factor, 0, 255));
+    }
+    return rgb(out);
+}
+
+/// Blurs the 32 × 32 shading of one chunk, at (`x0`, `y0`) in a tile, as the game's
+/// `BlurTool.Blur(map, 32, 32, 2)` does: across, then down, each value the average of
+/// itself and its neighbours on either side within the chunk, rounded down.
+fn blurChunk(shade: []u8, x0: usize, y0: usize) void {
+    var line: [32]u8 = undefined;
+    for (0..32) |row| {
+        for (0..32) |x| line[x] = shade[(y0 + row) * tiles.size + x0 + x];
+        blurLine(&line);
+        for (0..32) |x| shade[(y0 + row) * tiles.size + x0 + x] = line[x];
+    }
+    for (0..32) |column| {
+        for (0..32) |y| line[y] = shade[(y0 + y) * tiles.size + x0 + column];
+        blurLine(&line);
+        for (0..32) |y| shade[(y0 + y) * tiles.size + x0 + column] = line[y];
+    }
+}
+
+fn blurLine(line: *[32]u8) void {
+    var blurred: [32]u8 = undefined;
+    for (0..32) |i| {
+        const from: usize = i -| 1;
+        const to: usize = @min(i + 1, 31);
+        var sum: u32 = 0;
+        for (line[from .. to + 1]) |value| sum += value;
+        blurred[i] = @intCast(sum / @as(u32, @intCast(to + 1 - from)));
+    }
+    line.* = blurred;
+}
+
+test blurLine {
+    var line: [32]u8 = @splat(128);
+    line[10] = 158;
+    blurLine(&line);
+    try std.testing.expectEqual(128, line[8]);
+    try std.testing.expectEqual(138, line[9]);
+    try std.testing.expectEqual(138, line[10]);
+    try std.testing.expectEqual(138, line[11]);
+    // At the ends, two values make the average.
+    line = @splat(128);
+    line[0] = 130;
+    blurLine(&line);
+    try std.testing.expectEqual(129, line[0]);
+    try std.testing.expectEqual(128, line[1]);
 }
 
 /// The five most common blocks seen from above, by name.

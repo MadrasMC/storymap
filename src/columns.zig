@@ -26,6 +26,17 @@ pub const MapType = enum {
     }
 };
 
+/// What the map needs to know about a block.
+pub const Look = struct {
+    mapType: MapType,
+    /// Drawn as water by a shaded map: unshaded, with an edge where it meets anything else. In
+    /// Vintage Story, water and ice other than glacier ice.
+    lake: bool = false,
+    /// A thin layer a shaded map looks under, showing the block beneath it instead, as the
+    /// game's map does with snow.
+    cover: bool = false,
+};
+
 /// The heights a map is coloured by: they depend only on the world, so every part of a map,
 /// and every world, is coloured the same way.
 pub const Heights = struct {
@@ -47,9 +58,13 @@ pub const Area = struct {
     /// The game's ID of that block, or 0 where it isn't known, such as under liquid.
     topBlock: []i32,
     /// The same for the highest liquid block. Plants growing in water, such as seaweed and
-    /// reeds, share their place with it, so from above the liquid shows.
+    /// reeds, share their place with it, so from above the liquid shows. Liquid under a solid
+    /// block, such as a lake under a tree's leaves, is here too, though the solid block shows.
     liquidTop: []?u16,
     liquidBlock: []i32,
+    /// The block right under the highest solid one, liquid or solid, or 0 where it isn't
+    /// known: what a shaded map shows under a cover such as snow (`Look.cover`).
+    underBlock: []i32,
 
     pub fn init(allocator: std.mem.Allocator) !Area {
         const top = try allocator.alloc(?u16, side * side);
@@ -59,7 +74,9 @@ pub const Area = struct {
         const liquidTop = try allocator.alloc(?u16, side * side);
         errdefer allocator.free(liquidTop);
         const liquidBlock = try allocator.alloc(i32, side * side);
-        return .{ .top = top, .topBlock = topBlock, .liquidTop = liquidTop, .liquidBlock = liquidBlock };
+        errdefer allocator.free(liquidBlock);
+        const underBlock = try allocator.alloc(i32, side * side);
+        return .{ .top = top, .topBlock = topBlock, .liquidTop = liquidTop, .liquidBlock = liquidBlock, .underBlock = underBlock };
     }
 
     pub fn deinit(self: Area, allocator: std.mem.Allocator) void {
@@ -67,6 +84,7 @@ pub const Area = struct {
         allocator.free(self.topBlock);
         allocator.free(self.liquidTop);
         allocator.free(self.liquidBlock);
+        allocator.free(self.underBlock);
     }
 
     pub fn clear(self: Area) void {
@@ -74,5 +92,6 @@ pub const Area = struct {
         @memset(self.topBlock, 0);
         @memset(self.liquidTop, null);
         @memset(self.liquidBlock, 0);
+        @memset(self.underBlock, 0);
     }
 };

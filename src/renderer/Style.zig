@@ -19,6 +19,9 @@ pub const Kind = enum {
     /// `ink` and higher ground pales, slopes are shaded, liquids darken with depth, and
     /// coastlines are drawn in `wateredge`.
     relief,
+    /// As the game draws its own map: each type's colour as it is, whatever the height, with
+    /// the game's hill shading, and lakes unshaded with an edge in `wateredge`.
+    shaded,
 };
 
 kind: Kind,
@@ -33,6 +36,8 @@ pub const Rgb = [3]u8;
 
 /// The Printed theme's style, the default.
 pub const printed = parsed(@embedFile("../themes/printed/topdown/style.txt"));
+/// The plain theme's: the game's own map colours, drawn as the game draws them.
+pub const plain = parsed(@embedFile("../themes/plain/topdown/style.txt"));
 
 /// A style parsed when compiling, for the built-in themes.
 pub fn parsed(comptime text: []const u8) Style {
@@ -70,7 +75,7 @@ pub fn parse(text: []const u8, problem: *Problem) error{InvalidStyle}!Style {
 
         if (std.mem.eql(u8, name, "style")) {
             if (seenKind) return fail(problem, number, "names the style a second time", name);
-            style.kind = std.meta.stringToEnum(Kind, value) orelse return fail(problem, number, "names a style that isn't relief", value);
+            style.kind = std.meta.stringToEnum(Kind, value) orelse return fail(problem, number, "names a style that isn't relief or shaded", value);
             seenKind = true;
             continue;
         }
@@ -114,6 +119,8 @@ fn parseColour(text: []const u8) ?Rgb {
 test parse {
     try std.testing.expectEqual(Kind.relief, printed.kind);
     try std.testing.expectEqual(Rgb{ 0xE4, 0xD2, 0xA0 }, printed.colours.get(.land));
+    try std.testing.expectEqual(Kind.shaded, plain.kind);
+    try std.testing.expectEqual(Rgb{ 0xAC, 0x88, 0x58 }, plain.colours.get(.land));
 
     const complete =
         \\# A comment
