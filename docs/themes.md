@@ -1,6 +1,6 @@
 # Themes
 
-The map viewer is two parts. The map itself, in [`src/viewer.html`](../src/viewer.html), is the same for everyone: the tiles, panning and zooming, the zoom steps, and the place kept in the page's address. A **theme** draws everything around it: where the map sits on the page, a title, the position and scale, zoom controls, a grid, and what to show when there's no map. Storymap inlines the theme into `index.html` when it renders, so the page still opens straight from the disk.
+The map viewer is two parts. The map itself, in [`src/viewer.html`](../src/viewer.html), is the same for everyone: the tiles, panning and zooming, the zoom steps, and the place kept in the page's address. A **theme** draws everything around it: where the map sits on the page, a title, the position and scale, zoom controls, a grid, and what to show when there's no map. Storymap inlines the theme into `index.html` when it renders, so the page still opens straight from the disk. A theme also says how the map itself is coloured ([Map colours](#map-colours)).
 
 ## Choosing a theme
 
@@ -16,12 +16,13 @@ zig build run -- path/to/save.vcdbs out --theme plain
 
 ## Files
 
-A theme is a stylesheet and a script:
+A theme is a stylesheet and a script, and the map's colours:
 
 - **`theme.css`** styles the page, and places the map: the page puts `#map` over the whole window (`position: fixed; inset: 0`), and the theme moves or frames it, e.g. `#map { inset: 2rem; border: 1px solid; }`. The map's size is measured from there, so a theme's stylesheet decides how much of the window the map gets.
 - **`theme.js`** builds everything the theme draws and keeps it up to date, as below.
+- **`topdown/style.txt`** colours the map when it's rendered ([Map colours](#map-colours)). A theme without one colours its map as the Printed theme does.
 
-Both are inlined, so the stylesheet can't contain `</style` and the script can't contain `</script`. Anything they load has to come with them, for the same reason a page opened from the disk can't fetch files beside it: fonts and images go in as `data:` URLs.
+The stylesheet and script are inlined, so the stylesheet can't contain `</style` and the script can't contain `</script`. Anything they load has to come with them, for the same reason a page opened from the disk can't fetch files beside it: fonts and images go in as `data:` URLs.
 
 ## The script
 
@@ -79,3 +80,29 @@ Positions are as the game shows them, from its origin: in Vintage Story, the wor
 ### `fail`
 
 Called instead of `update` when there's no map to show: the page has no map data, the view is one this viewer can't draw, the world has nothing generated yet, or no tile loads. The message says which, in a sentence; the map has stopped, and `map.zoomIn()` and the rest do nothing.
+
+## Map colours
+
+`topdown/style.txt` says how the top-down map is coloured when it's rendered: a drawing style, then a colour for every type of block on the map, and for two inks. One entry per line; a line starting with `#` is a comment. The Printed theme's:
+
+```
+style relief
+
+land        #E4D2A0
+desert      #E4D2A0
+forest      #E4D2A0
+plant       #E4D2A0
+settlement  #E4D2A0
+road        #E4D2A0
+devastation #E4D2A0
+glacier     #E4D2A0
+lake        #B8C8B8
+ocean       #B0C2C6
+lava        #B85A30
+ink         #4A301A
+wateredge   #5C462E
+```
+
+- **The types** are the game's own map types, which every block has, from its map colour code ([rendering.md](rendering.md#block-colours)): ground (`land`, `desert` for sand and gravel, `forest` for wood and leaves, `plant`, `settlement` for most building blocks, `road`, `devastation`, `glacier` for snow and ice) and liquids (`lake` for water, `ocean` for saltwater, `lava`).
+- **`style relief`** draws a relief map. A type's colour is its colour at sea level: lower ground darkens towards `ink`, reaching it at the lowest, and higher ground pales towards white. Slopes facing the north-west are lit, the others shaded. Liquids darken with depth, and `wateredge` outlines water where it meets land.
+- **Every entry is needed**, once, and a colour is `#RRGGBB`. A missing, repeated or unknown entry stops the render with a message saying which, on which line.

@@ -5,7 +5,7 @@
 //! A source is a game's save, opened for reading, with:
 //! - `tileList: []const tiles.Tile`, the tiles that may have something to draw;
 //! - `game() viewer.Game`, `world() viewer.World` and `heights() columns.Heights`;
-//! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `liquid(id: i32) columns.Liquid`,
+//! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `mapType(id: i32) columns.MapType`,
 //!   for the game's block IDs;
 //! - `Reader`, one per thread, with `init(source: *const Source, allocator) !Reader`,
 //!   `deinit(*Reader, allocator)`, `read(*Reader, tile: tiles.Tile, area: *columns.Area) !void`
@@ -15,6 +15,8 @@ const Io = std.Io;
 const columns = @import("../columns.zig");
 const tiles = @import("../tiles.zig");
 const viewer = @import("../viewer.zig");
+const Style = @import("Style.zig");
+const Rgb = Style.Rgb;
 
 /// What a render covered and how long it took.
 pub const Stats = struct {
@@ -35,12 +37,14 @@ pub const Options = struct {
     stats: ?*Stats = null,
     /// What draws the viewer page around the map, when the tiles go into a folder.
     theme: viewer.Theme = viewer.printed,
+    /// How the map is coloured: the theme's `topdown/style.txt`.
+    style: Style = Style.printed,
 };
 
 /// Renders the top-down tiles of `source` into `output`, with the viewer page beside them.
 pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options) !void {
     const start: Io.Timestamp = .now(io, .awake);
-    var view: View(Source) = try .init(allocator, source);
+    var view: View(Source) = try .init(allocator, source, options.style);
     defer view.deinit(allocator);
 
     var written: std.ArrayList(tiles.Written) = .empty;
@@ -48,7 +52,7 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
     const rendered = try tiles.render(View(Source), allocator, io, &view, source.tileList, output, &written);
     // The viewer page goes next to the tiles. With more views, it'll list them all.
     switch (output) {
-        .folder => |folder| try viewer.write(allocator, io, folder, source.game(), source.world(),Io.Timestamp.now(io, .real).toSeconds(), &.{
+        .folder => |folder| try viewer.write(allocator, io, folder, source.game(), source.world(), Io.Timestamp.now(io, .real).toSeconds(), &.{
             .{ .name = View(Source).name, .title = "Top-down", .projection = "topdown", .written = written.items },
         }, options.theme),
         .discard => {},
@@ -77,6 +81,7 @@ fn View(comptime Source: type) type {
 
         source: *const Source,
         heights: Heights,
+        style: Style,
 
         chunksRead: usize = 0,
         /// How many columns show each block ID from above.
@@ -85,10 +90,10 @@ fn View(comptime Source: type) type {
         lowest: u16 = std.math.maxInt(u16),
         highest: u16 = 0,
 
-        fn init(allocator: std.mem.Allocator, source: *const Source) !Self {
+        fn init(allocator: std.mem.Allocator, source: *const Source, style: Style) !Self {
             const surface = try allocator.alloc(usize, source.blockCount());
             @memset(surface, 0);
-            return .{ .source = source, .heights = .of(source.heights()), .surface = surface };
+            return .{ .source = source, .heights = .of(source.heights()), .style = style, .surface = surface };
         }
 
         fn deinit(self: Self, allocator: std.mem.Allocator) void {
@@ -163,16 +168,22 @@ fn View(comptime Source: type) type {
                     const block = if (here == .liquid) area.liquidBlock[i] else area.topBlock[i];
                     if (block >= 0 and block < self.surface.len) self.surface[@intCast(block)] += 1;
 
+                    const style = &view.style;
+                    const mapType = view.source.mapType(block);
                     if (here == .liquid) {
-                        // A coastline in ink where water meets land, as on an old map.
+                        // Where water meets land, its edge, as an old map inks its coastlines.
                         const shore = west == .land or north == .land or east == .land or south == .land;
-                        const kind = view.source.liquid(block);
-                        pixel.* = if (shore and kind != .lava) ink else liquidColour(kind, if (area.top[i]) |ground| y - ground else maxDepth);
+                        // A liquid the game's reader doesn't place is drawn as a lake.
+                        const liquid = if (mapType.isLiquid()) mapType else .lake;
+                        pixel.* = if (shore and liquid != .lava)
+                            rgb(style.wateredge)
+                        else
+                            liquidColour(style.colours.get(liquid), if (area.top[i]) |ground| y - ground else maxDepth);
                         continue;
                     }
                     // Neighbours without blocks count as level ground.
                     const slope = @as(i32, y) * 2 - (west.height() orelse y) - (north.height() orelse y);
-                    pixel.* = colour(y, view.heights, slope);
+                    pixel.* = groundColour(style, style.colours.get(mapType), y, view.heights, slope);
                 };
                 return any;
             }
@@ -208,9 +219,6 @@ fn printSurfaceBlocks(comptime Source: type, source: *const Source, surface: []c
     std.debug.print("\n", .{});
 }
 
-/// Coastlines.
-const ink = rgb(0x5C, 0x46, 0x2E);
-
 /// What a column shows from above, and at what height.
 const Surface = union(enum) {
     /// No blocks at all, as far as the save goes.
@@ -243,28 +251,23 @@ test Surface {
     try std.testing.expectEqual(Surface{ .liquid = 109 }, Surface.of(null, 109));
 }
 
-/// Shallowest and deepest colour of each liquid: faded washes, as on an old map.
-const liquidColours = std.EnumArray(columns.Liquid, [2][3]u8).init(.{
-    .water = .{ .{ 0xB8, 0xC8, 0xB8 }, .{ 0x6C, 0x8A, 0x8A } },
-    .saltwater = .{ .{ 0xB0, 0xC2, 0xC6 }, .{ 0x5A, 0x76, 0x88 } },
-    .lava = .{ .{ 0xB8, 0x5A, 0x30 }, .{ 0x80, 0x30, 0x18 } },
-});
-/// Water this deep or deeper takes the deepest colour.
+/// Water this deep or deeper takes the darkest colour.
 const maxDepth = 16;
+/// How much the deepest liquid darkens towards black, in 256ths: a faded wash when shallow,
+/// as on an old map.
+const deepening = 102;
 
-/// The colour of a liquid `depth` blocks above the ground below it.
-fn liquidColour(kind: columns.Liquid, depth: u16) u32 {
-    const colours = liquidColours.get(kind);
-    const fraction = @as(usize, @min(depth, maxDepth)) * 256 / maxDepth;
-    const mixed = mix(colours[0], colours[1], fraction);
-    return rgb(mixed[0], mixed[1], mixed[2]);
+/// The colour of a liquid of colour `base` standing `depth` blocks above the ground below it.
+fn liquidColour(base: Rgb, depth: u16) u32 {
+    const fraction = @as(usize, @min(depth, maxDepth)) * deepening / maxDepth;
+    return rgb(mix(base, .{ 0, 0, 0 }, fraction));
 }
 
 test liquidColour {
-    try std.testing.expectEqual(rgb(0xB8, 0xC8, 0xB8), liquidColour(.water, 0));
-    try std.testing.expectEqual(rgb(0x6C, 0x8A, 0x8A), liquidColour(.water, maxDepth));
-    try std.testing.expectEqual(rgb(0x6C, 0x8A, 0x8A), liquidColour(.water, 200));
-    try std.testing.expectEqual(rgb(0x5A, 0x76, 0x88), liquidColour(.saltwater, maxDepth));
+    const lake = Style.printed.colours.get(.lake);
+    try std.testing.expectEqual(rgb(lake), liquidColour(lake, 0));
+    try std.testing.expectEqual(liquidColour(lake, maxDepth), liquidColour(lake, 200));
+    try std.testing.expect(liquidColour(lake, maxDepth) & 0xFF < rgb(lake) & 0xFF);
 }
 
 /// `from` blended towards `to` by `fraction` 256ths.
@@ -276,25 +279,17 @@ fn mix(from: [3]u8, to: [3]u8, fraction: usize) [3]u8 {
     return mixed;
 }
 
-/// Ink by height, lowest first: an old map's sepia, from dark brown to pale yellow.
-const ramp = [_][3]u8{
-    .{ 0x4A, 0x30, 0x1A },
-    .{ 0x8A, 0x64, 0x38 },
-    .{ 0xC4, 0xA4, 0x6C },
-    .{ 0xE4, 0xD2, 0xA0 },
-    .{ 0xF6, 0xEE, 0xD2 },
-};
-/// The ramp entry for ground level, so most of the map is pale and only low ground is dark.
-const groundStep = 3;
+/// How much the highest ground pales towards white, in 256ths.
+const paling = 154;
 
-/// The surface heights the ramp is spread over. They depend only on the world, so every
+/// The surface heights ground colours are spread over. They depend only on the world, so every
 /// part of a map, and every world, is coloured the same way.
 const Heights = struct {
-    /// The ramp's darkest end, and everything below it.
+    /// The darkest ground, all ink, and everything below it.
     low: u16,
-    /// Sea level: the ground-level colour.
+    /// Sea level: each type's own colour.
     ground: u16,
-    /// The ramp's palest end, and everything above it.
+    /// The palest ground, and everything above it.
     high: u16,
 
     /// For a world: in a default 256-block world, 70, 110 (sea level) and 174. The test worlds'
@@ -315,50 +310,46 @@ test "Heights.of" {
     try std.testing.expectEqual(Heights{ .low = 70, .ground = 110, .high = 174 }, Heights.of(.{ .world = 256, .sea = 110 }));
 }
 
-/// The colour of a column at height `y`. `slope` is how much higher it is than its west and
-/// north neighbours together: slopes facing the north-west light are brightened, the others
-/// darkened, as on a hand-shaded relief map.
-fn colour(y: u16, heights: Heights, slope: i32) u32 {
-    // Where y falls on the ramp, in 1/256ths of a step: low..ground covers the steps up
-    // to ground level, ground..high the rest.
-    const steps = ramp.len - 1;
+/// The colour of ground of colour `base` at height `y`: `base` at sea level, darkening
+/// towards the style's ink below it and paling towards white above it. `slope` is how much
+/// higher the column is than its west and north neighbours together: slopes facing the
+/// north-west light are brightened, the others darkened, as on a hand-shaded relief map.
+fn groundColour(style: *const Style, base: Rgb, y: u16, heights: Heights, slope: i32) u32 {
     const clamped = std.math.clamp(y, heights.low, heights.high);
-    const position: usize = if (clamped <= heights.ground)
-        stretch(clamped - heights.low, heights.ground - heights.low, groundStep)
+    var channels = if (clamped <= heights.ground)
+        mix(base, style.ink, share(heights.ground - clamped, heights.ground - heights.low))
     else
-        groundStep * 256 + stretch(clamped - heights.ground, heights.high - heights.ground, steps - groundStep);
-    const step: usize = @min(position / 256, steps - 1);
-    const fraction = position - step * 256;
+        mix(base, .{ 255, 255, 255 }, share(clamped - heights.ground, heights.high - heights.ground) * paling / 256);
     // Light in 1/256ths: each block of slope changes the brightness by 1/16, up to ±3/8.
     const light: i32 = 256 + std.math.clamp(slope * 16, -96, 96);
-
-    var channels = mix(ramp[step], ramp[step + 1], fraction);
     for (&channels) |*channel| {
         channel.* = @intCast(std.math.clamp(@divTrunc(@as(i32, channel.*) * light, 256), 0, 255));
     }
-    return rgb(channels[0], channels[1], channels[2]);
+    return rgb(channels);
 }
 
-/// `offset` out of `span` heights, as a distance along `steps` ramp steps in 1/256ths.
-fn stretch(offset: u16, span: u16, steps: usize) usize {
-    if (span == 0) return steps * 256;
-    return @as(usize, offset) * steps * 256 / span;
+/// `offset` out of `span`, in 256ths.
+fn share(offset: u16, span: u16) usize {
+    if (span == 0) return 256;
+    return @as(usize, offset) * 256 / span;
 }
 
 /// An opaque pixel.
-fn rgb(r: u8, g: u8, b: u8) u32 {
-    return tiles.rgba(r, g, b, 0xFF);
+fn rgb(colour: Rgb) u32 {
+    return tiles.rgba(colour[0], colour[1], colour[2], 0xFF);
 }
 
-test colour {
+test groundColour {
+    const style = &Style.printed;
+    const land = style.colours.get(.land);
     const heights: Heights = .{ .low = 10, .ground = 60, .high = 110 };
-    // Level ground takes the ramp's colour for its height.
-    try std.testing.expectEqual(rgb(0x4A, 0x30, 0x1A), colour(10, heights, 0));
-    try std.testing.expectEqual(rgb(0xE4, 0xD2, 0xA0), colour(60, heights, 0));
-    try std.testing.expectEqual(rgb(0xF6, 0xEE, 0xD2), colour(110, heights, 0));
-    try std.testing.expectEqual(rgb(0xF6, 0xEE, 0xD2), colour(200, heights, 0));
+    // Level ground: ink at the low end, its own colour at sea level, pale at the high end.
+    try std.testing.expectEqual(rgb(style.ink), groundColour(style, land, 10, heights, 0));
+    try std.testing.expectEqual(rgb(land), groundColour(style, land, 60, heights, 0));
+    try std.testing.expectEqual(groundColour(style, land, 110, heights, 0), groundColour(style, land, 200, heights, 0));
+    try std.testing.expect(groundColour(style, land, 110, heights, 0) & 0xFF > rgb(land) & 0xFF);
     // A slope facing the light is brighter, one facing away darker.
-    const level = colour(40, heights, 0);
-    try std.testing.expect(colour(40, heights, 2) & 0xFF > level & 0xFF);
-    try std.testing.expect(colour(40, heights, -2) & 0xFF < level & 0xFF);
+    const level = groundColour(style, land, 40, heights, 0);
+    try std.testing.expect(groundColour(style, land, 40, heights, 2) & 0xFF > level & 0xFF);
+    try std.testing.expect(groundColour(style, land, 40, heights, -2) & 0xFF < level & 0xFF);
 }

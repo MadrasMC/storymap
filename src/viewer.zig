@@ -14,18 +14,21 @@ const marker = "<script id=\"map-data\" type=\"application/json\">null</script>"
 const styleMarker = "<style id=\"theme-style\"></style>";
 const scriptMarker = "<script id=\"theme-script\"></script>";
 
-/// A theme: the stylesheet and script that draw everything around the map, as described in
-/// `docs/themes.md`.
+/// A theme: the stylesheet and script that draw everything around the map, and how the map
+/// itself is coloured, as described in `docs/themes.md`.
 pub const Theme = struct {
     style: []const u8,
     script: []const u8,
+    /// `topdown/style.txt`: the map's colours (renderer/Style.zig).
+    topdown: []const u8,
 };
 
 /// The map as a printed sheet: a neatline, a grid labelled in the margin, a title cartouche and
-/// a key of hills for zooming.
+/// a key of hills for zooming, around a sepia relief map.
 pub const printed: Theme = .{
     .style = @embedFile("themes/printed/theme.css"),
     .script = @embedFile("themes/printed/theme.js"),
+    .topdown = @embedFile("themes/printed/topdown/style.txt"),
 };
 
 /// The map filling the window, with small panels over it, light or dark with the reader's
@@ -33,6 +36,7 @@ pub const printed: Theme = .{
 pub const plain: Theme = .{
     .style = @embedFile("themes/plain/theme.css"),
     .script = @embedFile("themes/plain/theme.js"),
+    .topdown = @embedFile("themes/plain/topdown/style.txt"),
 };
 
 /// The themes built into Storymap, by the name `--theme` takes.
@@ -42,7 +46,8 @@ pub const themes = [_]struct { name: []const u8, theme: Theme }{
 };
 
 /// The built-in theme called `name`, or else the theme in the folder at that path: its
-/// `theme.css` and `theme.js`, read with `arena` and kept for the render.
+/// `theme.css`, `theme.js` and `topdown/style.txt`, read with `arena` and kept for the render.
+/// A folder without `topdown/style.txt` colours the map as the Printed theme does.
 pub fn loadTheme(arena: std.mem.Allocator, io: Io, name: []const u8) !Theme {
     for (themes) |builtIn| {
         if (std.mem.eql(u8, builtIn.name, name)) return builtIn.theme;
@@ -52,6 +57,10 @@ pub fn loadTheme(arena: std.mem.Allocator, io: Io, name: []const u8) !Theme {
     const theme: Theme = .{
         .style = try folder.readFileAlloc(io, "theme.css", arena, .limited(16 << 20)),
         .script = try folder.readFileAlloc(io, "theme.js", arena, .limited(16 << 20)),
+        .topdown = folder.readFileAlloc(io, "topdown/style.txt", arena, .limited(1 << 20)) catch |err| switch (err) {
+            error.FileNotFound => printed.topdown,
+            else => return err,
+        },
     };
     // Either closing tag would end its element early once the theme is inlined.
     if (std.mem.indexOf(u8, theme.style, "</style") != null) return error.ThemeStyleEndsItsElement;

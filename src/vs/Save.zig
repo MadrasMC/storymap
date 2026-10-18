@@ -12,14 +12,16 @@ const Chunk = @import("Chunk.zig");
 const Compression = @import("Compression.zig");
 const MapChunk = @import("MapChunk.zig");
 const GameData = @import("GameData.zig");
+const Prepared = @import("Prepared.zig");
 
 path: []const u8,
 db: DB,
 gameData: GameData,
 /// The tiles that may have something to draw.
 tileList: []tiles.Tile,
-/// The kind of liquid each block ID stands for.
-kinds: []columns.Liquid,
+/// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else from
+/// what its code says.
+types: []columns.MapType,
 /// How many chunk levels the world has: chunks have y 0 to `levels` − 1.
 levels: usize,
 
@@ -55,21 +57,21 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Save {
         std.process.exit(1);
     };
     errdefer gameData.deinit();
-    const kinds = try liquidKinds(allocator, gameData);
+    const types = try typesByCode(allocator, gameData);
 
     return .{
         .path = path,
         .db = db,
         .gameData = gameData,
         .tileList = list,
-        .kinds = kinds,
+        .types = types,
         // Chunk levels in the world: 8 for the default height of 256.
         .levels = std.math.divCeil(usize, gameData.worldHeight, 32) catch unreachable,
     };
 }
 
 pub fn close(self: Save, allocator: std.mem.Allocator) void {
-    allocator.free(self.kinds);
+    allocator.free(self.types);
     self.gameData.deinit();
     allocator.free(self.tileList);
     self.db.deinit();
@@ -104,9 +106,18 @@ pub fn blockName(self: *const Save, id: i32) ?[]const u8 {
     return self.gameData.blockCode(id);
 }
 
-/// The kind of liquid a block ID stands for. Anything unknown is water.
-pub fn liquid(self: *const Save, id: i32) columns.Liquid {
-    return if (id >= 0 and id < self.kinds.len) self.kinds[@intCast(id)] else .water;
+/// What a block ID is on the map. Anything unknown is land.
+pub fn mapType(self: *const Save, id: i32) columns.MapType {
+    return if (id >= 0 and id < self.types.len) self.types[@intCast(id)] else .land;
+}
+
+/// Takes each block's map type from the prepared blocks: its map colour code
+/// (docs/rendering.md#block-colours). Blocks they don't have keep what their code says.
+pub fn useBlocks(self: *Save, prepared: *const Prepared) void {
+    for (self.types, self.gameData.blockCodes) |*mapTypeOfBlock, code| {
+        const block = prepared.blocks.get(code orelse continue) orelse continue;
+        mapTypeOfBlock.* = std.meta.stringToEnum(columns.MapType, block.colorCode) orelse .land;
+    }
 }
 
 /// A tile is 16 × 16 chunk columns, the same area as a map region.
@@ -132,30 +143,32 @@ fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
     return allocator.dupe(tiles.Tile, set.keys());
 }
 
-/// The kind of liquid each block ID stands for, by its block code. Seas are saltwater; lakes,
-/// rivers and hot springs are the other kinds of water
-/// (docs/rendering.md#how-the-game-draws-its-own-world-map). Anything that isn't saltwater or
-/// lava, including liquids from mods, is drawn as water.
-fn liquidKinds(allocator: std.mem.Allocator, gameData: GameData) ![]columns.Liquid {
-    const kinds = try allocator.alloc(columns.Liquid, gameData.blockCodes.len);
-    for (kinds, gameData.blockCodes) |*kind, code| {
+/// Each block ID's map type from its code alone, for when there are no prepared blocks:
+/// saltwater is `ocean` and lava `lava` (docs/rendering.md#how-the-game-draws-its-own-world-map),
+/// other water `lake`, and everything else `land`. A liquid surface that isn't one of those
+/// is drawn as a lake.
+fn typesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]columns.MapType {
+    const types = try allocator.alloc(columns.MapType, gameData.blockCodes.len);
+    for (types, gameData.blockCodes) |*mapTypeOfBlock, code| {
         const name = code orelse "";
-        kind.* = if (std.mem.startsWith(u8, name, "saltwater-"))
-            .saltwater
+        mapTypeOfBlock.* = if (std.mem.startsWith(u8, name, "saltwater-"))
+            .ocean
         else if (std.mem.startsWith(u8, name, "lava-"))
             .lava
+        else if (std.mem.startsWith(u8, name, "water-") or std.mem.startsWith(u8, name, "boilingwater-"))
+            .lake
         else
-            .water;
+            .land;
     }
-    return kinds;
+    return types;
 }
 
-test liquidKinds {
+test typesByCode {
     const codes = [_]?[]const u8{ "air", "water-still-7", "saltwater-n-3", "lava-still-7", "boilingwater-still-7", null };
     const gameData: GameData = .{ .arena = undefined, .blockCodes = &codes, .itemCodes = &.{}, .worldHeight = 256 };
-    const kinds = try liquidKinds(std.testing.allocator, gameData);
-    defer std.testing.allocator.free(kinds);
-    try std.testing.expectEqualSlices(columns.Liquid, &.{ .water, .water, .saltwater, .lava, .water, .water }, kinds);
+    const types = try typesByCode(std.testing.allocator, gameData);
+    defer std.testing.allocator.free(types);
+    try std.testing.expectEqualSlices(columns.MapType, &.{ .land, .lake, .ocean, .lava, .lake, .land }, types);
 }
 
 /// One thread's connection, decoder and buffers, reused for every tile it reads.

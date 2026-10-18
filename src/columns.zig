@@ -4,8 +4,27 @@
 const std = @import("std");
 const tiles = @import("tiles.zig");
 
-/// The liquids the map tells apart. Seas are saltwater; lakes, rivers and springs are water.
-pub const Liquid = enum { water, saltwater, lava };
+/// What a block is on a map, which picks its colour from a theme's style
+/// (docs/themes.md#map-colours). The names are Vintage Story's map colour codes; a game's
+/// reader says which each of its blocks is. Seas are `ocean`; lakes, rivers and springs `lake`.
+pub const MapType = enum {
+    land,
+    desert,
+    forest,
+    plant,
+    settlement,
+    road,
+    devastation,
+    glacier,
+    lake,
+    ocean,
+    lava,
+
+    /// Whether blocks of this type are liquids, shown by depth rather than by height.
+    pub fn isLiquid(self: MapType) bool {
+        return self == .lake or self == .ocean or self == .lava;
+    }
+};
 
 /// The heights a map is coloured by: they depend only on the world, so every part of a map,
 /// and every world, is coloured the same way.

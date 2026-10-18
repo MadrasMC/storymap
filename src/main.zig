@@ -4,6 +4,7 @@ const Assets = @import("vs/Assets.zig");
 const Prepared = @import("vs/Prepared.zig");
 const bench = @import("bench.zig");
 const topdown = @import("renderer/topdown.zig");
+const Style = @import("renderer/Style.zig");
 const viewer = @import("viewer.zig");
 
 const usage =
@@ -103,18 +104,28 @@ pub fn main(init: std.process.Init) !void {
         }
         std.process.exit(1);
     };
+    var problem: Style.Problem = .{};
+    const style = Style.parse(theme.topdown, &problem) catch {
+        if (problem.line == 0)
+            exitWith("the theme {s}'s topdown/style.txt {s} {s}\n", .{ themeName, problem.message, problem.name })
+        else
+            exitWith("the theme {s}'s topdown/style.txt, line {}: {s} {s}\n", .{ themeName, problem.line, problem.name, problem.message });
+    };
 
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err| {
         std.debug.print("storymap: can't create {s} ({s})\n", .{ outPath, @errorName(err) });
         std.process.exit(1);
     };
     defer out.close(init.io);
-    const save = try Save.open(allocator, init.io, dbPath);
+    var save = try Save.open(allocator, init.io, dbPath);
     defer save.close(allocator);
     var prepared = prepareBlocks(init, folders, force);
     defer if (prepared) |*blocks| blocks.deinit();
-    if (prepared) |*blocks| try warnUnknownBlocks(allocator, blocks, &save);
-    try topdown.render(Save, allocator, init.io, &save, .{ .folder = out }, .{ .theme = theme });
+    if (prepared) |*blocks| {
+        try warnUnknownBlocks(allocator, blocks, &save);
+        save.useBlocks(blocks);
+    }
+    try topdown.render(Save, allocator, init.io, &save, .{ .folder = out }, .{ .theme = theme, .style = style });
 }
 
 /// The prepared blocks for the installed game and mods, prepared now if they weren't yet or
@@ -221,6 +232,7 @@ test {
     _ = @import("vs/Save.zig");
     _ = @import("bench.zig");
     _ = @import("renderer/topdown.zig");
+    _ = @import("renderer/Style.zig");
     _ = @import("columns.zig");
     _ = @import("tiles.zig");
     _ = @import("viewer.zig");
