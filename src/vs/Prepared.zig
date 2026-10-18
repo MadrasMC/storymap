@@ -1,16 +1,16 @@
 //! What rendering needs to know about the game's and mods' blocks, prepared once from their
 //! assets and kept, so a render never reads assets itself (docs/rendering.md#preparing-blocks).
-//! For now, the block codes and the files that define them; colours come next.
+//! For each block: its code, its material and its colour on the game's map.
 //!
 //! A prepared set is a folder `<blocks folder>/<key>/` holding `blocks.txt`, where the key
 //! depends on the game version and the mods, so each combination is prepared once:
 //!
-//!     storymap blocks 1
+//!     storymap blocks 2
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
 //!     domain primitivesurvival
-//!     block rock-granite game:blocktypes/stone/rock.json
+//!     block rock-granite Stone land
 //!     …
 const Prepared = @This();
 
@@ -25,12 +25,19 @@ gameVersion: []const u8 = "",
 mods: std.ArrayList([]const u8) = .empty,
 /// The domains the game and mods have assets in.
 domains: std.StringHashMapUnmanaged(void) = .empty,
-/// Every block, by its code as a save names it: the file that defines it.
-blocks: std.StringHashMapUnmanaged([]const u8) = .empty,
+/// Every block, by its code as a save names it.
+blocks: std.StringHashMapUnmanaged(Block) = .empty,
+
+pub const Block = struct {
+    /// One of `BlockTypes.materials`, e.g. "Stone".
+    material: []const u8,
+    /// Its colour on the game's map, e.g. "land" or "forest" (docs/rendering.md#block-colours).
+    colorCode: []const u8,
+};
 
 /// The format of `blocks.txt`, and of what goes into it: raise it when either changes, so
 /// sets prepared before are prepared again.
-const formatVersion = 1;
+const formatVersion = 2;
 const fileName = "blocks.txt";
 
 /// Blocks the game registers itself rather than from a block type file.
@@ -76,7 +83,7 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
     try w.print("storymap blocks {}\ngame {s}\n", .{ formatVersion, assets.version orelse "" });
     for (assets.sources.items[1..]) |source| try w.print("mod {s}\n", .{source.name});
     for (assets.domains.keys()) |domain| try w.print("domain {s}\n", .{domain});
-    for (blocks) |block| try w.print("block {s} {s}\n", .{ block.code, block.file });
+    for (blocks) |block| try w.print("block {s} {s} {s}\n", .{ block.code, block.material, block.colorCode });
     // Written beside it first, so a set is never left half written.
     const partial = fileName ++ ".partial";
     try folder.writeFile(io, .{ .sub_path = partial, .data = text.written() });
@@ -110,7 +117,9 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
         } else if (std.mem.eql(u8, kind, "domain")) {
             try self.domains.put(arena, first, {});
         } else if (std.mem.eql(u8, kind, "block")) {
-            try self.blocks.put(arena, first, words.next() orelse "");
+            const material = words.next() orelse return error.NotPreparedBlocks;
+            const colorCode = words.next() orelse return error.NotPreparedBlocks;
+            try self.blocks.put(arena, first, .{ .material = material, .colorCode = colorCode });
         }
     }
     return self;
@@ -203,7 +212,8 @@ test "prepare, load and compare with a save" {
     defer prepared.deinit();
     try std.testing.expectEqualStrings("1.22.7", prepared.gameVersion);
     try std.testing.expectEqualStrings("testmod.zip", prepared.mods.items[0]);
-    try std.testing.expectEqualStrings("game:blocktypes/rock.json", prepared.blocks.get("rock-granite").?);
+    try std.testing.expectEqualStrings("Stone", prepared.blocks.get("rock-granite").?.material);
+    try std.testing.expectEqualStrings("land", prepared.blocks.get("rock-granite").?.colorCode);
     try std.testing.expect(prepared.blocks.contains("testmod:thing"));
 
     const codes = [_]?[]const u8{ "air", "rock-granite", "rock-basalt", null, "testmod:thing", "othermod:x", "othermod:y" };

@@ -86,14 +86,34 @@ A save names its blocks by code (`rock-granite`), and nothing in a code says whi
 
 - **A block type** is a file in any domain's `blocktypes/`, with a `code` in the file's domain unless it names another. One with `enabled: false` (or `0`) makes no blocks. `inheritFrom` lays the file over another one first.
 - **Variant groups** each give a list of states: their own `states`, or a world property's variants (`loadFromProperties: "block/rock"` is `worldproperties/block/rock.json`, in the `game` domain unless it names another; `loadFromPropertiesCombine` joins several). Groups that multiply (the default) give every combination of their states; groups that add give one block per state. A block's code is the type's code and its states, joined with `-`; an empty state adds nothing. `selectiveMultiply` splits one state of another group; nothing in 1.22.7 or Primitive Survival uses it.
-- **`skipVariants` and `allowedVariants`** then filter the codes, by exact code or by wildcard, `*` standing for any run of characters. A pattern starting with `@` is a regular expression; none of these use one, and Storymap reports one rather than read it.
+- **`skipVariants` and `allowedVariants`** then filter the codes, by exact code or by wildcard, as `…ByType` keys are matched (below); none in 1.22.7 or Primitive Survival is a regular expression.
+- **`…ByType` properties** take a value per variant: in `blockmaterialByType: { "*-snowy": "Snow", "*": "Soil" }`, the first key matching the block's code gives `blockmaterial` (an object merges into one already there), and `…ByType` properties inside are resolved the same way. Keys are wildcards, `*` matching any run of characters with letters in either case, or regular expressions after `@`, matching the whole code with case: the game's and Primitive Survival's use only groups of alternatives, `.` and `*` (`"@.*-(aged|veryaged)-.*"`), which is all Storymap supports. `{rock}` in a string is the variant's state of the `rock` group (`{wood|rock}`, either). *(Source: vsessentialsmod `RegistryObjectType.solveByType`, vsapi [`WildcardUtil.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Util/WildcardUtil.cs) and `RegistryObject.FillPlaceHolder`.)*
 - **Patches aren't applied.** Mods can patch block types, but no patch in 1.22.7 or Primitive Survival changes which codes there are.
 
 The result is exactly the block codes in the saves: the 14,089 of the 1.22.7 world, and the 14,781 of the larger one created with Primitive Survival, beside `air` and `mantle`, which the game registers itself. *(Verified (1.22.7): both worlds' `BlockIDs`, code by code.)*
 
+### Block colours
+
+The game's map, in its default mode, colours each block from a palette of a dozen colours, picked by a colour code (step 4 of [How the game draws its own world map](#how-the-game-draws-its-own-world-map)). A block's colour code is its `mapColorCode` attribute, or else its block material's default:
+
+| Material | Colour code |
+| --- | --- |
+| Soil, Ore, Stone | `land` |
+| Sand, Gravel | `desert` |
+| Leaves, Wood | `forest` |
+| Plant | `plant` |
+| Snow, Ice | `glacier` |
+| Water | `lake` |
+| Lava | `lava` |
+| anything else | `land` |
+
+A block type that names no material is `Stone`. The palette, as the game has it: `land` #AC8858, `desert` #C4A468, `forest` #98844C, `plant` #808650, `lake`, `ocean` and `lava` #CCC890, `glacier` #E0E0C0, `settlement` #856844, `road` #805030, `devastation` #755C3C, and `ink` and `wateredge` #483018 for outlines. *(Source: vsessentialsmod [`ChunkMapLayer.cs`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs), `defaultMapColorCodes` and `hexColorsByCode`; vsapi `Block.BlockMaterial`.)*
+
+Both depend on the variant, through `blockmaterialByType`, `attributesByType` or a `mapColorCodeByType` inside `attributes` ([Block codes](#block-codes)). In 1.22.7 with Primitive Survival, of 14,781 blocks: `land` 5,400, `settlement` 4,010 (most building blocks set it), `forest` 3,634, `plant` 795, `desert` 444, `lake` 217, `glacier` 83, `ocean` 70 and `lava` 70 (the liquids), `devastation` 45 and `road` 13. Water and lake ice are `lake`, saltwater is `ocean`, glacier ice and snow are `glacier`. *(Verified (1.22.7): every block's material and colour code, against a separate implementation of the same rules.)*
+
 ### Preparing blocks
 
-Everything a map needs from the assets is prepared once, by [`src/vs/Prepared.zig`](../src/vs/Prepared.zig), into a blocks folder: `blocks` in the current folder, beside a render's `out`, or the one given (`--blocks` when rendering, the folder argument of `storymap prepare`). For now that's the block codes and the files that define them, in `<blocks folder>/<key>/blocks.txt`; colours come next.
+Everything a map needs from the assets is prepared once, by [`src/vs/Prepared.zig`](../src/vs/Prepared.zig), into a blocks folder: `blocks` in the current folder, beside a render's `out`, or the one given (`--blocks` when rendering, the folder argument of `storymap prepare`). For each block, that's its code, its material and its colour code ([Block colours](#block-colours)), in `<blocks folder>/<key>/blocks.txt`.
 
 - **One set per game and mods:** the key changes with the game version and the mods (their names, sizes and times), so updating either prepares a new set, and switching back finds the old one.
 - **On demand:** a render prepares the set it needs if it isn't there yet. `--prepare` prepares it again anyway, and `storymap prepare` does only that.

@@ -1,6 +1,7 @@
 //! The blocks the game and its mods define: every block type file in `blocktypes/`, expanded
-//! into one block code per variant the way the game does it (docs/rendering.md#block-codes).
-//! Run once, when preparing; everything is allocated in an arena.
+//! into one block code per variant the way the game does it, with what the map needs to know
+//! about each (docs/rendering.md#block-codes). Run once, when preparing; everything is
+//! allocated in an arena.
 const std = @import("std");
 const Io = std.Io;
 const Assets = @import("Assets.zig");
@@ -11,8 +12,38 @@ const Wildcard = @import("Wildcard.zig");
 pub const Block = struct {
     /// As a save names it: "rock-granite" in the game's domain, "primitivesurvival:…" in a mod's.
     code: []const u8,
-    /// The block type file it comes from, e.g. "game:blocktypes/stone/rock.json".
-    file: []const u8,
+    /// Its block material, one of `materials`, e.g. "Stone".
+    material: []const u8,
+    /// Which colour of the game's map palette it is, e.g. "land" or "forest": its
+    /// `mapColorCode` attribute, or else the default for its material (docs/rendering.md#block-colours).
+    colorCode: []const u8,
+};
+
+/// The game's block materials (vsapi `EnumBlockMaterial`).
+pub const materials = [_][]const u8{
+    "Air",   "Soil",   "Gravel", "Sand",  "Wood",    "Leaves", "Stone", "Ore",   "Water", "Snow", "Ice",
+    "Metal", "Mantle", "Plant",  "Glass", "Ceramic", "Cloth",  "Lava",  "Brick", "Fire",  "Meta", "Other",
+};
+
+/// A block without a material is stone (vsapi `Block.BlockMaterial`).
+const defaultMaterial = "Stone";
+
+/// The game map's colour for a material, for blocks without a `mapColorCode`; "land" for the
+/// others (vsessentialsmod `ChunkMapLayer.defaultMapColorCodes`).
+fn defaultColorCode(material: []const u8) []const u8 {
+    const defaults = [_][2][]const u8{
+        .{ "Soil", "land" },    .{ "Sand", "desert" },   .{ "Ore", "land" },    .{ "Gravel", "desert" },
+        .{ "Stone", "land" },   .{ "Leaves", "forest" }, .{ "Plant", "plant" }, .{ "Wood", "forest" },
+        .{ "Snow", "glacier" }, .{ "Water", "lake" },    .{ "Ice", "glacier" }, .{ "Lava", "lava" },
+    };
+    for (defaults) |pair| if (std.mem.eql(u8, pair[0], material)) return pair[1];
+    return "land";
+}
+
+/// One variant of a block type: its code, and the state of each variant group that made it.
+const Variant = struct {
+    code: Location,
+    parts: []const Part,
 };
 
 /// A code or a world property's name, with its domain, both lowercase.
@@ -55,22 +86,153 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     for (try assets.list(arena, io, "blocktypes")) |name| {
         if (!std.mem.endsWith(u8, name.path, ".json")) continue;
-        const codes = expander.blockType(name) catch |err| {
+        const blockType = expander.blockType(name) catch |err| {
             std.debug.print("storymap: skipping the block type {s}:{s} ({s})\n", .{ name.domain, name.path, @errorName(err) });
             continue;
         };
-        const file = try std.fmt.allocPrint(arena, "{s}:{s}", .{ name.domain, name.path });
-        for (codes) |code| {
+        var warned = false;
+        for (blockType.variants) |variant| {
+            const code = variant.code;
             const saved = if (std.mem.eql(u8, code.domain, Assets.gameDomain))
                 code.path
             else
                 try std.fmt.allocPrint(arena, "{s}:{s}", .{ code.domain, code.path });
             const entry = try seen.getOrPut(arena, saved);
             if (entry.found_existing) continue;
-            try blocks.append(arena, .{ .code = saved, .file = file });
+            const look = describe(arena, blockType.json, variant) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => look: {
+                    // As the game does, a variant whose …ByType properties can't be resolved
+                    // keeps the defaults.
+                    if (!warned) std.debug.print("storymap: can't resolve the …ByType properties of {s}:{s} ({s})\n", .{ name.domain, name.path, @errorName(err) });
+                    warned = true;
+                    break :look Look{ .material = defaultMaterial, .colorCode = defaultColorCode(defaultMaterial) };
+                },
+            };
+            try blocks.append(arena, .{ .code = saved, .material = look.material, .colorCode = look.colorCode });
         }
     }
     return blocks.items;
+}
+
+const Look = struct {
+    material: []const u8,
+    colorCode: []const u8,
+};
+
+/// A variant's material and map colour code, from its block type's `blockmaterial` and
+/// `attributes.mapColorCode`, after resolving their `…ByType` forms for the variant.
+fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !Look {
+    const materialValue = try property(arena, json, "blockmaterial", variant);
+    const material = canonicalMaterial(if (materialValue) |m| m.asString() orelse defaultMaterial else defaultMaterial);
+    const attributes = try property(arena, json, "attributes", variant);
+    const colorCode = if (attributes) |a| if (a.get("mapColorCode")) |c| c.asString() else null else null;
+    return .{ .material = material, .colorCode = colorCode orelse defaultColorCode(material) };
+}
+
+/// The material named `name`, in the game's spelling, or the default for an unknown one.
+fn canonicalMaterial(name: []const u8) []const u8 {
+    for (materials) |material| if (std.ascii.eqlIgnoreCase(material, name)) return material;
+    return defaultMaterial;
+}
+
+/// Property `key` of a block type for one variant, as the game resolves it
+/// (vsessentialsmod `RegistryObjectType.solveByType`): `keyByType` gives the value of its
+/// first key matching the variant's code, merged into `key` if both are objects; `…ByType`
+/// properties inside are resolved the same way, and `{group}` placeholders in strings are
+/// filled from the variant. Only `key` and `keyByType` are resolved, as nothing else is needed.
+fn property(arena: std.mem.Allocator, json: Json.Value, key: []const u8, variant: Variant) !?Json.Value {
+    if (json != .object) return null;
+    var fields: std.ArrayList(Json.Field) = .empty;
+    for (json.object) |field| {
+        const isKey = std.ascii.eqlIgnoreCase(field.key, key);
+        const isByType = std.ascii.endsWithIgnoreCase(field.key, byType) and std.ascii.eqlIgnoreCase(field.key[0 .. field.key.len - byType.len], key);
+        if (isKey or isByType) try fields.append(arena, field);
+    }
+    if (fields.items.len == 0) return null;
+    const resolved = try solveByType(arena, .{ .object = fields.items }, variant);
+    return resolved.get(key);
+}
+
+const byType = "byType";
+
+fn solveByType(arena: std.mem.Allocator, value: Json.Value, variant: Variant) !Json.Value {
+    switch (value) {
+        .object => |fields| {
+            var kept: std.ArrayList(Json.Field) = .empty;
+            var added: std.ArrayList(Json.Field) = .empty;
+            for (fields) |field| {
+                if (field.key.len < byType.len or !std.ascii.endsWithIgnoreCase(field.key, byType)) {
+                    try kept.append(arena, field);
+                    continue;
+                }
+                if (field.value != .object) return error.InvalidByType;
+                for (field.value.object) |candidate| {
+                    if (try Wildcard.match(candidate.key, variant.code.path)) {
+                        try added.append(arena, .{ .key = field.key[0 .. field.key.len - byType.len], .value = candidate.value });
+                        break;
+                    }
+                }
+            }
+            for (added.items) |addition| {
+                for (kept.items) |*existing| {
+                    // The game looks the property up minding case.
+                    if (!std.mem.eql(u8, existing.key, addition.key)) continue;
+                    existing.value = if (existing.value == .object) try Json.merge(arena, existing.value, addition.value) else addition.value;
+                    break;
+                } else try kept.append(arena, addition);
+            }
+            for (kept.items) |*field| field.value = try solveByType(arena, field.value, variant);
+            return .{ .object = kept.items };
+        },
+        .array => |items| {
+            const resolved = try arena.alloc(Json.Value, items.len);
+            for (resolved, items) |*out, item| out.* = try solveByType(arena, item, variant);
+            return .{ .array = resolved };
+        },
+        .string => |text| return .{ .string = try fillPlaceholders(arena, text, variant.parts) },
+        else => return value,
+    }
+}
+
+/// `text` with each `{group}` placeholder replaced by the variant's state of that group.
+/// A placeholder may list alternatives, `{wood|rock}`, and is replaced if any is one of the
+/// variant's groups (vsapi `RegistryObject.FillPlaceHolder`).
+fn fillPlaceholders(arena: std.mem.Allocator, text: []const u8, parts: []const Part) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, text, '{') == null) return text;
+    var current = text;
+    for (parts) |part| {
+        var out: std.ArrayList(u8) = .empty;
+        var i: usize = 0;
+        while (i < current.len) {
+            if (current[i] == '{') {
+                if (std.mem.indexOfAnyPos(u8, current, i + 1, "{}")) |end| if (current[end] == '}') {
+                    var names = std.mem.splitScalar(u8, current[i + 1 .. end], '|');
+                    const named = while (names.next()) |name| {
+                        if (std.mem.eql(u8, name, part.group)) break true;
+                    } else false;
+                    if (named) {
+                        try out.appendSlice(arena, part.state);
+                        i = end + 1;
+                        continue;
+                    }
+                };
+            }
+            try out.append(arena, current[i]);
+            i += 1;
+        }
+        current = out.items;
+    }
+    return current;
+}
+
+test fillPlaceholders {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const parts = [_]Part{ .{ .group = "rock", .state = "granite" }, .{ .group = "side", .state = "up" } };
+    try std.testing.expectEqualStrings("block/stone/rock/granite1", try fillPlaceholders(arena.allocator(), "block/stone/rock/{rock}1", &parts));
+    try std.testing.expectEqualStrings("granite-up", try fillPlaceholders(arena.allocator(), "{wood|rock}-{side}", &parts));
+    try std.testing.expectEqualStrings("{wood}", try fillPlaceholders(arena.allocator(), "{wood}", &parts));
 }
 
 const Expander = struct {
@@ -106,25 +268,25 @@ const Expander = struct {
         return try Json.parse(self.arena, text);
     }
 
-    /// The codes of one block type file, as RegistryObjectType.CreateBasetype and
+    /// One block type file and its variants, as RegistryObjectType.CreateBasetype and
     /// ModRegistryObjectTypeLoader.GatherVariants make them.
-    fn blockType(self: *Expander, name: Assets.Name) ![]const Location {
+    fn blockType(self: *Expander, name: Assets.Name) !struct { json: Json.Value, variants: []const Variant } {
         var json = try self.readJson(name.domain, name.path) orelse return error.FileNotFound;
         json = try self.inherit(json, name.domain, 0);
         const base = try Location.parse(self.arena, (json.get("code") orelse return error.NoCode).asString() orelse return error.NoCode, name.domain);
-        if (json.get("enabled")) |enabled| if (enabled.isFalse()) return &.{};
+        if (json.get("enabled")) |enabled| if (enabled.isFalse()) return .{ .json = json, .variants = &.{} };
 
         const groups = json.getArray("variantgroups");
-        if (groups.len == 0) return self.one(base);
+        if (groups.len == 0) return .{ .json = json, .variants = try self.one(base) };
         const skipped = try self.locations(json.get("skipVariants"), name.domain);
         const allowed = try self.locations(json.get("allowedVariants"), name.domain);
-        const codes = try self.gather(base, groups, skipped, allowed, name);
-        return if (codes.len == 0) self.one(base) else codes;
+        const variants = try self.gather(base, groups, skipped, allowed, name);
+        return .{ .json = json, .variants = if (variants.len == 0) try self.one(base) else variants };
     }
 
-    fn one(self: *Expander, code: Location) ![]const Location {
-        const list = try self.arena.alloc(Location, 1);
-        list[0] = code;
+    fn one(self: *Expander, code: Location) ![]const Variant {
+        const list = try self.arena.alloc(Variant, 1);
+        list[0] = .{ .code = code, .parts = &.{} };
         return list;
     }
 
@@ -153,7 +315,7 @@ const Expander = struct {
 
     /// Every variant of a block type with variant groups: groups that multiply give every
     /// combination of their states, groups that add give one variant per state.
-    fn gather(self: *Expander, base: Location, groups: []const Json.Value, skipped: ?[]const Location, allowed: ?[]const Location, name: Assets.Name) ![]const Location {
+    fn gather(self: *Expander, base: Location, groups: []const Json.Value, skipped: ?[]const Location, allowed: ?[]const Location, name: Assets.Name) ![]const Variant {
         const arena = self.arena;
         var added: std.ArrayList([]const Part) = .empty;
         // Each multiplying group's entries, in the order the groups first appear.
@@ -222,7 +384,7 @@ const Expander = struct {
             variants.appendAssumeCapacity(parts.items);
         }
 
-        var codes: std.ArrayList(Location) = .empty;
+        var codes: std.ArrayList(Variant) = .empty;
         next: for (variants.items) |parts| {
             var path: std.ArrayList(u8) = .empty;
             try path.appendSlice(arena, base.path);
@@ -240,7 +402,7 @@ const Expander = struct {
                     if (matchOrWarn(pattern, code, name)) break;
                 } else continue :next;
             }
-            try codes.append(arena, code);
+            try codes.append(arena, .{ .code = code, .parts = parts });
         }
         return codes.items;
     }
@@ -272,11 +434,9 @@ const Expander = struct {
 };
 
 fn matchOrWarn(pattern: Location, code: Location, name: Assets.Name) bool {
-    return pattern.matches(code) catch |err| switch (err) {
-        error.RegexUnsupported => {
-            std.debug.print("storymap: {s}:{s} filters its variants with the regular expression {s}, which isn't supported yet\n", .{ name.domain, name.path, pattern.path });
-            return false;
-        },
+    return pattern.matches(code) catch |err| {
+        std.debug.print("storymap: {s}:{s} filters its variants with the pattern {s}, which can't be read ({s})\n", .{ name.domain, name.path, pattern.path, @errorName(err) });
+        return false;
     };
 }
 
@@ -352,4 +512,50 @@ test "variants multiply, add, inherit and filter" {
     };
     try std.testing.expectEqual(expected.len, codes.items.len);
     for (expected, codes.items) |want, got| try std.testing.expectEqualStrings(want, got);
+}
+
+test "materials and map colour codes, resolved per variant" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const files = [_][2][]const u8{
+        .{
+            "game/assets/survival/blocktypes/soil.json",
+            \\{ code: "soil", variantgroups: [ { code: "kind", states: ["loam", "sand", "leafy", "snowy"] } ],
+            \\  blockmaterialByType: { "@soil-(sand)": "sand", "soil-leafy": "Leaves", "*-snowy": "Snow", "*": "soil" },
+            \\  attributes: { mapColorCodeByType: { "soil-loam": "{kind}-colour" }, other: 1 },
+            \\  attributesByType: { "soil-sand": { mapColorCode: "settlement" } } }
+        },
+        .{ "game/assets/survival/blocktypes/plain.json", "{ code: 'plain' }" },
+    };
+    for (files) |file| {
+        if (std.fs.path.dirname(file[0])) |parent| try tmp.dir.createDirPath(io, parent);
+        try tmp.dir.writeFile(io, .{ .sub_path = file[0], .data = file[1] });
+    }
+    var game = try tmp.dir.openDir(io, "game", .{});
+    defer game.close(io);
+    var assets = try Assets.open(std.testing.allocator, io, game, null);
+    defer assets.close(io);
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const blocks = try expand(arena.allocator(), io, &assets);
+    const expected = [_][3][]const u8{
+        // A placeholder filled from the variant, in a mapColorCode from a nested …ByType.
+        .{ "plain", "Stone", "land" },
+        .{ "soil-loam", "Soil", "loam-colour" },
+        // attributesByType merged into attributes; the regex key picks the material.
+        .{ "soil-sand", "Sand", "settlement" },
+        // No mapColorCode: the material's default.
+        .{ "soil-leafy", "Leaves", "forest" },
+        .{ "soil-snowy", "Snow", "glacier" },
+    };
+    try std.testing.expectEqual(expected.len, blocks.len);
+    for (expected) |want| {
+        const block = for (blocks) |block| {
+            if (std.mem.eql(u8, block.code, want[0])) break block;
+        } else return error.TestUnexpectedResult;
+        try std.testing.expectEqualStrings(want[1], block.material);
+        try std.testing.expectEqualStrings(want[2], block.colorCode);
+    }
 }
