@@ -89,13 +89,13 @@ Called instead of `update` when there's no map to show: the page has no map data
 style relief
 
 land        #E4D2A0
-desert      #E4D2A0
-forest      #E4D2A0
-plant       #E4D2A0
-settlement  #E4D2A0
-road        #E4D2A0
-devastation #E4D2A0
-glacier     #E4D2A0
+desert      #EDDCA6
+forest      #D4C997
+plant       #DBD19C
+settlement  #DEBFA0
+road        #CDB08A
+devastation #C9BBA0
+glacier     #F2F0E6
 lake        #B8C8B8
 ocean       #B0C2C6
 lava        #B85A30

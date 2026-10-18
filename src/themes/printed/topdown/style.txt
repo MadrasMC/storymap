@@ -1,15 +1,16 @@
-# The map as an old printed relief map: one sepia for all ground, darkening below sea level
-# and paling above it, faded washes for water, and ink for coastlines.
+# The map as an old printed relief map: sepia ground, faintly tinted by what's on it,
+# darkening below sea level and paling above it, faded washes for water, and ink for
+# coastlines.
 style relief
 
 land        #E4D2A0
-desert      #E4D2A0
-forest      #E4D2A0
-plant       #E4D2A0
-settlement  #E4D2A0
-road        #E4D2A0
-devastation #E4D2A0
-glacier     #E4D2A0
+desert      #EDDCA6
+forest      #D4C997
+plant       #DBD19C
+settlement  #DEBFA0
+road        #CDB08A
+devastation #C9BBA0
+glacier     #F2F0E6
 lake        #B8C8B8
 ocean       #B0C2C6
 lava        #B85A30
