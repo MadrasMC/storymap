@@ -43,7 +43,7 @@ CREATE TABLE sqlite_sequence(name,seq)
 CREATE INDEX index_playeruid on playerdata(playeruid)
 ```
 
-| Table | Rows in sample | `data` message | What it holds |
+| Table | Rows in sample | `data` message | Contents |
 | --- | --- | --- | --- |
 | `chunk` | 6,880 | `ServerChunk` | One 32 × 32 × 32 cube of blocks per row. "Chunks do not span the world height." *([Wiki: WorldGen Concept](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
 | `mapchunk` | 860 | `ServerMapChunk` | One row per chunk column: "information on a chunk column, such as the rain height or snow accumulation." *([Wiki](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))* |
@@ -187,7 +187,7 @@ All integers are little-endian.
 
 Real examples from the sample (both in chunk column x 15995, z 15999, written by 1.19.1):
 
-| Chunk y | length | Palette | Planes |
+| Chunk y | `length` | Palette | Planes |
 | --- | --- | --- | --- |
 | 4 | −8 (`f8 ff ff ff`) | raw, 2 entries: 0, 164 | 27 bytes → 4,096 bytes = 1 plane |
 | 3 | 97 (`61 00 00 00`) | zstd, 97 → 88 bytes = 22 entries | 21 bytes → 20,480 bytes = 5 planes, all zero |
@@ -404,9 +404,9 @@ Water fills the blocks below sea level: the top water block of a sea or lake is 
 
 ### World-generation stages
 
-Field 4 is the column's world-generation stage, `IMapChunk.CurrentPass`, a value of `EnumWorldGenPass`. It's the pass the column is **waiting for**, not the last one finished. The passes *(Wiki: [WorldGen Concept](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))*:
+Field 4 is the column's world-generation stage, `IMapChunk.CurrentPass`, a value of `EnumWorldGenPass`. It's the column's **next** pass, not the last one finished. The passes *(Wiki: [WorldGen Concept](https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept))*:
 
-| Value | Pass | What it adds |
+| Value | Pass | Generates |
 | --- | --- | --- |
 | 0 | None | |
 | 1 | Terrain | terrain, rock layers, caves |
@@ -414,11 +414,11 @@ Field 4 is the column's world-generation stage, `IMapChunk.CurrentPass`, a value
 | 3 | Vegetation | patches, shrubs, trees, rivulets |
 | 4 | NeighbourSunLightFlood | the snow layer, light across chunks |
 | 5 | PreDone | creatures; neighbours may still add things |
-| 6 | Done | nothing: the column is fully generated |
+| 6 | Done | – |
 
 Passes 2 to 5 need the neighbouring columns, so the game surrounds everything it finishes with rings of partly generated columns. In the larger 1.22.7 world they're concentric, each exactly one chunk column (32 blocks) wide:
 
-| Stage | Chunk columns | This stage or later spans |
+| Stage | Chunk columns | Extent at this stage or later |
 | --- | --- | --- |
 | 6 Done | 2,729 | 1,824 × 1,600 blocks |
 | 5 | 218 | 1,888 × 1,664 |
