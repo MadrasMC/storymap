@@ -117,14 +117,53 @@
 		padding: var(--s2) var(--s3);
 	}
 
-	.toc ol { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: var(--s6); }
-	.toc li { break-inside: avoid; }
-	.toc a { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s1) 0; text-decoration: none; }
+	.toc {
+		/* The space between the tree lines and the numbers' digits, every way. */
+		--tree-gap: 8px;
+		/* Where the numbers' digits are in an entry: they sit on the title's baseline, this far
+		   below the top of its text (1.6rem tall), are this tall, and start this far into the
+		   number. Measured in Geist and Geist Mono; rem and px, so they hold in either font. */
+		--digits-bottom: 1.158rem;
+		--digits-height: 0.5rem;
+		--digits-inset: 0.5px;
+	}
+	.toc ol { list-style: none; margin: 0; padding: 0; }
+	.toc > ol { columns: 2; column-gap: var(--s6); }
+	.toc a { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s1) 0; text-decoration: none; break-inside: avoid; }
 	.toc a:hover .title { text-decoration: underline; }
-	.toc .num { flex: none; min-width: 2.5rem; font: 600 var(--t-micro)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
-	.toc .depth-0 a { font-weight: 600; padding-top: var(--s2); }
-	.toc .depth-1 a { padding-left: var(--s4); }
-	.toc .depth-2 a { padding-left: var(--s7); }
+	.toc .num { flex: none; font: 600 var(--t-micro)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+	.toc > ol > li > a { font: 600 var(--t-body)/1.6 var(--sans); padding-top: var(--s2); }
+	/* The trunk joins the top-level numbers, from --tree-gap under each to --tree-gap over the
+	   next, centred on them as the branches are; entries are set in the numbers' font for its
+	   ch. A top-level entry's text starts --s2 down. */
+	.toc > ol > li { position: relative; font: 600 var(--t-micro)/1 var(--mono); }
+	.toc > ol > li:not(:last-child)::before {
+		content: "";
+		position: absolute;
+		left: calc(0.5ch - 0.5px);
+		top: calc(var(--s2) + var(--digits-bottom) + var(--tree-gap));
+		bottom: calc(-1 * (var(--s2) + var(--digits-bottom) - var(--digits-height) - var(--tree-gap)));
+		border-left: 1px solid var(--border);
+	}
+	/* Tree lines: each entry draws the line down its side and a tick across to its number; the
+	   last entry's line stops at its tick, and the first one's reaches up to --tree-gap under its
+	   parent's number, whose row ends 1.6rem + --s1 below its text's top. A branch's line is
+	   centred on its parent's number: the lists are set in the numbers' font, so a number of n
+	   characters is centred n / 2 ch in (1 for "3", 3 for "3.1"). A tick's 1px line is level
+	   with the middle of its number's digits, and ends --tree-gap before them. */
+	.toc ol ol { font: 600 var(--t-micro)/1 var(--mono); margin-left: calc(0.5ch - 0.5px); }
+	.toc ol ol ol { margin-left: calc(1.5ch - 0.5px); }
+	.toc li li {
+		--tick: calc(var(--s1) + var(--digits-bottom) - var(--digits-height) / 2 - 0.5px);
+		position: relative;
+		padding-left: var(--s4);
+		font: var(--t-body)/1.6 var(--sans);
+	}
+	.toc li li:first-child { --reach: calc(1.6rem + var(--s1) - var(--digits-bottom) - var(--tree-gap)); }
+	.toc li li::before, .toc li li::after { content: ""; position: absolute; left: 0; border: 0 solid var(--border); }
+	.toc li li::before { top: calc(-1 * var(--reach, 0px)); bottom: 0; border-left-width: 1px; }
+	.toc li li:last-child::before { bottom: auto; height: calc(var(--tick) + 1px + var(--reach, 0px)); }
+	.toc li li::after { top: var(--tick); width: calc(var(--s4) + var(--digits-inset) - var(--tree-gap)); border-top-width: 1px; }
 
 	h2, h3, h4 {
 		display: flex;
@@ -533,7 +572,7 @@
 		.hex-anatomy .prefix { font-size: 1.125rem; line-height: 2rem; }
 		.hex-anatomy .gap { width: var(--s1); }
 		.panel { padding: var(--s4) var(--s3); }
-		.toc ol { columns: 1; }
+		.toc > ol { columns: 1; }
 		.bitbar-cells span { font-size: 0; height: 1.125rem; }
 		.bits16 { gap: 2px; }
 		td code { overflow-wrap: anywhere; }
@@ -1151,7 +1190,8 @@
 		return bits;
 	};
 
-	/* contents, from the sections' headings */
+	/* contents, from the sections' headings, nested as the sections are */
+	const tocItems = new Map();
 	for (const section of document.querySelectorAll("main section[id]")) {
 		const heading = section.querySelector(":scope > .section-content > :is(h2, h3, h4)");
 		const link = el("a");
@@ -1159,11 +1199,12 @@
 		const title = heading.lastElementChild.cloneNode(true);
 		title.className = "title";
 		link.append(el("span", "num", heading.querySelector(".num").textContent), title);
-		let depth = 0;
-		for (let parent = section.parentElement.closest("section"); parent; parent = parent.parentElement.closest("section")) depth++;
-		const item = el("li", `depth-${depth}`);
+		const item = el("li");
 		item.append(link);
-		$("#toc").append(item);
+		const parent = tocItems.get(section.parentElement.closest("section"));
+		const list = parent ? parent.querySelector(":scope > ol") ?? parent.appendChild(el("ol")) : $("#toc");
+		list.append(item);
+		tocItems.set(section, item);
 	}
 
 	/* position */
