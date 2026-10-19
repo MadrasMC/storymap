@@ -81,8 +81,18 @@ pub const Area = struct {
     /// The block right under the highest solid one, liquid or solid, or 0 where it isn't
     /// known: what a shaded map shows under a cover such as snow (`Look.cover`).
     underBlock: []i32,
+    /// What the game tints the highest solid block's colour and the highest liquid's by where
+    /// they are, such as grass and leaves by climate and season, or white: multiplied into
+    /// their colour. Only for the tile's own columns, and empty unless asked for (`init`).
+    topTint: []Rgb = &.{},
+    liquidTint: []Rgb = &.{},
 
-    pub fn init(allocator: std.mem.Allocator) !Area {
+    pub const Options = struct {
+        /// Whether the game's reader fills in `topTint` and `liquidTint`.
+        tints: bool = false,
+    };
+
+    pub fn init(allocator: std.mem.Allocator, options: Options) !Area {
         const top = try allocator.alloc(?u16, side * side);
         errdefer allocator.free(top);
         const topBlock = try allocator.alloc(i32, side * side);
@@ -92,7 +102,11 @@ pub const Area = struct {
         const liquidBlock = try allocator.alloc(i32, side * side);
         errdefer allocator.free(liquidBlock);
         const underBlock = try allocator.alloc(i32, side * side);
-        return .{ .top = top, .topBlock = topBlock, .liquidTop = liquidTop, .liquidBlock = liquidBlock, .underBlock = underBlock };
+        errdefer allocator.free(underBlock);
+        const topTint = try allocator.alloc(Rgb, if (options.tints) side * side else 0);
+        errdefer allocator.free(topTint);
+        const liquidTint = try allocator.alloc(Rgb, if (options.tints) side * side else 0);
+        return .{ .top = top, .topBlock = topBlock, .liquidTop = liquidTop, .liquidBlock = liquidBlock, .underBlock = underBlock, .topTint = topTint, .liquidTint = liquidTint };
     }
 
     pub fn deinit(self: Area, allocator: std.mem.Allocator) void {
@@ -101,6 +115,8 @@ pub const Area = struct {
         allocator.free(self.liquidTop);
         allocator.free(self.liquidBlock);
         allocator.free(self.underBlock);
+        allocator.free(self.topTint);
+        allocator.free(self.liquidTint);
     }
 
     pub fn clear(self: Area) void {
@@ -109,5 +125,10 @@ pub const Area = struct {
         @memset(self.liquidTop, null);
         @memset(self.liquidBlock, 0);
         @memset(self.underBlock, 0);
+        @memset(self.topTint, white);
+        @memset(self.liquidTint, white);
     }
 };
+
+/// No tint.
+pub const white: Rgb = .{ 255, 255, 255 };

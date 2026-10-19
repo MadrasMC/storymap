@@ -8,14 +8,16 @@ const Style = @import("renderer/Style.zig");
 const viewer = @import("viewer.zig");
 
 const usage =
-    \\usage: storymap <save.vcdbs> [output folder] [--theme <theme>] [--prepare] [--blocks <folder>] [--game <folder>] [--data <folder>]
+    \\usage: storymap <save.vcdbs> [output folder] [--theme <theme>] [--season <season>] [--prepare] [--blocks <folder>] [--game <folder>] [--data <folder>]
     \\       storymap prepare [blocks folder] [--game <folder>] [--data <folder>]
     \\       storymap bench <save.vcdbs> [runs]
     \\
     \\Renders a top-down map of a Vintage Story save as tiles in the output folder,
     \\or in out when no folder is given, with index.html beside them to view it.
     \\--theme draws the page around the map: printed (the default), plain, or the
-    \\folder of a theme of your own (see docs/themes.md).
+    \\folder of a theme of your own (see docs/themes.md). A theme that colours
+    \\blocks as they look tints grass and leaves for the season on the save's
+    \\date, or for --season: spring, summer, fall or winter.
     \\
     \\What the map needs from the game's and mods' assets is prepared once into the
     \\blocks folder, or blocks when none is given, the first time a render needs it,
@@ -75,6 +77,7 @@ pub fn main(init: std.process.Init) !void {
     var paths: [2][]const u8 = undefined;
     var pathCount: usize = 0;
     var themeName: []const u8 = "printed";
+    var season: ?Save.Season = null;
     var folders: Folders = .{};
     var force = false;
     var i: usize = 1;
@@ -86,6 +89,10 @@ pub fn main(init: std.process.Init) !void {
             i += 1;
             if (i == args.len) exitWithUsage();
             themeName = args[i];
+        } else if (std.mem.eql(u8, args[i], "--season")) {
+            i += 1;
+            if (i == args.len) exitWithUsage();
+            season = std.meta.stringToEnum(Save.Season, args[i]) orelse exitWith("there's no season {s}: it's spring, summer, fall or winter\n", .{args[i]});
         } else {
             if (pathCount == paths.len) exitWithUsage();
             paths[pathCount] = args[i];
@@ -119,6 +126,7 @@ pub fn main(init: std.process.Init) !void {
     defer out.close(init.io);
     var save = try Save.open(allocator, init.io, dbPath);
     defer save.close(allocator);
+    if (season) |chosen| save.seasonProgress = chosen.progress();
     var prepared = prepareBlocks(init, folders, force);
     defer if (prepared) |*blocks| blocks.deinit();
     if (prepared) |*blocks| {
@@ -231,6 +239,7 @@ test {
     _ = @import("vs/BlockTypes.zig");
     _ = @import("vs/Prepared.zig");
     _ = @import("vs/TextureColours.zig");
+    _ = @import("vs/Tint.zig");
     _ = @import("vs/Save.zig");
     _ = @import("bench.zig");
     _ = @import("renderer/topdown.zig");

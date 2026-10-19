@@ -362,7 +362,11 @@ The other field-11 keys (`worldeditworkspaces`, `ambient`, `temporalStormData`, 
 
 ### World configuration
 
-Field 31 is a tree attribute (§5) whose values are all strings, e.g. `gameMode: "survival"`, `startingClimate: "temperate"`, `seasons: "enabled"`, `spawnRadius: "5000"`. *(Verified (1.19, 1.22.7): it parses with Storymap's tree attribute format.)* `spawnRadius` is 50 in the 1.19 sample and 5000 in the 1.22.7 world, which explains where their players spawned (§2).
+Field 31 is a tree attribute (§5) whose values are mostly strings, e.g. `gameMode: "survival"`, `startingClimate: "temperate"`, `seasons: "enabled"`, `spawnRadius: "5000"`, `daysPerMonth: "9"`; a world with the colour-accurate map has `colorAccurateWorldmap` as the number 1. *(Verified (1.19, 1.22.7): it parses with Storymap's tree attribute format.)* `spawnRadius` is 50 in the 1.19 sample and 5000 in the 1.22.7 world, which explains where their players spawned (§2).
+
+### The date
+
+`TotalGameSeconds` (field 12) over 3,600 and `HoursPerDay` (field 25) gives the days since the start of the calendar, and a year is 12 months of `daysPerMonth` days, 108 by default, starting with January. The 1.22.7 worlds were created at 3,139,200 seconds (`TotalGameSecondsStart`, field 38): 872 hours, 36 days and 8 hours, so 08:00 on 1 May of the first year, which the calendar numbers 1386 (`StartYear`). *(Source: vsapi [`IGameCalendar.cs`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IGameCalendar.cs), which names the months and counts days from the first of January. Where in the year a day falls is unverified beyond that.)*
 
 ### Sea level
 
@@ -465,11 +469,13 @@ The padding repeats values that belong to the neighbouring regions, so world gen
 
 *(Verified (1.19, 1.22.7): the sizes and keys in every test save.)*
 
+Each `ClimateMap` value packs the climate at a point, 32 blocks apart: temperature in bits 16–23 and rainfall in bits 8–15, each 0 to 255, at sea level. The game interpolates between them, and adjusts them for height. *(Verified (1.22.7): the game's map tints water by its climate colour map at this temperature and rainfall, within 0.01 per channel; [rendering.md](../rendering.md#climate-and-season-tint).)* Bits 0–7 hold something else, not interpreted; nothing is above bit 23. The test saves' temperatures are 84–139 and rainfalls 4–255. *(Verified (1.19, 1.22.7): every climate value in the four test saves; bits 0–7 are set in about 30% of them.)*
+
 Each generated structure is `{ 1: Code, 2: Group, 3: Location, 4: SuppressRivulets, 5: SuppressTreesAndShrubs }`. `Location` is the structure's box in absolute block coordinates, `{ X1, Y1, Z1, X2, Y2, Z2 }`. Codes are file names, such as `lakes/small5.json` in 1.19 and `small5.json/lakes` in 1.22.7, and include lakes, gates, ruins, traders and villages, so a map could label them. A structure is stored in the region its box starts in, nearly always: 87 of the larger 1.22.7 world's 2,524 start outside it. *(Schema. Verified (1.19, 1.22.7): the larger 1.22.7 world has 2,524 structures and the 1.19 sample 437; the other 1.22.7 world has none.)*
 
 ## 9. Open questions
 
 - **Other chunk fields:** entities' data (6), field 10, the empty flag (13), decor (14), and the two light fields that are probably colour (§3).
-- **`playerdata`:** not decoded, though the schema names its fields. **`mapchunk`:** field 18 isn't in the schema. **`mapregion`:** fields 19–21 aren't in the schema, and the maps' values aren't interpreted. **`gamedata`:** the field-11 entries other than the ID lists aren't decoded.
+- **`playerdata`:** not decoded, though the schema names its fields. **`mapchunk`:** field 18 isn't in the schema. **`mapregion`:** fields 19–21 aren't in the schema, and the maps' values aren't interpreted, except the climate map's. **`gamedata`:** the field-11 entries other than the ID lists aren't decoded.
 - **Other dimensions.** No test save has chunks outside dimension 0 (§2); a world with a time-switched alternate world or a vehicle would show how they're stored.
 - **Mods.** Block and item codes are settled (§6). Structures carry no domain in their codes, so which of the larger 1.22.7 world's come from its mod isn't known; its one entity of class `entitypsagent` is probably the mod's.

@@ -20,6 +20,10 @@ pub const Block = struct {
     /// The textures the game's colour-accurate map takes its colour and grain from, or null
     /// without one (see `Textures`).
     textures: Textures,
+    /// The colour maps that tint it by climate and by season, by their codes in the game's
+    /// `config/colormaps.json`, e.g. "climatePlantTint" and "seasonalGrass", or null.
+    climateColorMap: ?[]const u8 = null,
+    seasonColorMap: ?[]const u8 = null,
 };
 
 /// Which of a block's textures colour it on the game's colour-accurate map (vsapi
@@ -124,7 +128,14 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                     break :look Look{ .material = defaultMaterial, .colorCode = defaultColorCode(defaultMaterial), .textures = .{} };
                 },
             };
-            try blocks.append(arena, .{ .code = saved, .material = look.material, .colorCode = look.colorCode, .textures = look.textures });
+            try blocks.append(arena, .{
+                .code = saved,
+                .material = look.material,
+                .colorCode = look.colorCode,
+                .textures = look.textures,
+                .climateColorMap = look.climateColorMap,
+                .seasonColorMap = look.seasonColorMap,
+            });
         }
     }
     return blocks.items;
@@ -134,11 +145,13 @@ const Look = struct {
     material: []const u8,
     colorCode: []const u8,
     textures: Textures,
+    climateColorMap: ?[]const u8 = null,
+    seasonColorMap: ?[]const u8 = null,
 };
 
-/// A variant's material, map colour code and textures, from its block type's
-/// `blockmaterial`, `attributes`, `textures` and `particlesTextureCode`, after resolving
-/// their `…ByType` forms for the variant.
+/// A variant's material, map colour code, textures and colour maps, from its block type's
+/// `blockmaterial`, `attributes`, `textures`, `particlesTextureCode`, `climateColorMap` and
+/// `seasonColorMap`, after resolving their `…ByType` forms for the variant.
 fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !Look {
     const materialValue = try property(arena, json, "blockmaterial", variant);
     const material = canonicalMaterial(if (materialValue) |m| m.asString() orelse defaultMaterial else defaultMaterial);
@@ -154,7 +167,14 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !Look 
             .grain = try textureLocation(arena, pickTexture(all.object, forGrain), variant.code.domain),
         };
     };
-    return .{ .material = material, .colorCode = colorCode orelse defaultColorCode(material), .textures = textures };
+    return .{
+        .material = material,
+        .colorCode = colorCode orelse defaultColorCode(material),
+        .textures = textures,
+        // A …ByType may set one to null, for variants without.
+        .climateColorMap = if (try property(arena, json, "climateColorMap", variant)) |c| c.asString() else null,
+        .seasonColorMap = if (try property(arena, json, "seasonColorMap", variant)) |c| c.asString() else null,
+    };
 }
 
 /// The texture named `code` if there is one, else `up`, else the first. The game looks them
@@ -627,4 +647,20 @@ test "the textures that colour a block" {
         try std.testing.expectEqualDeep(case.colour, look.textures.colour);
         try std.testing.expectEqualDeep(case.grain, look.textures.grain);
     }
+}
+
+test "the colour maps that tint a block" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const json = try Json.parse(a,
+        \\{ climateColorMapByType: { "*-none": null, "*": "climatePlantTint" },
+        \\  seasonColorMapByType: { "*-none": null, "*": "seasonalGrass" } }
+    );
+    const grassy = try describe(a, json, .{ .code = .{ .domain = "game", .path = "soil-low-normal" }, .parts = &.{} });
+    try std.testing.expectEqualStrings("climatePlantTint", grassy.climateColorMap.?);
+    try std.testing.expectEqualStrings("seasonalGrass", grassy.seasonColorMap.?);
+    const bare = try describe(a, json, .{ .code = .{ .domain = "game", .path = "soil-low-none" }, .parts = &.{} });
+    try std.testing.expectEqual(null, bare.climateColorMap);
+    try std.testing.expectEqual(null, bare.seasonColorMap);
 }

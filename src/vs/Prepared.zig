@@ -1,21 +1,25 @@
 //! What rendering needs to know about the game's and mods' blocks, prepared once from their
 //! assets and kept, so a render never reads assets itself (docs/rendering.md#preparing-blocks).
-//! For each block: its code, its material, its colour on the game's map, and the colours of
-//! its texture.
+//! For each block: its code, its material, its colour on the game's map, the colours of its
+//! texture, and the colour maps that tint it.
 //!
 //! A prepared set is a folder `<blocks folder>/<key>/` holding `blocks.txt`, where the key
 //! depends on the game version and the mods, so each combination is prepared once. Textures
-//! come first, each with its average colour and its grain (`TextureColours`), and blocks
-//! name theirs by number, counting from 0, or `-` for none:
+//! come first, each with its average colour and its grain (`TextureColours`), then the game's
+//! colour maps with their padding and flags, each beside it as `colormaps/<code>.png`. Blocks
+//! name their two textures and their climate and season colour maps by number, counting from
+//! 0, or `-` for none:
 //!
-//!     storymap blocks 3
+//!     storymap blocks 4
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
 //!     domain primitivesurvival
 //!     texture game:block/stone/rock/granite1 8A7F78 978B83 …
 //!     …
-//!     block rock-granite Stone land 0 0
+//!     colormap climatePlantTint 4 0
+//!     …
+//!     block rock-granite Stone land 0 0 - -
 //!     …
 const Prepared = @This();
 
@@ -26,6 +30,8 @@ const columns = @import("../columns.zig");
 const Assets = @import("Assets.zig");
 const BlockTypes = @import("BlockTypes.zig");
 const TextureColours = @import("TextureColours.zig");
+const Json = @import("Json.zig");
+const Tint = @import("Tint.zig");
 
 arena: std.heap.ArenaAllocator,
 gameVersion: []const u8 = "",
@@ -44,12 +50,17 @@ pub const Block = struct {
     /// colour-accurate map uses (`BlockTypes.Textures`), where they could be read.
     colour: ?columns.Rgb = null,
     grain: []const columns.Rgb = &.{},
+    /// The colour maps that tint it by climate and by season, where it has them and they
+    /// could be read.
+    climateColourMap: ?*const Tint.ColourMap = null,
+    seasonColourMap: ?*const Tint.ColourMap = null,
 };
 
 /// The format of `blocks.txt`, and of what goes into it: raise it when either changes, so
 /// sets prepared before are prepared again.
-const formatVersion = 3;
+const formatVersion = 4;
 const fileName = "blocks.txt";
+const colourMapFolder = "colormaps";
 
 /// Blocks the game registers itself rather than from a block type file.
 const builtInBlocks = [_][]const u8{ "air", "mantle" };
@@ -90,8 +101,14 @@ pub fn key(buffer: *[16]u8, io: Io, assets: *const Assets) ![]const u8 {
 pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: Dir) !usize {
     const blocks = try BlockTypes.expand(arena, io, assets);
     var textures: Textures = .{ .arena = arena, .io = io, .assets = assets };
-    const numbers = try arena.alloc([2]?usize, blocks.len);
-    for (numbers, blocks) |*number, block| number.* = .{ try textures.number(block.textures.colour), try textures.number(block.textures.grain) };
+    const colourMaps = try prepareColourMaps(arena, io, assets, folder);
+    const numbers = try arena.alloc([4]?usize, blocks.len);
+    for (numbers, blocks) |*number, block| number.* = .{
+        try textures.number(block.textures.colour),
+        try textures.number(block.textures.grain),
+        colourMapNumber(colourMaps, block.climateColorMap),
+        colourMapNumber(colourMaps, block.seasonColorMap),
+    };
 
     var text: std.Io.Writer.Allocating = .init(arena);
     const w = &text.writer;
@@ -103,6 +120,7 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
         for (texture.colours.grain) |sample| try w.print(" {X}", .{&sample});
         try w.writeByte('\n');
     }
+    for (colourMaps) |map| try w.print("colormap {s} {} {}\n", .{ map.code, map.padding, map.extraFlags });
     for (blocks, numbers) |block, number| {
         try w.print("block {s} {s} {s}", .{ block.code, block.material, block.colorCode });
         for (number) |n| if (n) |i| try w.print(" {}", .{i}) else try w.writeAll(" -");
@@ -113,6 +131,57 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
     try folder.writeFile(io, .{ .sub_path = partial, .data = text.written() });
     try folder.rename(partial, folder, fileName, io);
     return blocks.len;
+}
+
+/// One of the game's colour maps, as prepared: its image is `colormaps/<code>.png`.
+const PreparedColourMap = struct {
+    code: []const u8,
+    padding: usize,
+    /// 1 for a tropical season map.
+    extraFlags: u32,
+};
+
+/// Copies the images of the colour maps the game's `config/colormaps.json` lists into
+/// `folder`'s `colormaps`, and returns those it could read, in the file's order.
+fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: Dir) ![]const PreparedColourMap {
+    const file = "config/colormaps.json";
+    const bytes = try assets.read(arena, io, Assets.gameDomain, file) orelse return &.{};
+    const json = Json.parse(arena, bytes) catch |err| {
+        std.debug.print("storymap: can't read the game's {s} ({s}); nothing will be tinted\n", .{ file, @errorName(err) });
+        return &.{};
+    };
+    if (json != .array) return &.{};
+    try folder.createDirPath(io, colourMapFolder);
+    var maps: std.ArrayList(PreparedColourMap) = .empty;
+    for (json.array) |entry| {
+        const code = (entry.get("code") orelse continue).asString() orelse continue;
+        const base = ((entry.get("texture") orelse continue).get("base") orelse continue).asString() orelse continue;
+        const colon = std.mem.indexOfScalar(u8, base, ':');
+        const domain = if (colon) |c| base[0..c] else Assets.gameDomain;
+        const path = try std.fmt.allocPrint(arena, "textures/{s}.png", .{if (colon) |c| base[c + 1 ..] else base});
+        const png = try assets.read(arena, io, domain, path) orelse {
+            std.debug.print("storymap: the colour map {s} has no image {s}:{s}\n", .{ code, domain, path });
+            continue;
+        };
+        const sub = try std.fmt.allocPrint(arena, "{s}/{s}.png", .{ colourMapFolder, code });
+        try folder.writeFile(io, .{ .sub_path = sub, .data = png });
+        try maps.append(arena, .{ .code = code, .padding = integer(entry.get("padding")), .extraFlags = @intCast(integer(entry.get("extraFlags"))) });
+    }
+    return maps.items;
+}
+
+/// A whole number in the game's JSON, or 0 without one.
+fn integer(value: ?Json.Value) usize {
+    const number = value orelse return 0;
+    if (number != .number) return 0;
+    return std.fmt.parseInt(usize, number.number, 10) catch 0;
+}
+
+/// The number of the colour map with `code` in `maps`, or null without one.
+fn colourMapNumber(maps: []const PreparedColourMap, code: ?[]const u8) ?usize {
+    const wanted = code orelse return null;
+    for (maps, 0..) |map, i| if (std.mem.eql(u8, map.code, wanted)) return i;
+    return null;
 }
 
 /// The textures the blocks name, each read once, numbered in the order they're first named.
@@ -173,6 +242,8 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
     const header = lines.next() orelse return error.NotPreparedBlocks;
     if (!std.mem.eql(u8, header, std.fmt.comptimePrint("storymap blocks {}", .{formatVersion}))) return error.NotPreparedBlocks;
     var textures: std.ArrayList(*const TextureColours) = .empty;
+    // Null where a colour map's image can't be read, so the numbers still count.
+    var colourMaps: std.ArrayList(?*const Tint.ColourMap) = .empty;
     while (lines.next()) |line| {
         var words = std.mem.tokenizeScalar(u8, std.mem.trimEnd(u8, line, "\r"), ' ');
         const kind = words.next() orelse continue;
@@ -188,20 +259,41 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
             colours.average = try parseRgb(words.next());
             for (&colours.grain) |*sample| sample.* = try parseRgb(words.next());
             try textures.append(arena, colours);
+        } else if (std.mem.eql(u8, kind, "colormap")) {
+            const padding = std.fmt.parseInt(usize, words.next() orelse "", 10) catch return error.NotPreparedBlocks;
+            const flags = std.fmt.parseInt(u32, words.next() orelse "", 10) catch return error.NotPreparedBlocks;
+            try colourMaps.append(arena, try loadColourMap(arena, io, folder, first, padding, flags == 1));
         } else if (std.mem.eql(u8, kind, "block")) {
             const material = words.next() orelse return error.NotPreparedBlocks;
             const colorCode = words.next() orelse return error.NotPreparedBlocks;
-            const colour = try textureAt(textures.items, words.next());
-            const grain = try textureAt(textures.items, words.next());
+            const colour = try numbered(*const TextureColours, textures.items, words.next());
+            const grain = try numbered(*const TextureColours, textures.items, words.next());
+            const climate = try numbered(?*const Tint.ColourMap, colourMaps.items, words.next());
+            const season = try numbered(?*const Tint.ColourMap, colourMaps.items, words.next());
             try self.blocks.put(arena, first, .{
                 .material = material,
                 .colorCode = colorCode,
                 .colour = if (colour) |texture| texture.average else null,
                 .grain = if (grain) |texture| &texture.grain else &.{},
+                .climateColourMap = climate orelse null,
+                .seasonColourMap = season orelse null,
             });
         }
     }
     return self;
+}
+
+/// The colour map `code` prepared in `folder`, or null if its image can't be read.
+fn loadColourMap(arena: std.mem.Allocator, io: Io, folder: Dir, code: []const u8, padding: usize, tropical: bool) !?*const Tint.ColourMap {
+    var buffer: [Dir.max_path_bytes]u8 = undefined;
+    const path = std.fmt.bufPrint(&buffer, "{s}/{s}.png", .{ colourMapFolder, code }) catch return null;
+    const png = folder.readFileAlloc(io, path, arena, .limited(16 << 20)) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    const map = try arena.create(Tint.ColourMap);
+    map.* = try Tint.ColourMap.decode(arena, code, png, padding, tropical) orelse return null;
+    return map;
 }
 
 fn parseRgb(word: ?[]const u8) !columns.Rgb {
@@ -212,13 +304,13 @@ fn parseRgb(word: ?[]const u8) !columns.Rgb {
     return rgb;
 }
 
-/// The texture a block names by its number, or null for `-`.
-fn textureAt(textures: []const *const TextureColours, word: ?[]const u8) !?*const TextureColours {
+/// The texture or colour map a block names by its number, or null for `-`.
+fn numbered(comptime T: type, items: []const T, word: ?[]const u8) !?T {
     const n = word orelse return error.NotPreparedBlocks;
     if (std.mem.eql(u8, n, "-")) return null;
     const i = std.fmt.parseInt(usize, n, 10) catch return error.NotPreparedBlocks;
-    if (i >= textures.len) return error.NotPreparedBlocks;
-    return textures[i];
+    if (i >= items.len) return error.NotPreparedBlocks;
+    return items[i];
 }
 
 /// The newest set prepared in the blocks folder `blocks`, by when it was prepared, for when
@@ -277,8 +369,10 @@ test "prepare, load and compare with a save" {
     const files = [_][2][]const u8{
         .{ "game/assets/version-1.22.7.txt", "" },
         .{ "game/assets/survival/worldproperties/block/rock.json", "{ code: 'rock', variants: [ { code: 'granite' } ] }" },
-        .{ "game/assets/survival/blocktypes/rock.json", "{ code: 'rock', variantgroups: [ { loadFromProperties: 'block/rock' } ], textures: { all: { base: 'block/stone/{rock}*' } } }" },
+        .{ "game/assets/survival/blocktypes/rock.json", "{ code: 'rock', variantgroups: [ { loadFromProperties: 'block/rock' } ], textures: { all: { base: 'block/stone/{rock}*' } }, climateColorMap: 'climateTest', seasonColorMap: 'missing' }" },
         .{ "game/assets/survival/textures/block/stone/granite1.png", @embedFile("testdata/red.png") },
+        .{ "game/assets/survival/config/colormaps.json", "[ { code: 'climateTest', texture: { base: 'environment/test' } }, { code: 'missing', texture: { base: 'environment/none' } } ]" },
+        .{ "game/assets/game/textures/environment/test.png", @embedFile("testdata/red.png") },
         .{ "game/assets/survival/textures/block/stone/granite2.png", "not read: granite1 comes first" },
         .{ "data/Mods/testmod.zip", @embedFile("testdata/testmod.zip") },
     };
@@ -315,6 +409,11 @@ test "prepare, load and compare with a save" {
     // The transparent pixel counts for nothing.
     try std.testing.expectEqual(columns.Rgb{ 200, 40, 20 }, prepared.blocks.get("rock-granite").?.colour.?);
     try std.testing.expectEqual(TextureColours.samples, prepared.blocks.get("rock-granite").?.grain.len);
+    // The colour map's image, 2 × 1; the other one has none, so it isn't there.
+    const climate = prepared.blocks.get("rock-granite").?.climateColourMap.?;
+    try std.testing.expectEqualStrings("climateTest", climate.code);
+    try std.testing.expectEqual(2, climate.width);
+    try std.testing.expectEqual(null, prepared.blocks.get("rock-granite").?.seasonColourMap);
     try std.testing.expect(prepared.blocks.contains("testmod:thing"));
     try std.testing.expectEqual(null, prepared.blocks.get("testmod:thing").?.colour);
 

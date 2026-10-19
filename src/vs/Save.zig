@@ -13,6 +13,8 @@ const Compression = @import("Compression.zig");
 const MapChunk = @import("MapChunk.zig");
 const GameData = @import("GameData.zig");
 const Prepared = @import("Prepared.zig");
+const Tint = @import("Tint.zig");
+const ProtoBuf = @import("../ProtoBuf.zig");
 
 path: []const u8,
 db: DB,
@@ -24,6 +26,12 @@ tileList: []tiles.Tile,
 looks: []columns.Look,
 /// How many chunk levels the world has: chunks have y 0 to `levels` − 1.
 levels: usize,
+/// The colour maps that tint each block ID, from the prepared blocks (`useBlocks`); none
+/// without them.
+tints: []BlockTint,
+/// How far through the year the seasons are drawn, from 0 at the start of January: the
+/// save's date, unless a season is chosen.
+seasonProgress: f32,
 
 /// Opens the save at `path` for reading, never writing next to it, since it may be in the
 /// game's own Saves folder. A file that can't be read as a save stops the program with a
@@ -58,8 +66,13 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Save {
     };
     errdefer gameData.deinit();
     const looks = try looksByCode(allocator, gameData);
+    errdefer allocator.free(looks);
+    const tints = try allocator.alloc(BlockTint, gameData.blockCodes.len);
+    @memset(tints, .{});
 
     return .{
+        .tints = tints,
+        .seasonProgress = gameData.yearProgress(),
         .path = path,
         .db = db,
         .gameData = gameData,
@@ -71,6 +84,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Save {
 }
 
 pub fn close(self: Save, allocator: std.mem.Allocator) void {
+    allocator.free(self.tints);
     allocator.free(self.looks);
     self.gameData.deinit();
     allocator.free(self.tileList);
@@ -126,6 +140,36 @@ pub const palette: columns.Palette = .{
     .wateredge = .{ 0x48, 0x30, 0x18 },
 };
 
+/// The colour maps that tint a block (docs/rendering.md#climate-and-season-tint).
+pub const BlockTint = struct {
+    climate: ?*const Tint.ColourMap = null,
+    season: ?*const Tint.ColourMap = null,
+};
+
+fn blockTint(self: *const Save, id: i32) BlockTint {
+    return if (id >= 0 and id < self.tints.len) self.tints[@intCast(id)] else .{};
+}
+
+/// The game's seasons (vsapi `EnumSeason`), to draw a map in rather than at the save's date.
+pub const Season = enum {
+    spring,
+    summer,
+    fall,
+    winter,
+
+    /// The middle of the season, through the year from the start of January, taking spring
+    /// to be March to May, as in the northern hemisphere.
+    pub fn progress(self: Season) f32 {
+        const month: f32 = switch (self) {
+            .winter => 0.5,
+            .spring => 3.5,
+            .summer => 6.5,
+            .fall => 9.5,
+        };
+        return month / 12;
+    }
+};
+
 /// What a block ID looks like on the map. Anything unknown is land.
 pub fn look(self: *const Save, id: i32) columns.Look {
     return if (id >= 0 and id < self.looks.len) self.looks[@intCast(id)] else .{ .mapType = .land };
@@ -148,6 +192,10 @@ pub fn useBlocks(self: *Save, prepared: *const Prepared) void {
             .colour = block.colour,
             .grain = block.grain,
         };
+    }
+    for (self.tints, self.gameData.blockCodes) |*tint, maybeCode| {
+        const block = prepared.blocks.get(maybeCode orelse continue) orelse continue;
+        tint.* = .{ .climate = block.climateColourMap, .season = block.seasonColourMap };
     }
 }
 
@@ -219,9 +267,12 @@ pub const Reader = struct {
     db: DB,
     mapChunkRow: DB.Stmt,
     chunkRow: DB.Stmt,
+    mapRegionRow: DB.Stmt,
     decoder: Chunk.Decoder,
     chunk: *Chunk,
     mapChunk: *MapChunk,
+    /// The climate map of the tile's map region, for tints.
+    climate: Tint.ClimateMap,
     /// Chunks read: those holding a surface block, in each tile and the ring around it.
     chunksRead: usize = 0,
 
@@ -232,6 +283,10 @@ pub const Reader = struct {
         errdefer mapChunkRow.finalize();
         const chunkRow = try db.prepare("SELECT data FROM chunk WHERE position = ?1;");
         errdefer chunkRow.finalize();
+        const mapRegionRow = try db.prepare("SELECT data FROM mapregion WHERE position = ?1;");
+        errdefer mapRegionRow.finalize();
+        const climateValues = try allocator.alloc(i32, Tint.ClimateMap.maxSize * Tint.ClimateMap.maxSize);
+        errdefer allocator.free(climateValues);
         var decoder: Chunk.Decoder = try .init(allocator, Chunk.Decoder.defaultBlockEntityBytes);
         errdefer decoder.deinit(allocator);
         const chunk = try allocator.create(Chunk);
@@ -243,16 +298,20 @@ pub const Reader = struct {
             .db = db,
             .mapChunkRow = mapChunkRow,
             .chunkRow = chunkRow,
+            .mapRegionRow = mapRegionRow,
             .decoder = decoder,
             .chunk = chunk,
             .mapChunk = mapChunk,
+            .climate = .{ .values = climateValues },
         };
     }
 
     pub fn deinit(self: *Reader, allocator: std.mem.Allocator) void {
+        allocator.free(self.climate.values);
         allocator.destroy(self.mapChunk);
         allocator.destroy(self.chunk);
         self.decoder.deinit(allocator);
+        self.mapRegionRow.finalize();
         self.chunkRow.finalize();
         self.mapChunkRow.finalize();
         self.db.deinit();
@@ -271,6 +330,36 @@ pub const Reader = struct {
             const cz = cz0 + @as(i64, @intCast(j));
             if (cx < 0 or cz < 0 or cx > Chunk.Position.maxXZ or cz > Chunk.Position.maxXZ) continue;
             try self.readColumn(area.*, @intCast(cx), @intCast(cz), x0, z0);
+        };
+        if (area.topTint.len > 0) try self.readTints(tile, area.*);
+    }
+
+    /// Tints the top solid block and the top liquid of each of the tile's own columns by
+    /// the climate there, from the tile's map region (the same area), and the season. A tile
+    /// without a climate map stays untinted.
+    fn readTints(self: *Reader, tile: tiles.Tile, area: columns.Area) !void {
+        const save = self.save;
+        if (tile.x < 0 or tile.y < 0) return;
+        const region: Chunk.Position = .{ .x = @intCast(tile.x), .z = @intCast(tile.y) };
+        self.mapRegionRow.bind(1, region.position64());
+        defer self.mapRegionRow.reset();
+        if (!self.mapRegionRow.step()) return;
+        var parser: ProtoBuf = .{ .buf = self.mapRegionRow.column([]const u8, 0) };
+        const found = while (try parser.next()) |field| {
+            if (field.field_number == 3 and field.data == .LEN) break try self.climate.decode(field.data.LEN);
+        } else false;
+        if (!found) return;
+
+        const sea: i32 = @intCast(save.gameData.seaLevel());
+        const side = columns.Area.side;
+        for (0..tiles.size) |pz| for (0..tiles.size) |px| {
+            const i = (pz + 1) * side + px + 1;
+            const top = if (area.top[i] != null) save.blockTint(area.topBlock[i]) else BlockTint{};
+            const liquid = if (area.liquidTop[i] != null) save.blockTint(area.liquidBlock[i]) else BlockTint{};
+            if (top.climate == null and top.season == null and liquid.climate == null and liquid.season == null) continue;
+            const here = self.climate.at(@as(f32, @floatFromInt(px)) / tiles.size, @as(f32, @floatFromInt(pz)) / tiles.size);
+            if (top.climate != null or top.season != null) area.topTint[i] = Tint.tint(top.climate, top.season, here, area.top[i].?, sea, save.seasonProgress);
+            if (liquid.climate != null or liquid.season != null) area.liquidTint[i] = Tint.tint(liquid.climate, liquid.season, here, area.liquidTop[i].?, sea, save.seasonProgress);
         };
     }
 

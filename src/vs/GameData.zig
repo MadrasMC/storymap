@@ -6,6 +6,7 @@ const std = @import("std");
 const ProtoBuf = @import("../ProtoBuf.zig");
 const DB = @import("../sqlite.zig");
 const Chunk = @import("Chunk.zig");
+const TreeAttribute = @import("TreeAttribute.zig");
 
 /// Owns everything below.
 arena: std.heap.ArenaAllocator,
@@ -23,6 +24,13 @@ worldLength: u64 = 1024000,
 name: []const u8 = "",
 /// The version of the game that last saved the world, e.g. "1.22.7" (field 21).
 gameVersion: []const u8 = "",
+/// The in-game clock when the world was saved, in game seconds (field 12), and the hours in a
+/// game day (field 25).
+totalGameSeconds: u64 = 0,
+hoursPerDay: f32 = 24,
+/// The days in a month, from the world config's `daysPerMonth` (field 31). The game's
+/// default is 9, and a year has 12 months.
+daysPerMonth: u32 = 9,
 
 /// The game's limits, which chunk positions are sized for (Chunk.Position): 16,384 blocks
 /// high and 2²⁶ across.
@@ -48,9 +56,18 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
     var worldLength: u64 = 1024000;
     var name: []const u8 = "";
     var gameVersion: []const u8 = "";
+    var totalGameSeconds: u64 = 0;
+    var hoursPerDay: f32 = 24;
+    var daysPerMonth: u32 = 9;
 
     var parser: ProtoBuf = .{ .buf = data };
     while (try parser.next()) |msg| {
+        if (msg.field_number == 12 and msg.data == .VARINT) totalGameSeconds = msg.data.VARINT;
+        if (msg.field_number == 25 and msg.data == .I32) {
+            const hours: f32 = @bitCast(msg.data.I32);
+            if (hours > 0) hoursPerDay = hours;
+        }
+        if (msg.field_number == 31 and msg.data == .LEN) daysPerMonth = worldDaysPerMonth(arena.allocator(), msg.data.LEN) orelse daysPerMonth;
         if (msg.field_number == 2 and msg.data == .VARINT) {
             if (msg.data.VARINT == 0 or msg.data.VARINT > maxWorldHeight) return error.InvalidWorldHeight;
             worldHeight = @intCast(msg.data.VARINT);
@@ -86,7 +103,26 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
         .worldLength = worldLength,
         .name = name,
         .gameVersion = gameVersion,
+        .totalGameSeconds = totalGameSeconds,
+        .hoursPerDay = hoursPerDay,
+        .daysPerMonth = daysPerMonth,
     };
+}
+
+/// `daysPerMonth` from the world config, a tree attribute whose values are strings, or null
+/// if it isn't there or can't be read.
+fn worldDaysPerMonth(arena: std.mem.Allocator, bytes: []const u8) ?u32 {
+    var reader: TreeAttribute.Reader = .{ .bytes = bytes };
+    const config = TreeAttribute.parse(arena, &reader) catch return null;
+    const days = std.fmt.parseInt(u32, config.getString("daysPerMonth") orelse return null, 10) catch return null;
+    return if (days > 0) days else null;
+}
+
+/// How far through the year the save's clock is, from 0 at the start of January to 1.
+pub fn yearProgress(self: GameData) f32 {
+    const days = @as(f64, @floatFromInt(self.totalGameSeconds)) / 3600 / self.hoursPerDay;
+    const daysPerYear: f64 = @floatFromInt(12 * self.daysPerMonth);
+    return @floatCast(@mod(days, daysPerYear) / daysPerYear);
 }
 
 /// The height of the water surface of seas and lakes: water fills the blocks below it.
@@ -179,6 +215,16 @@ test "world size, name and game version" {
     try std.testing.expectEqualStrings("1.22.7", gameData.gameVersion);
     // A size of 0 is invalid.
     try std.testing.expectError(error.InvalidWorldSize, parse(std.testing.allocator, &.{ 0x08, 0x00 }));
+}
+
+test yearProgress {
+    // 36.5 days of 24 hours into a year of 12 months of 9 days.
+    const gameData: GameData = .{ .arena = undefined, .blockCodes = &.{}, .itemCodes = &.{}, .worldHeight = 256, .totalGameSeconds = 3153600 };
+    try std.testing.expectApproxEqAbs(36.5 / 108.0, gameData.yearProgress(), 1e-6);
+    // The test row's hours per day, 24.
+    const parsed = try parse(std.testing.allocator, &testRow);
+    defer parsed.deinit();
+    try std.testing.expectEqual(24, parsed.hoursPerDay);
 }
 
 test "a world height of 0 or over 512 chunks is invalid" {

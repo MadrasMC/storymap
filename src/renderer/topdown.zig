@@ -124,7 +124,7 @@ fn View(comptime Source: type) type {
             pub fn init(view: *const Self, allocator: std.mem.Allocator) !Worker {
                 var reader: Source.Reader = try .init(view.source, allocator);
                 errdefer reader.deinit(allocator);
-                var area: columns.Area = try .init(allocator);
+                var area: columns.Area = try .init(allocator, .{ .tints = view.style.kind == .coloured });
                 errdefer area.deinit(allocator);
                 const shade = try allocator.alloc(u8, tiles.size * tiles.size);
                 errdefer allocator.free(shade);
@@ -266,8 +266,8 @@ fn View(comptime Source: type) type {
             /// Colours the tile's pixels from the area as the game draws its colour-accurate
             /// map, and counts what it shows. Returns false if nothing is drawn. As in
             /// `ChunkMapLayer.GenerateChunkImage` with `colorAccurateWorldmap`: each column takes
-            /// its top block's texture colour, with grain, and every column is shaded, lakes
-            /// too; nothing is looked under.
+            /// its top block's texture colour, with grain, tinted as the reader says, and every
+            /// column is shaded, lakes too; nothing is looked under.
             fn paintColoured(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) bool {
                 const area = &self.area;
                 const view = self.view;
@@ -288,7 +288,8 @@ fn View(comptime Source: type) type {
                     const look = view.source.look(top);
                     const x = tile.x * tiles.size + @as(i32, @intCast(px));
                     const z = tile.y * tiles.size + @as(i32, @intCast(py));
-                    pixels[p] = rgb(textureColour(look, view.style.colours.get(look.mapType), x, y, z));
+                    const tint = if (here == .liquid) area.liquidTint[i] else area.topTint[i];
+                    pixels[p] = rgb(textureColour(look, view.style.colours.get(look.mapType), tint, x, y, z));
                     self.shade[p] = hillShade(area, i, y);
                 };
                 if (!any) return false;
@@ -367,24 +368,35 @@ const grainWeight: f32 = 0.6;
 
 /// The colour of block `look` at (`x`, `y`, `z`) on a colour-accurate map: its texture's
 /// average colour with one of its grain colours mixed in, picked by position with the game's
-/// hash, so it stays put; or `fallback` without a texture.
-fn textureColour(look: columns.Look, fallback: Rgb, x: i32, y: u16, z: i32) Rgb {
-    const average = look.colour orelse return fallback;
+/// hash, so it stays put, each tinted by `tint`; or `fallback` without a texture.
+fn textureColour(look: columns.Look, fallback: Rgb, tint: Rgb, x: i32, y: u16, z: i32) Rgb {
+    const average = tinted(look.colour orelse return fallback, tint);
     if (look.grain.len == 0) return average;
-    const sample = look.grain[grainIndex(x, y, z, look.grain.len)];
+    const sample = tinted(look.grain[grainIndex(x, y, z, look.grain.len)], tint);
     var out: Rgb = undefined;
     // As `ColorUtil.ColorOverlay`, rounding down.
     for (&out, average, sample) |*channel, a, s| channel.* = @intFromFloat(@as(f32, @floatFromInt(a)) * (1 - grainWeight) + grainWeight * @as(f32, @floatFromInt(s)));
     return out;
 }
 
+/// `colour` multiplied by `tint`, each channel rounded down, as the game's
+/// `ColorUtil.ColorMultiplyEach`.
+fn tinted(colour: Rgb, tint: Rgb) Rgb {
+    var out: Rgb = undefined;
+    for (&out, colour, tint) |*channel, c, t| channel.* = @intCast(@as(u16, c) * t / 255);
+    return out;
+}
+
 test textureColour {
     const grain = [_]Rgb{ .{ 0, 0, 0 }, .{ 200, 100, 50 } };
     const look: columns.Look = .{ .mapType = .land, .colour = .{ 100, 100, 100 }, .grain = &grain };
-    const colour = textureColour(look, .{ 1, 2, 3 }, 409, 111, -304);
+    const colour = textureColour(look, .{ 1, 2, 3 }, columns.white, 409, 111, -304);
     try std.testing.expect(std.meta.eql(colour, Rgb{ 40, 40, 40 }) or std.meta.eql(colour, Rgb{ 160, 100, 70 }));
-    try std.testing.expectEqual(colour, textureColour(look, .{ 1, 2, 3 }, 409, 111, -304));
-    try std.testing.expectEqual(Rgb{ 1, 2, 3 }, textureColour(.{ .mapType = .land }, .{ 1, 2, 3 }, 0, 0, 0));
+    try std.testing.expectEqual(colour, textureColour(look, .{ 1, 2, 3 }, columns.white, 409, 111, -304));
+    try std.testing.expectEqual(Rgb{ 1, 2, 3 }, textureColour(.{ .mapType = .land }, .{ 1, 2, 3 }, .{ 0, 0, 0 }, 0, 0, 0));
+    // Half green: the average and the grain are both tinted.
+    const half = textureColour(look, .{ 1, 2, 3 }, .{ 0, 128, 0 }, 409, 111, -304);
+    try std.testing.expect(std.meta.eql(half, Rgb{ 0, 20, 0 }) or std.meta.eql(half, Rgb{ 0, 50, 0 }));
 }
 
 /// The game's position hash (vsapi `GameMath.MurmurHash3`): MurmurHash3's mixing of the
