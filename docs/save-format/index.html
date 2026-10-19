@@ -103,25 +103,32 @@
 		padding: var(--s2) var(--s3);
 	}
 
-	.toc { margin: 0 0 var(--s8); }
+	.toc { margin: 0 0 var(--s7); }
 	.toc ol { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: var(--s6); }
 	.toc li { break-inside: avoid; }
 	.toc a { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s1) 0; text-decoration: none; }
 	.toc a:hover .title { text-decoration: underline; }
-	.toc .num { flex: none; font: 600 var(--t-micro)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+	.toc .num { flex: none; min-width: 2.5rem; font: 600 var(--t-micro)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+	.toc .depth-0 a { font-weight: 600; padding-top: var(--s2); }
+	.toc .depth-1 a { padding-left: var(--s4); }
+	.toc .depth-2 a { padding-left: var(--s7); }
 
-	section { margin: 0 0 var(--s8); scroll-margin-top: var(--s5); }
-	h2 {
+	/* The same space above every heading, at every level: nested sections' margins collapse
+	   into one, and a subsection after its parent's own text gets it too. */
+	section { margin: 0 0 var(--s7); scroll-margin-top: var(--s5); }
+	section > :not(section, h2, h3, h4) + section { margin-top: var(--s7); }
+	h2, h3, h4 {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		gap: var(--s3);
-		font-size: var(--t-h2);
 		font-weight: 600;
 		line-height: 1.3;
-		letter-spacing: -0.01em;
 		margin: 0 0 var(--s3);
 	}
-	h2 .num {
+	h2 { font-size: var(--t-h2); letter-spacing: -0.01em; }
+	h3 { font-size: 1.1875rem; }
+	h4 { font-size: 1.0625rem; }
+	h2 .num, h3 .num, h4 .num {
 		flex: none;
 		font: 600 var(--t-small)/1 var(--mono);
 		font-variant-numeric: tabular-nums;
@@ -228,7 +235,7 @@
 	/* Changed bits keep their marker until the next action instead of flashing. */
 	.chg { outline: 2px solid var(--changed); outline-offset: 1px; }
 
-	/* 02 position */
+	/* position */
 	.pos-inputs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s3); }
 	.pos-inputs label:nth-child(1) { color: var(--x); }
 	.pos-inputs label:nth-child(2) { color: var(--y); }
@@ -268,7 +275,7 @@
 	.bitbar-cells .seg-pad.on { background: var(--error); color: var(--panel); }
 	.bitbar-ends { display: flex; justify-content: space-between; font: var(--t-micro)/1 var(--mono); color: var(--muted); margin-top: var(--s2); }
 
-	/* 03 fields */
+	/* fields */
 	.table-wrap { overflow-x: auto; }
 	table { border-collapse: collapse; width: 100%; font-size: var(--t-small); }
 	th, td { text-align: left; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -292,7 +299,7 @@
 	#fields tr[id] { scroll-margin-top: var(--s5); }
 	#fields tbody tr:target, #fields tbody tr:target td { background: var(--accent-soft); }
 
-	/* 04 blob */
+	/* blob */
 	.seg-control { display: inline-flex; border: 1px solid var(--border); border-radius: 0.6rem; padding: 3px; gap: 3px; background: var(--soft); }
 	.seg-control button {
 		border: 0;
@@ -325,7 +332,7 @@
 	.entries { display: flex; flex-wrap: wrap; gap: var(--s1); margin-top: var(--s2); }
 	.entries span { font: var(--t-small)/1 var(--mono); font-variant-numeric: tabular-nums; background: var(--soft); border-radius: 0.25rem; padding: var(--s1) 0.4rem; }
 
-	/* 05 palette */
+	/* palette */
 	.slider { display: grid; grid-template-columns: auto 1fr 2rem; gap: var(--s3); align-items: center; font: 600 var(--t-small)/1 var(--mono); }
 	.slider output { text-align: right; font-variant-numeric: tabular-nums; }
 	.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(2.75rem, 1fr)); gap: var(--s2); margin-top: var(--s4); }
@@ -346,7 +353,7 @@
 	.legend span { display: inline-flex; align-items: center; gap: var(--s2); }
 	.legend i { width: 0.75rem; height: 0.75rem; border-radius: 0.2rem; display: inline-block; }
 
-	/* 06 order */
+	/* order */
 	.two-col { display: grid; grid-template-columns: minmax(0, 20rem) minmax(0, 1fr); gap: var(--s5); align-items: start; }
 	.sliders { display: grid; gap: var(--s3); }
 	.sliders .slider { grid-template-columns: 1.375rem 1fr 2rem; }
@@ -378,7 +385,7 @@
 	.word-strip .bit { width: 1.125rem; height: 1.25rem; font-size: 0.5625rem; font-weight: 400; }
 	.word-strip .bit.cur { background: var(--accent); color: var(--accent-fg); }
 
-	/* 07 planes */
+	/* planes */
 	.pg-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s5); align-items: start; }
 	.blocks4 { display: grid; grid-template-columns: repeat(4, 3.25rem); gap: var(--s2); }
 	.blk {
@@ -429,7 +436,7 @@
 	.diff .mark { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 0.15rem; outline: 2px solid var(--changed); outline-offset: 1px; margin-right: var(--s2); vertical-align: -0.05rem; }
 	.empty-planes { font: var(--t-small)/1.4 var(--mono); color: var(--muted); padding: var(--s2) 0; }
 
-	/* 09 example */
+	/* example */
 	ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 0; display: grid; gap: var(--s3); }
 	ol.steps li {
 		counter-increment: step;
@@ -456,7 +463,7 @@
 	ol.steps .calc { font: var(--t-small)/1.6 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); margin-top: var(--s1); overflow-wrap: anywhere; }
 	ol.steps .calc b { color: var(--fg); }
 
-	/* 10 map */
+	/* map */
 	.toy { display: grid; gap: var(--s4); }
 	.toy-map, .toy-side { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 2px; max-width: 30rem; }
 	.toy-map div { aspect-ratio: 1; border-radius: 0.2rem; }
@@ -475,8 +482,7 @@
 	.toy-side button.top { background: var(--top); }
 	.toy-side button.scan { box-shadow: inset 0 0 0 2px var(--accent); }
 
-	/* 09 block entities */
-	h3 { font-size: var(--t-body); font-weight: 600; margin: var(--s6) 0 var(--s2); }
+	/* chiseled blocks */
 	.cuboid-wrap { display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 1fr); gap: var(--s5); align-items: center; }
 	.cuboid-3d { width: 100%; height: auto; max-width: 18rem; justify-self: center; }
 	.cuboid-3d [data-box] { cursor: pointer; }
@@ -545,7 +551,7 @@
 	<nav class="toc" aria-label="Contents"><ol id="toc"></ol></nav>
 
 	<section id="save">
-		<h2><span class="num">01</span><span>The save is an SQLite database</span></h2>
+		<h2><span class="num">1</span><span>The save file</span></h2>
 		<p>A <code>.vcdbs</code> file is a plain SQLite database with five tables (plus SQLite's own <code>sqlite_sequence</code>):</p>
 		<div class="chips">
 			<span class="chip key">chunk</span>
@@ -556,11 +562,11 @@
 		</div>
 		<p>The world is cut into <b>chunks</b>: cubes of 32 × 32 × 32 blocks. Each chunk is one row of the <code>chunk</code> table, with two columns: <code>position</code> (where the cube is) and <code>data</code> (what's inside it). The tables store the world at three scales:</p>
 		<ul class="list">
-			<li><b><code>chunk</code> is 3D.</b> One row per cube, keyed by its x, z and y. The only table with blocks in it.</li>
-			<li><b><code>mapchunk</code> is a 2D layer on top.</b> One row per <b>chunk column</b>, the stack of chunks with the same x and z, keyed by just x and z. For each of its 32 × 32 block columns it keeps a few numbers, such as the height of the highest block rain can't fall through.</li>
-			<li><b><code>mapregion</code> is coarser still.</b> One row per 16 × 16 chunk columns, with world generation data.</li>
+			<li><b><code>chunk</code> is 3D</b> (<a href="#chunk">3.1</a>). One row per cube, keyed by its x, z and y. The only table with blocks in it.</li>
+			<li><b><code>mapchunk</code> is a 2D layer on top</b> (<a href="#mapchunk">3.2</a>). One row per <b>chunk column</b>, the stack of chunks with the same x and z, keyed by just x and z. For each of its 32 × 32 block columns it keeps a few numbers, such as the height of the highest block rain can't fall through.</li>
+			<li><b><code>mapregion</code> is coarser still</b> (<a href="#mapregion">3.3</a>). One row per 16 × 16 chunk columns, with world generation data.</li>
 		</ul>
-		<p>The other two tables aren't about places: <code>gamedata</code> is a single row of world-wide data, such as the block names and the clock (<a href="#block-names">10</a>), and <code>playerdata</code> has a row per player who has joined, with their inventory and where they are (<a href="#position">02</a>).</p>
+		<p><code>gamedata</code> is a single row of world-wide data, such as block names and the clock (<a href="#gamedata">3.4</a>). <code>playerdata</code> has one row per player (<a href="#playerdata">3.5</a>).</p>
 		<p>So a block column's map chunk gives its surface height, and that height names the one chunk holding the surface block. A top-down map only needs those chunks: about a fifth of the chunks in the test saves.</p>
 		<figure class="panel figure">
 			<svg class="diagram" viewBox="0 0 360 430" role="img" aria-labelledby="column-diagram-title">
@@ -627,296 +633,415 @@
 		<p class="source">Sources: table schema from 1.19 and 1.22.7 saves · <a href="https://www.sqlite.org/wal.html">SQLite: write-ahead log</a> · table descriptions from the <a href="https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept">wiki</a> · <a href="README.md#1-the-save-file">README §1</a></p>
 	</section>
 
-	<section id="position">
-		<h2><span class="num">02</span><span><code>position</code> packs four numbers into one</span></h2>
-		<p>The position is a single 64-bit integer: the chunk's <span class="seg-x">x</span> and <span class="seg-z">z</span> in 21 bits each, its <span class="seg-y">y</span> (height) in 9, and its <span class="seg-d">dimension</span> in 10, split in two. These are chunk coordinates: multiply by 32 to get block coordinates. Dimension 0 is the world itself; others hold separate block spaces, such as the time-switched alternate world.</p>
-		<div class="panel">
-			<div class="pos-inputs">
-				<label class="field">X<input id="pos-x" type="number" min="0" max="2097151" value="15995" inputmode="numeric"></label>
-				<label class="field">Y<input id="pos-y" type="number" min="0" max="511" value="4" inputmode="numeric"></label>
-				<label class="field">Z<input id="pos-z" type="number" min="0" max="2097151" value="15999" inputmode="numeric"></label>
-				<label class="field">DIM<input id="pos-d" type="number" min="0" max="1023" value="0" inputmode="numeric"></label>
-			</div>
-			<label class="field pos-value">POSITION<input id="pos-value" type="text" inputmode="numeric" spellcheck="false" autocomplete="off"></label>
-			<p class="error-line" id="pos-error" aria-live="polite"></p>
-			<div class="bitbar">
-				<div class="bitbar-labels" aria-hidden="true">
-					<span class="seg-pad"></span>
-					<span class="seg-y" style="grid-column: span 9">y · 9</span>
-					<span class="seg-d" style="grid-column: span 5">dim</span>
-					<span class="seg-pad"></span>
-					<span class="seg-z" style="grid-column: span 21">z · 21 bits</span>
-					<span class="seg-d" style="grid-column: span 5">dim</span>
-					<span class="seg-pad"></span>
-					<span class="seg-x" style="grid-column: span 21">x · 21 bits</span>
+	<section id="concepts">
+		<h2><span class="num">2</span><span>Common formats</span></h2>
+		<p>Formats used by more than one table.</p>
+		<section id="position">
+			<h3><span class="num">2.1</span><span>Positions</span></h3>
+			<p>The position is a single 64-bit integer: the chunk's <span class="seg-x">x</span> and <span class="seg-z">z</span> in 21 bits each, its <span class="seg-y">y</span> (height) in 9, and its <span class="seg-d">dimension</span> in 10, split in two. These are chunk coordinates: multiply by 32 to get block coordinates. Dimension 0 is the world itself; others hold separate block spaces, such as the time-switched alternate world.</p>
+			<div class="panel">
+				<div class="pos-inputs">
+					<label class="field">X<input id="pos-x" type="number" min="0" max="2097151" value="15995" inputmode="numeric"></label>
+					<label class="field">Y<input id="pos-y" type="number" min="0" max="511" value="4" inputmode="numeric"></label>
+					<label class="field">Z<input id="pos-z" type="number" min="0" max="2097151" value="15999" inputmode="numeric"></label>
+					<label class="field">DIM<input id="pos-d" type="number" min="0" max="1023" value="0" inputmode="numeric"></label>
 				</div>
-				<div class="bitbar-cells" id="pos-bits" aria-hidden="true"></div>
-				<div class="bitbar-ends"><span>bit 63</span><span>bit 0</span></div>
-			</div>
-			<p class="stat" id="pos-range" style="margin: var(--s4) 0 0"></p>
-			<p class="stat" id="pos-game" style="margin: var(--s2) 0 0"></p>
-		</div>
-		<p class="muted">The grey bits are always 0, so positions are never negative. <code>mapchunk</code> and <code>mapregion</code> positions use the same packing with y = 0, a map region's x and z counting regions of 16 × 16 chunk columns.</p>
-		<p>These coordinates are absolute. The game shows x and z from the world's centre instead, half the world's size in <code>gamedata</code>: in a default world of 1,024,000 × 1,024,000 blocks, block 512,000 is 0. It shows y as it is.</p>
-		<p>That's checked against a player. A player's position is in <code>playerdata</code>, as three 64-bit floats in their entity. One player stood on the ground where the game showed 409, 111, −304; that column's rain height is 110, so their feet were at 111. After they flew up and moved a few blocks, the save held them at 512,409.0, 193.9, 511,699.3: x 512,409 − 512,000 = 409, and z −300.7.</p>
-		<p class="source">Sources: <a href="https://wiki.vintagestory.at/Modding:VCDBS_format#ChunkPos">wiki: VCDBS format</a> · verified against 1.19 and 1.22.7 saves · the player check from a 1.22.7 world · <a href="README.md#2-positions">README §2</a></p>
-	</section>
-
-	<section id="fields">
-		<h2><span class="num">03</span><span><code>data</code> is a list of numbered fields</span></h2>
-		<p>The <code>data</code> blob is a <a href="https://protobuf.dev/programming-guides/encoding/">Protobuf</a> message: like JSON where every key is a number and every value is raw bytes. The names are the game's own, from a schema generated from its code.</p>
-		<div class="table-wrap">
-			<table>
-				<thead><tr><th>#</th><th>name</th><th>status</th></tr></thead>
-				<tbody>
-					<tr class="key" id="field-1"><td>1</td><td><code>blocksCompressed</code></td><td><span class="tag ok">decoded</span></td></tr>
-					<tr><td>2</td><td><code>lightCompressed</code></td><td><span class="tag ok">light, the planes</span></td></tr>
-					<tr><td>3</td><td><code>lightSatCompressed</code></td><td><span class="tag ok">light, the palette</span></td></tr>
-					<tr><td>5</td><td><code>EntitiesCount</code></td><td><span class="tag ok">count</span></td></tr>
-					<tr><td>6</td><td><code>EntitiesSerialized</code></td><td><span class="tag">class, version, data</span></td></tr>
-					<tr><td>7</td><td><code>BlockEntitiesCount</code></td><td><span class="tag ok">count</span></td></tr>
-					<tr class="key"><td>8</td><td><code>BlockEntitiesSerialized</code></td><td><a class="tag ok" href="#block-entities">decoded, see 09</a></td></tr>
-					<tr><td>10</td><td><code>lightPositions</code></td><td><span class="tag">unknown</span></td></tr>
-					<tr><td>12</td><td><code>GameVersionCreated</code></td><td><span class="tag ok">text, e.g. "1.19.1"</span></td></tr>
-					<tr><td>13</td><td><code>EmptyBeforeSave</code></td><td><span class="tag ok">bool</span></td></tr>
-					<tr><td>14</td><td><code>DecorsSerialized</code></td><td><span class="tag">not decoded</span></td></tr>
-					<tr><td>15</td><td><code>savedCompressionVersion</code></td><td><span class="tag ok">2</span></td></tr>
-					<tr><td>16</td><td><code>liquidsCompressed</code></td><td><a class="tag ok" href="#field-1">liquids, same as 1</a></td></tr>
-					<tr><td>17</td><td><code>BlocksPlaced</code></td><td><span class="tag ok">count</span></td></tr>
-					<tr><td>18</td><td><code>BlocksRemoved</code></td><td><span class="tag ok">count</span></td></tr>
-				</tbody>
-			</table>
-		</div>
-		<p style="margin-top: var(--s4)">Field <b>1</b> holds the solid blocks and field <b>8</b> the block entities. Field 12 records the game version that created the chunk, so one save can mix versions. Not every field appears in every chunk.</p>
-		<p class="source">Sources: every chunk of a 1.19 save scanned · names from <a href="https://github.com/bluelightning32/vs-proto/blob/80ff05afa98af324425ef6f3e5f12b4bea9e6a3f/schema-1.21.0.rc.3.proto">vs-proto's schema</a> · <a href="https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage">wiki: Chunk Data Storage</a> · <a href="README.md#3-chunk-data-protobuf-fields">README §3</a></p>
-	</section>
-
-	<section id="blob">
-		<h2><span class="num">04</span><span>Inside field 1: three parts</span></h2>
-		<p>The first 4 bytes are a little-endian <code>i32</code>, <code>length</code>. Its sign says how the palette (next section) is stored: <b>negative</b> means the palette is stored as-is, <b>positive</b> means it's compressed with zstd, and <b>0</b> means the chunk is empty. Everything after the palette is one zstd-compressed block of <b>bit planes</b>.</p>
-		<div class="panel">
-			<div class="seg-control" role="group" aria-label="Example chunk">
-				<button type="button" data-ex="raw" aria-pressed="true">chunk y = 4</button>
-				<button type="button" data-ex="zstd" aria-pressed="false">chunk y = 3</button>
-			</div>
-			<div class="strip" id="blob-strip" aria-hidden="true">
-				<div class="s-len">length</div>
-				<div class="s-pal">palette</div>
-				<div class="s-dat">bit planes</div>
-			</div>
-			<div class="parts" id="blob-parts"></div>
-		</div>
-		<p class="muted">Both examples are real chunks from one column (x 15995, z 15999) of a 1.19.1 save.</p>
-		<p class="source">Sources: verified against a 1.19 save · <a href="../../src/vs/Compression.zig">src/vs/Compression.zig</a> · <a href="README.md#4-blocks-fields-1-and-16">README §4</a></p>
-	</section>
-
-	<section id="palette">
-		<h2><span class="num">05</span><span>The palette, rounded up to a power of two</span></h2>
-		<p>Instead of storing a full block ID for all 32,768 blocks, a chunk keeps a short list of the block types it uses: the <b>palette</b>, a list of <code>i32</code> block IDs. Each block then only stores its <b>position in that list</b>. Slot 0 is always air (ID 0).</p>
-		<p>Positions are stored in bits, and <i>b</i> bits can count 2<sup><i>b</i></sup> different positions. So the palette is treated as if it had the next power of two of slots. Only the real entries are stored; the extra slots are never referenced, and a reader should treat them as air rather than read past the stored entries.</p>
-		<div class="panel">
-			<label class="slider">
-				<span>block types</span>
-				<input id="pal-n" type="range" min="1" max="40" value="22">
-				<output id="pal-n-out">22</output>
-			</label>
-			<p class="stat" id="pal-stat" style="margin: var(--s4) 0 0"></p>
-			<div class="slots" id="pal-slots"></div>
-			<div class="legend">
-				<span><i style="background: var(--soft)"></i>air</span>
-				<span><i style="background: var(--z-soft)"></i>block type</span>
-				<span><i style="background: repeating-linear-gradient(135deg, transparent 0 0.2rem, var(--border) 0.2rem 0.4rem)"></i>padding</span>
-			</div>
-		</div>
-	</section>
-
-	<section id="order">
-		<h2><span class="num">06</span><span>Numbering the 32,768 blocks</span></h2>
-		<p>The cube is flattened into one long list, like reading a book: across a row (<b>x</b>), then the next row (<b>z</b>), then the next page (<b>y</b>). Every block gets a number <i>n</i> from 0 to 32,767.</p>
-		<p>Bits for those blocks are packed 32 to a little-endian <code>i32</code>. Block <i>n</i> lives in <code>i32</code> number <code>n / 32</code> (rounded down), at bit <code>n % 32</code> counting from the least significant bit. That works out neatly: <b>each <code>i32</code> holds one row of 32 blocks along x</b>, and the bit index is the block's x.</p>
-		<div class="panel">
-			<div class="two-col">
-				<div>
-					<div class="grid32" id="order-grid" tabindex="0" role="img" aria-label="Layer of 32 by 32 blocks. Arrow keys move x and z, Page Up and Page Down change y."></div>
-					<div class="axis"><span>x 0 →</span><span id="order-layer" class="num-tab"></span><span>→ 31</span></div>
-					<div class="axis" style="margin-top: var(--s1)"><span>z 0 ↓</span></div>
-				</div>
-				<div>
-					<div class="sliders">
-						<label class="slider"><span class="seg-x">x</span><input id="o-x" type="range" min="0" max="31" value="5"><output id="o-x-out">5</output></label>
-						<label class="slider"><span class="seg-y">y</span><input id="o-y" type="range" min="0" max="31" value="7"><output id="o-y-out">7</output></label>
-						<label class="slider"><span class="seg-z">z</span><input id="o-z" type="range" min="0" max="31" value="18"><output id="o-z-out">18</output></label>
+				<label class="field pos-value">POSITION<input id="pos-value" type="text" inputmode="numeric" spellcheck="false" autocomplete="off"></label>
+				<p class="error-line" id="pos-error" aria-live="polite"></p>
+				<div class="bitbar">
+					<div class="bitbar-labels" aria-hidden="true">
+						<span class="seg-pad"></span>
+						<span class="seg-y" style="grid-column: span 9">y · 9</span>
+						<span class="seg-d" style="grid-column: span 5">dim</span>
+						<span class="seg-pad"></span>
+						<span class="seg-z" style="grid-column: span 21">z · 21 bits</span>
+						<span class="seg-d" style="grid-column: span 5">dim</span>
+						<span class="seg-pad"></span>
+						<span class="seg-x" style="grid-column: span 21">x · 21 bits</span>
 					</div>
-					<div class="formula" id="order-formula"></div>
-					<p class="sub" style="margin-top: var(--s5)" id="order-word-label"></p>
-					<div class="word-strip" id="order-word" aria-hidden="true"></div>
+					<div class="bitbar-cells" id="pos-bits" aria-hidden="true"></div>
+					<div class="bitbar-ends"><span>bit 63</span><span>bit 0</span></div>
 				</div>
+				<p class="stat" id="pos-range" style="margin: var(--s4) 0 0"></p>
+				<p class="stat" id="pos-game" style="margin: var(--s2) 0 0"></p>
 			</div>
-		</div>
-	</section>
+			<p class="muted">The grey bits are always 0, so positions are never negative. <code>mapchunk</code> and <code>mapregion</code> positions use the same packing with y = 0, a map region's x and z counting regions of 16 × 16 chunk columns.</p>
+			<p>These coordinates are absolute. The game shows x and z from the world's centre instead, half the world's size in <code>gamedata</code> (<a href="#sea-level">3.4.2</a>): in a default world of 1,024,000 × 1,024,000 blocks, block 512,000 is 0. It shows y as it is. That's checked against a player's position (<a href="#playerdata">3.5</a>).</p>
+			<p class="source">Sources: <a href="https://wiki.vintagestory.at/Modding:VCDBS_format#ChunkPos">wiki: VCDBS format</a> · verified against 1.19 and 1.22.7 saves · <a href="README.md#2-positions">README §2</a></p>
+		</section>
 
-	<section id="planes">
-		<h2><span class="num">07</span><span>Bit planes</span></h2>
-		<p>A block's palette position isn't stored as one number. With 3 bits per block, the chunk stores <b>every block's first bit together</b> (plane 0), then every block's second bit (plane 1), then every block's third bit (plane 2). To read a block, take its bit from each plane and add them up: plane 0 counts 1, plane 1 counts 2, plane 2 counts 4, and so on.</p>
-		<p>The number of planes is log₂ of the rounded-up palette size, and each plane is 32,768 bits: 1,024 <code>i32</code>s, 4,096 bytes. The toy chunk below has 16 blocks.</p>
-		<div class="panel">
-			<div class="pg-top">
-				<div>
-					<p class="sub">blocks n = 0–15</p>
-					<div class="blocks4" id="pg-blocks"></div>
-				</div>
-				<div>
-					<p class="sub">palette</p>
-					<div class="pal-list" id="pg-palette"></div>
-					<div class="buttons">
-						<button type="button" class="btn" id="pg-add">Add type</button>
-						<button type="button" class="btn" id="pg-remove">Remove type</button>
-						<button type="button" class="btn" id="pg-reset">Reset</button>
-					</div>
-				</div>
-			</div>
-			<div class="planes">
-				<p class="sub">stored as bit planes</p>
-				<div class="planes-head" aria-hidden="true"><span></span><div class="bits16" id="pg-head"></div></div>
-				<div id="pg-planes"></div>
-			</div>
-			<div class="packed">
-				<p class="sub">for comparison: bits side by side</p>
-				<div class="packed-bits" id="pg-packed"></div>
-			</div>
-			<div class="readout" id="pg-readout"></div>
-			<div class="diff" id="pg-diff" aria-live="polite"></div>
-		</div>
-		<p>The format doesn't say why it uses planes, but they have clear advantages. When a chunk needs one more bit, a new plane of zeros is added and every existing bit stays where it is, while side-by-side packing would move every block's bits. Every block also sits at the same bit in every plane whatever the palette size. And planes tend to be long runs of the same bit, which zstd compresses well.</p>
-		<p class="source">Sources: verified against a 1.19 save · <code>Chunk.getBlock</code> in <a href="../../src/vs/Chunk.zig">src/vs/Chunk.zig</a> · <a href="README.md#block-order-and-bit-planes">README §4</a></p>
-	</section>
+		<section id="protobuf">
+			<h3><span class="num">2.2</span><span>Protobuf messages</span></h3>
+			<p>Every table's <code>data</code> column is a <a href="https://protobuf.dev/programming-guides/encoding/">Protobuf</a> message: like JSON where every key is a number and every value is raw bytes. Each field is its number and a wire type, then a varint, 4 or 8 bytes, or a length and that many bytes; a field can be another message. The names are the game's own, from a schema generated from its code.</p>
+			<p>A list of numbers comes either way Protobuf allows: as the same field repeated, one value each, as in map chunks, or packed into one field of varints, as in map regions. A reader should take both. The messages aren't compressed; only a chunk's blocks, liquids and light are, inside their fields.</p>
+			<p class="source">Sources: every row of every table in the test saves parses · names from <a href="https://github.com/bluelightning32/vs-proto/blob/80ff05afa98af324425ef6f3e5f12b4bea9e6a3f/schema-1.21.0.rc.3.proto">vs-proto's schema</a> · <a href="../../src/ProtoBuf.zig">src/ProtoBuf.zig</a> · <a href="README.md#3-chunk-data-protobuf-fields">README §3</a></p>
+		</section>
 
-	<section id="example">
-		<h2><span class="num">08</span><span>A real block, decoded</span></h2>
-		<p>A chunk from a 1.19.1 save containing a single placed block, start to finish.</p>
-		<ol class="steps">
-			<li><div><p>Find the chunk's row.</p><p class="calc" id="ex-pos"></p></div></li>
-			<li><div><p>Read field 1 (39 bytes). The first 4 bytes are <code>f8 ff ff ff</code>, which is <b>−8</b>: the palette is stored as-is and is 8 bytes long.</p><p class="calc">palette = [ <b>0</b>, <b>164</b> ] → 2 slots → <b>1 bit</b> per block → 1 plane</p></div></li>
-			<li><div><p>Decompress the remaining 27 bytes with zstd.</p><p class="calc">27 bytes → <b>4,096 bytes</b> = 1 plane × 1,024 <code>i32</code>s × 4 bytes</p></div></li>
-			<li><div><p>Exactly one bit in the whole plane is set.</p><p class="calc"><code>i32</code> <b>242</b>, bit <b>5</b> → n = 242 × 32 + 5 = <b>7,749</b></p></div></li>
-			<li><div><p>Turn <i>n</i> back into a position inside the chunk.</p><p class="calc">x = n % 32 = <b>5</b> · z = ⌊n / 32⌋ % 32 = <b>18</b> · y = ⌊n / 1024⌋ = <b>7</b></p></div></li>
-			<li><div><p>Look it up. The bit is 1, so the palette position is 1.</p><p class="calc">palette[1] = <b>164</b>, at world block (<b>511,845</b>, <b>135</b>, <b>511,986</b>)</p></div></li>
-		</ol>
-		<p class="source">Source: chunk (15995, 4, 15999) of a 1.19.1 save</p>
-	</section>
-
-	<section id="block-entities">
-		<h2><span class="num">09</span><span>Block entities</span></h2>
-		<p>Blocks that need extra data, like chests, signs and chiseled blocks, have a <b>block entity</b>. Each one is a field 8 entry: the class name as a string, then a <b>tree attribute</b>. Strings are .NET <code>BinaryWriter</code> strings: a varint byte length, then UTF-8.</p>
-		<p>A tree is a list of entries, each a type byte, a string key and a value, ended by a single <code>0</code> byte:</p>
-		<div class="table-wrap">
-			<table>
-				<thead><tr><th>id</th><th>type</th><th>encoding</th></tr></thead>
-				<tbody>
-					<tr><td>1</td><td>int</td><td><code>i32</code></td></tr>
-					<tr><td>2</td><td>long</td><td><code>i64</code></td></tr>
-					<tr><td>3</td><td>double</td><td><code>f64</code></td></tr>
-					<tr><td>4</td><td>float</td><td><code>f32</code></td></tr>
-					<tr><td>5</td><td>string</td><td>string</td></tr>
-					<tr><td>6</td><td>tree</td><td>nested tree, ends with <code>0</code></td></tr>
-					<tr><td>7</td><td>item stack</td><td><code>u8</code> is-null; if 0: <code>i32</code> class, <code>i32</code> id, <code>i32</code> stack size, tree</td></tr>
-					<tr><td>8</td><td>byte array</td><td><code>u16</code> length, bytes</td></tr>
-					<tr><td>9</td><td>bool</td><td><code>u8</code></td></tr>
-					<tr><td>10–16</td><td>arrays</td><td><code>i32</code> count, then values: string, int, float, double, tree, long, bool</td></tr>
-				</tbody>
-			</table>
-		</div>
-		<p style="margin-top: var(--s4)">Every block entity starts with <code>posx</code>, <code>posy</code>, <code>posz</code> (absolute block coordinates) and <code>blockCode</code>. The most common classes in the sample 1.19 save are MicroBlock (8,343), Generic (4,364), BerryBush (632), GenericTypedContainer (370), Crate (274) and GroundStorage (184).</p>
-
-		<h3>Chiseled blocks</h3>
-		<p>A chiseled block is an ordinary block in the chunk with a <code>MicroBlock</code> block entity holding its shape: a 16 × 16 × 16 voxel grid stored as a list of boxes (<code>cuboids</code>), plus <code>materials</code>, a list of block IDs from the same ID space as the palettes.</p>
-		<p>Each box is one 32-bit number. Written in hexadecimal, every 4 bits are one digit, so the box reads off digit by digit: two digits of material (an index into <code>materials</code>), then the far corner, then the near corner, each as z, y, x. The far corner is stored minus 1, so a box reaching the edge fits in one digit (F = 15 means up to 16).</p>
-		<div class="panel">
-			<div class="cuboid-wrap">
-				<svg class="cuboid-3d" id="cub-3d" role="img" aria-label="The boxes drawn in 3D inside the 16 × 16 × 16 block. Click a box to edit it."></svg>
-				<div>
-					<p class="sub" id="cub-title">box 1</p>
-					<div class="cub-sliders">
-						<label class="slider"><span class="seg-x">x from</span><input id="cub-x1" type="range" min="0" max="15"><output id="cub-x1-out"></output></label>
-						<label class="slider"><span class="seg-x">x to</span><input id="cub-x2" type="range" min="1" max="16"><output id="cub-x2-out"></output></label>
-						<label class="slider"><span class="seg-y">y from</span><input id="cub-y1" type="range" min="0" max="15"><output id="cub-y1-out"></output></label>
-						<label class="slider"><span class="seg-y">y to</span><input id="cub-y2" type="range" min="1" max="16"><output id="cub-y2-out"></output></label>
-						<label class="slider"><span class="seg-z">z from</span><input id="cub-z1" type="range" min="0" max="15"><output id="cub-z1-out"></output></label>
-						<label class="slider"><span class="seg-z">z to</span><input id="cub-z2" type="range" min="1" max="16"><output id="cub-z2-out"></output></label>
-						<label class="slider"><span>material</span><input id="cub-material" type="range" min="0" max="255"><output id="cub-material-out"></output></label>
-					</div>
-					<div class="buttons">
-						<button type="button" class="btn" id="cub-add">Add box</button>
-						<button type="button" class="btn" id="cub-remove">Remove box</button>
-						<button type="button" class="btn" id="cub-reset">Reset</button>
-					</div>
-				</div>
-			</div>
-			<p class="sub" id="cub-anatomy-title" style="margin-top: var(--s5)">box 1, as stored</p>
-			<div class="hex-anatomy" id="cub-anatomy"></div>
-			<p class="stat" id="cub-number" style="margin: var(--s3) 0 0"></p>
-			<div class="table-wrap" style="margin-top: var(--s5)">
-				<table class="cub-table">
-					<thead><tr><th>box</th><th>hex</th><th>x</th><th>y</th><th>z</th><th>material</th></tr></thead>
-					<tbody id="cub-rows"></tbody>
+		<section id="tree-attributes">
+			<h3><span class="num">2.3</span><span>Tree attributes</span></h3>
+			<p>Some data isn't Protobuf but the game's own binary format, a <b>tree attribute</b>: a chunk's block entities (<a href="#block-entities">3.1.7</a>) and the world's configuration (<a href="#world-config">3.4.4</a>). A tree is a list of entries, each a type byte, a string key and a value, ended by a single <code>0</code> byte. Numbers are little-endian, and strings are .NET <code>BinaryWriter</code> strings: a varint byte length, then UTF-8.</p>
+			<div class="table-wrap">
+				<table>
+					<thead><tr><th>id</th><th>type</th><th>encoding</th></tr></thead>
+					<tbody>
+						<tr><td>1</td><td>int</td><td><code>i32</code></td></tr>
+						<tr><td>2</td><td>long</td><td><code>i64</code></td></tr>
+						<tr><td>3</td><td>double</td><td><code>f64</code></td></tr>
+						<tr><td>4</td><td>float</td><td><code>f32</code></td></tr>
+						<tr><td>5</td><td>string</td><td>string</td></tr>
+						<tr><td>6</td><td>tree</td><td>nested tree, ends with <code>0</code></td></tr>
+						<tr><td>7</td><td>item stack</td><td><code>u8</code> is-null; if 0: <code>i32</code> class, <code>i32</code> id, <code>i32</code> stack size, tree</td></tr>
+						<tr><td>8</td><td>byte array</td><td><code>u16</code> length, bytes</td></tr>
+						<tr><td>9</td><td>bool</td><td><code>u8</code></td></tr>
+						<tr><td>10–16</td><td>arrays</td><td><code>i32</code> count, then values: string, int, float, double, tree, long, bool</td></tr>
+					</tbody>
 				</table>
 			</div>
-			<label class="field" style="margin-top: var(--s5)">CUBOIDS, AS STORED<input id="cub-input" type="text" spellcheck="false" autocomplete="off" value="15986688, 16757824, 4190336, 16774284"></label>
-			<p class="error-line" id="cub-error" aria-live="polite"></p>
-		</div>
-		<p class="muted">The block starts as a real chiseled block from the sample save, "Aged polished rock (Granite)": four boxes of one material. Each box has its own colour here; in the game all four are granite.</p>
-		<p class="source">Sources: every block entity of a 1.19 save (14,447) and a 1.22.7 save (684) parses with this format; chiseled blocks only appear in the 1.19 one · 1.22.7 code: <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree/TreeAttribute.cs">vsapi TreeAttribute.cs</a> and <a href="https://github.com/anegostudios/vsapi/tree/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree">attribute classes</a> · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Collectible/ItemStack.cs">ItemStack.cs</a> · <a href="https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Microblock/BEMicroBlock.cs">vssurvivalmod BEMicroBlock.cs</a> · <a href="README.md#5-block-entities-field-8">README §5</a></p>
+			<p class="source">Sources: every block entity and world configuration in the test saves parses with this format · 1.22.7 code: <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree/TreeAttribute.cs">vsapi TreeAttribute.cs</a> and <a href="https://github.com/anegostudios/vsapi/tree/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/AttributeTree">attribute classes</a> · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Collectible/ItemStack.cs">ItemStack.cs</a> · <a href="README.md#tree-attribute-format">README §5</a></p>
+		</section>
 	</section>
 
-	<section id="block-names">
-		<h2><span class="num">10</span><span>Block names: the gamedata table</span></h2>
-		<p>Palettes and chiseled blocks only hold numeric block IDs. The names are in the save's single <code>gamedata</code> row, another Protobuf message. One of its entries, <code>BlockIDs</code>, lists every ID with its block code; <code>ItemIDs</code> does the same for items.</p>
-		<div class="table-wrap">
-			<table>
-				<thead><tr><th>ID</th><th>1.22.7 world</th><th>1.19 sample</th></tr></thead>
-				<tbody>
-					<tr><td>0</td><td><code>air</code></td><td><code>air</code></td></tr>
-					<tr><td>1</td><td><code>mantle</code></td><td><code>mantle</code></td></tr>
-					<tr><td>164</td><td><code>creativeblock-2</code></td><td><code>creativeblock-12</code></td></tr>
-				</tbody>
-			</table>
-		</div>
-		<p style="margin-top: var(--s4)">The same number means different blocks in different saves: 2966 is <code>water-still-7</code> in the 1.22.7 world but a snowy fireclay roof corner in the 1.19 sample. So every save has to be read with its own list. The same row also holds the world's settings, such as how far from the centre new players spawn.</p>
-		<p>It also holds the world's height, 256 blocks by default, but not its sea level. The game derives that: the height × 110 / 255, rounded down, so 110 in a default world. Water fills the blocks below it, so the top water block of a sea or lake is at y 109.</p>
-		<p>And the date: <code>TotalGameSeconds</code> counts game time from 00:00 on 1 January of the first year, which the calendar numbers 1386. Divide by 3,600 for hours and by <code>HoursPerDay</code>, 24, for days; a year is 12 months of the world's <code>daysPerMonth</code>, 9 by default. The 1.22.7 worlds were created at 3,139,200 seconds: 872 hours, so 36 days and 8 hours, which is 08:00 on 1 May 1386. A map coloured like the game's tints grass and leaves for the season on that date.</p>
-		<p class="source">Sources: every block ID in both saves has a code · <a href="../../src/vs/GameData.zig">src/vs/GameData.zig</a> · sea level from the <a href="https://wiki.vintagestory.at/Sea_level">wiki</a>, matching the water in both saves · the calendar from <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IGameCalendar.cs">vsapi IGameCalendar.cs</a> · <a href="README.md#6-game-data">README §6</a></p>
-	</section>
+	<section id="tables">
+		<h2><span class="num">3</span><span>Tables</span></h2>
+		<section id="chunk">
+			<h3><span class="num">3.1</span><span><code>chunk</code></span></h3>
+		<p>One row per cube of 32 × 32 × 32 blocks: its position (<a href="#position">2.1</a>), and a message of its blocks, liquids, light and block entities.</p>
 
-	<section id="climate">
-		<h2><span class="num">11</span><span>Map regions: the climate</span></h2>
-		<p>Each <code>mapregion</code> row covers 16 × 16 chunk columns, 512 × 512 blocks, with the maps world generation drew it from: landforms, forests, rock strata, ores, and the climate. Each map is a square grid of numbers with a few rows and columns of padding, copied from the regions around it so they blend at the edges.</p>
-		<p>The climate map, field 3, has a value every 32 blocks: 16 × 16 inside 2 cells of padding. Each value packs the climate there at sea level: <span class="seg-x">temperature</span> and <span class="seg-z">rainfall</span>, a byte each, 0 to 255. Between the values, the game interpolates.</p>
-		<div class="panel">
-			<div class="climate-inputs">
-				<label class="field">TEMPERATURE<input id="cl-t" type="number" min="0" max="255" value="93" inputmode="numeric"></label>
-				<label class="field">RAINFALL<input id="cl-r" type="number" min="0" max="255" value="83" inputmode="numeric"></label>
-				<label class="field">OTHER<input id="cl-o" type="number" min="0" max="255" value="0" inputmode="numeric"></label>
-			</div>
-			<label class="field pos-value">VALUE<input id="cl-value" type="text" inputmode="numeric" spellcheck="false" autocomplete="off"></label>
-			<p class="error-line" id="cl-error" aria-live="polite"></p>
-			<div class="bitbar bits32">
-				<div class="bitbar-labels" aria-hidden="true">
-					<span class="seg-pad" style="grid-column: span 8">0</span>
-					<span class="seg-x" style="grid-column: span 8">temperature</span>
-					<span class="seg-z" style="grid-column: span 8">rainfall</span>
-					<span class="seg-y" style="grid-column: span 8">other</span>
+			<section id="fields">
+				<h4><span class="num">3.1.1</span><span>Fields</span></h4>
+				<p>A chunk's message, <code>ServerChunk</code>, has these fields:</p>
+				<div class="table-wrap">
+					<table>
+						<thead><tr><th>#</th><th>name</th><th>status</th></tr></thead>
+						<tbody>
+							<tr class="key" id="field-1"><td>1</td><td><code>blocksCompressed</code></td><td><span class="tag ok">decoded</span></td></tr>
+							<tr><td>2</td><td><code>lightCompressed</code></td><td><span class="tag ok">light, the planes</span></td></tr>
+							<tr><td>3</td><td><code>lightSatCompressed</code></td><td><span class="tag ok">light, the palette</span></td></tr>
+							<tr><td>5</td><td><code>EntitiesCount</code></td><td><span class="tag ok">count</span></td></tr>
+							<tr><td>6</td><td><code>EntitiesSerialized</code></td><td><span class="tag">class, version, data</span></td></tr>
+							<tr><td>7</td><td><code>BlockEntitiesCount</code></td><td><span class="tag ok">count</span></td></tr>
+							<tr class="key"><td>8</td><td><code>BlockEntitiesSerialized</code></td><td><a class="tag ok" href="#block-entities">decoded, see 3.1.7</a></td></tr>
+							<tr><td>10</td><td><code>lightPositions</code></td><td><span class="tag">unknown</span></td></tr>
+							<tr><td>12</td><td><code>GameVersionCreated</code></td><td><span class="tag ok">text, e.g. "1.19.1"</span></td></tr>
+							<tr><td>13</td><td><code>EmptyBeforeSave</code></td><td><span class="tag ok">bool</span></td></tr>
+							<tr><td>14</td><td><code>DecorsSerialized</code></td><td><span class="tag">not decoded</span></td></tr>
+							<tr><td>15</td><td><code>savedCompressionVersion</code></td><td><span class="tag ok">2</span></td></tr>
+							<tr><td>16</td><td><code>liquidsCompressed</code></td><td><a class="tag ok" href="#field-1">liquids, same as 1</a></td></tr>
+							<tr><td>17</td><td><code>BlocksPlaced</code></td><td><span class="tag ok">count</span></td></tr>
+							<tr><td>18</td><td><code>BlocksRemoved</code></td><td><span class="tag ok">count</span></td></tr>
+						</tbody>
+					</table>
 				</div>
-				<div class="bitbar-cells" id="cl-bits" aria-hidden="true"></div>
-				<div class="bitbar-ends"><span>bit 31</span><span>bit 0</span></div>
+				<p style="margin-top: var(--s4)">Field <b>1</b> holds the solid blocks, field <b>16</b> the liquids in the same format, and field <b>8</b> the block entities. Field 12 records the game version that created the chunk, so one save can mix versions. Not every field appears in every chunk.</p>
+				<p>Light is a layer of the same kind as blocks, split across two fields: field 3 is the palette and field 2 the bit planes. Each light value packs sunlight in bits 0–4, 22 under open sky, and light from blocks such as torches in bits 5–9; bits 10–19 are set only where block light is, probably its colour. A column gets light when world generation reaches stage 4 (<a href="#mapchunk">3.2</a>); most of its lowest chunks store none, presumably being dark all through.</p>
+				<p class="source">Sources: every chunk of the 1.19 and 1.22.7 saves scanned · names from <a href="https://github.com/bluelightning32/vs-proto/blob/80ff05afa98af324425ef6f3e5f12b4bea9e6a3f/schema-1.21.0.rc.3.proto">vs-proto's schema</a> · <a href="https://wiki.vintagestory.at/index.php/Modding:Chunk_Data_Storage">wiki: Chunk Data Storage</a> · <a href="README.md#3-chunk-data-protobuf-fields">README §3</a></p>
+			</section>
+
+			<section id="blob">
+				<h4><span class="num">3.1.2</span><span>Block data</span></h4>
+				<p>The first 4 bytes are a little-endian <code>i32</code>, <code>length</code>. Its sign says how the palette (<a href="#palette">3.1.3</a>) is stored: <b>negative</b> means the palette is stored as-is, <b>positive</b> means it's compressed with zstd, and <b>0</b> means the chunk is empty. Everything after the palette is one zstd-compressed block of <b>bit planes</b>.</p>
+				<div class="panel">
+					<div class="seg-control" role="group" aria-label="Example chunk">
+						<button type="button" data-ex="raw" aria-pressed="true">chunk y = 4</button>
+						<button type="button" data-ex="zstd" aria-pressed="false">chunk y = 3</button>
+					</div>
+					<div class="strip" id="blob-strip" aria-hidden="true">
+						<div class="s-len">length</div>
+						<div class="s-pal">palette</div>
+						<div class="s-dat">bit planes</div>
+					</div>
+					<div class="parts" id="blob-parts"></div>
+				</div>
+				<p class="muted">Both examples are real chunks from one column (x 15995, z 15999) of a 1.19.1 save.</p>
+				<p class="source">Sources: verified against a 1.19 save · <a href="../../src/vs/Compression.zig">src/vs/Compression.zig</a> · <a href="README.md#4-blocks-fields-1-and-16">README §4</a></p>
+			</section>
+
+			<section id="palette">
+				<h4><span class="num">3.1.3</span><span>Palette</span></h4>
+				<p>Instead of storing a full block ID for all 32,768 blocks, a chunk keeps a short list of the block types it uses: the <b>palette</b>, a list of <code>i32</code> block IDs. Each block then only stores its <b>position in that list</b>. Slot 0 is always air (ID 0).</p>
+				<p>Positions are stored in bits, and <i>b</i> bits can count 2<sup><i>b</i></sup> different positions. So the palette is treated as if it had the next power of two of slots. Only the real entries are stored; the extra slots are never referenced, and a reader should treat them as air rather than read past the stored entries.</p>
+				<div class="panel">
+					<label class="slider">
+						<span>block types</span>
+						<input id="pal-n" type="range" min="1" max="40" value="22">
+						<output id="pal-n-out">22</output>
+					</label>
+					<p class="stat" id="pal-stat" style="margin: var(--s4) 0 0"></p>
+					<div class="slots" id="pal-slots"></div>
+					<div class="legend">
+						<span><i style="background: var(--soft)"></i>air</span>
+						<span><i style="background: var(--z-soft)"></i>block type</span>
+						<span><i style="background: repeating-linear-gradient(135deg, transparent 0 0.2rem, var(--border) 0.2rem 0.4rem)"></i>padding</span>
+					</div>
+				</div>
+			</section>
+
+			<section id="order">
+				<h4><span class="num">3.1.4</span><span>Block order</span></h4>
+				<p>The cube is flattened into one long list, like reading a book: across a row (<b>x</b>), then the next row (<b>z</b>), then the next page (<b>y</b>). Every block gets a number <i>n</i> from 0 to 32,767.</p>
+				<p>Bits for those blocks are packed 32 to a little-endian <code>i32</code>. Block <i>n</i> lives in <code>i32</code> number <code>n / 32</code> (rounded down), at bit <code>n % 32</code> counting from the least significant bit. That works out neatly: <b>each <code>i32</code> holds one row of 32 blocks along x</b>, and the bit index is the block's x.</p>
+				<div class="panel">
+					<div class="two-col">
+						<div>
+							<div class="grid32" id="order-grid" tabindex="0" role="img" aria-label="Layer of 32 by 32 blocks. Arrow keys move x and z, Page Up and Page Down change y."></div>
+							<div class="axis"><span>x 0 →</span><span id="order-layer" class="num-tab"></span><span>→ 31</span></div>
+							<div class="axis" style="margin-top: var(--s1)"><span>z 0 ↓</span></div>
+						</div>
+						<div>
+							<div class="sliders">
+								<label class="slider"><span class="seg-x">x</span><input id="o-x" type="range" min="0" max="31" value="5"><output id="o-x-out">5</output></label>
+								<label class="slider"><span class="seg-y">y</span><input id="o-y" type="range" min="0" max="31" value="7"><output id="o-y-out">7</output></label>
+								<label class="slider"><span class="seg-z">z</span><input id="o-z" type="range" min="0" max="31" value="18"><output id="o-z-out">18</output></label>
+							</div>
+							<div class="formula" id="order-formula"></div>
+							<p class="sub" style="margin-top: var(--s5)" id="order-word-label"></p>
+							<div class="word-strip" id="order-word" aria-hidden="true"></div>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section id="planes">
+				<h4><span class="num">3.1.5</span><span>Bit planes</span></h4>
+				<p>A block's palette position isn't stored as one number. With 3 bits per block, the chunk stores <b>every block's first bit together</b> (plane 0), then every block's second bit (plane 1), then every block's third bit (plane 2). To read a block, take its bit from each plane and add them up: plane 0 counts 1, plane 1 counts 2, plane 2 counts 4, and so on.</p>
+				<p>The number of planes is log₂ of the rounded-up palette size, and each plane is 32,768 bits: 1,024 <code>i32</code>s, 4,096 bytes. The toy chunk below has 16 blocks.</p>
+				<div class="panel">
+					<div class="pg-top">
+						<div>
+							<p class="sub">blocks n = 0–15</p>
+							<div class="blocks4" id="pg-blocks"></div>
+						</div>
+						<div>
+							<p class="sub">palette</p>
+							<div class="pal-list" id="pg-palette"></div>
+							<div class="buttons">
+								<button type="button" class="btn" id="pg-add">Add type</button>
+								<button type="button" class="btn" id="pg-remove">Remove type</button>
+								<button type="button" class="btn" id="pg-reset">Reset</button>
+							</div>
+						</div>
+					</div>
+					<div class="planes">
+						<p class="sub">stored as bit planes</p>
+						<div class="planes-head" aria-hidden="true"><span></span><div class="bits16" id="pg-head"></div></div>
+						<div id="pg-planes"></div>
+					</div>
+					<div class="packed">
+						<p class="sub">for comparison: bits side by side</p>
+						<div class="packed-bits" id="pg-packed"></div>
+					</div>
+					<div class="readout" id="pg-readout"></div>
+					<div class="diff" id="pg-diff" aria-live="polite"></div>
+				</div>
+				<p>The format doesn't say why it uses planes, but they have clear advantages. When a chunk needs one more bit, a new plane of zeros is added and every existing bit stays where it is, while side-by-side packing would move every block's bits. Every block also sits at the same bit in every plane whatever the palette size. And planes tend to be long runs of the same bit, which zstd compresses well.</p>
+				<p class="source">Sources: verified against a 1.19 save · <code>Chunk.getBlock</code> in <a href="../../src/vs/Chunk.zig">src/vs/Chunk.zig</a> · <a href="README.md#block-order-and-bit-planes">README §4</a></p>
+			</section>
+
+			<section id="example">
+				<h4><span class="num">3.1.6</span><span>Example: decoding a block</span></h4>
+				<p>A chunk from a 1.19.1 save containing a single placed block, start to finish.</p>
+				<ol class="steps">
+					<li><div><p>Find the chunk's row.</p><p class="calc" id="ex-pos"></p></div></li>
+					<li><div><p>Read field 1 (39 bytes). The first 4 bytes are <code>f8 ff ff ff</code>, which is <b>−8</b>: the palette is stored as-is and is 8 bytes long.</p><p class="calc">palette = [ <b>0</b>, <b>164</b> ] → 2 slots → <b>1 bit</b> per block → 1 plane</p></div></li>
+					<li><div><p>Decompress the remaining 27 bytes with zstd.</p><p class="calc">27 bytes → <b>4,096 bytes</b> = 1 plane × 1,024 <code>i32</code>s × 4 bytes</p></div></li>
+					<li><div><p>Exactly one bit in the whole plane is set.</p><p class="calc"><code>i32</code> <b>242</b>, bit <b>5</b> → n = 242 × 32 + 5 = <b>7,749</b></p></div></li>
+					<li><div><p>Turn <i>n</i> back into a position inside the chunk.</p><p class="calc">x = n % 32 = <b>5</b> · z = ⌊n / 32⌋ % 32 = <b>18</b> · y = ⌊n / 1024⌋ = <b>7</b></p></div></li>
+					<li><div><p>Look it up. The bit is 1, so the palette position is 1.</p><p class="calc">palette[1] = <b>164</b>, at world block (<b>511,845</b>, <b>135</b>, <b>511,986</b>)</p></div></li>
+				</ol>
+				<p class="source">Source: chunk (15995, 4, 15999) of a 1.19.1 save</p>
+			</section>
+
+			<section id="block-entities">
+				<h4><span class="num">3.1.7</span><span>Block entities</span></h4>
+				<p>Blocks that need extra data, like chests, signs and chiseled blocks, have a <b>block entity</b>. Each one is a field 8 entry: the class name as a string, then a tree attribute (<a href="#tree-attributes">2.3</a>).</p>
+				<p>Every block entity starts with <code>posx</code>, <code>posy</code>, <code>posz</code> (absolute block coordinates) and <code>blockCode</code>. The most common classes in the sample 1.19 save are MicroBlock (8,343), Generic (4,364), BerryBush (632), GenericTypedContainer (370), Crate (274) and GroundStorage (184); the larger 1.22.7 world's ruins have most of the same, led by MicroBlock (40,528) and Generic (22,933). GroundStorage, items placed on the ground, keeps item stacks in its inventory; what their IDs refer to isn't decoded yet.</p>
+				<p class="source">Sources: every block entity of a 1.19 save (14,447) and of the 1.22.7 saves (77,462) parses · <a href="README.md#5-block-entities-field-8">README §5</a></p>
+			</section>
+
+			<section id="chiseled">
+				<h4><span class="num">3.1.8</span><span>Chiseled blocks</span></h4>
+				<p>A chiseled block is an ordinary block in the chunk with a <code>MicroBlock</code> block entity holding its shape: a 16 × 16 × 16 voxel grid stored as a list of boxes (<code>cuboids</code>), plus <code>materials</code>, a list of block IDs from the same ID space as the palettes.</p>
+				<p>Each box is one 32-bit number. Written in hexadecimal, every 4 bits are one digit, so the box reads off digit by digit: two digits of material (an index into <code>materials</code>), then the far corner, then the near corner, each as z, y, x. The far corner is stored minus 1, so a box reaching the edge fits in one digit (F = 15 means up to 16).</p>
+				<div class="panel">
+					<div class="cuboid-wrap">
+						<svg class="cuboid-3d" id="cub-3d" role="img" aria-label="The boxes drawn in 3D inside the 16 × 16 × 16 block. Click a box to edit it."></svg>
+						<div>
+							<p class="sub" id="cub-title">box 1</p>
+							<div class="cub-sliders">
+								<label class="slider"><span class="seg-x">x from</span><input id="cub-x1" type="range" min="0" max="15"><output id="cub-x1-out"></output></label>
+								<label class="slider"><span class="seg-x">x to</span><input id="cub-x2" type="range" min="1" max="16"><output id="cub-x2-out"></output></label>
+								<label class="slider"><span class="seg-y">y from</span><input id="cub-y1" type="range" min="0" max="15"><output id="cub-y1-out"></output></label>
+								<label class="slider"><span class="seg-y">y to</span><input id="cub-y2" type="range" min="1" max="16"><output id="cub-y2-out"></output></label>
+								<label class="slider"><span class="seg-z">z from</span><input id="cub-z1" type="range" min="0" max="15"><output id="cub-z1-out"></output></label>
+								<label class="slider"><span class="seg-z">z to</span><input id="cub-z2" type="range" min="1" max="16"><output id="cub-z2-out"></output></label>
+								<label class="slider"><span>material</span><input id="cub-material" type="range" min="0" max="255"><output id="cub-material-out"></output></label>
+							</div>
+							<div class="buttons">
+								<button type="button" class="btn" id="cub-add">Add box</button>
+								<button type="button" class="btn" id="cub-remove">Remove box</button>
+								<button type="button" class="btn" id="cub-reset">Reset</button>
+							</div>
+						</div>
+					</div>
+					<p class="sub" id="cub-anatomy-title" style="margin-top: var(--s5)">box 1, as stored</p>
+					<div class="hex-anatomy" id="cub-anatomy"></div>
+					<p class="stat" id="cub-number" style="margin: var(--s3) 0 0"></p>
+					<div class="table-wrap" style="margin-top: var(--s5)">
+						<table class="cub-table">
+							<thead><tr><th>box</th><th>hex</th><th>x</th><th>y</th><th>z</th><th>material</th></tr></thead>
+							<tbody id="cub-rows"></tbody>
+						</table>
+					</div>
+					<label class="field" style="margin-top: var(--s5)">CUBOIDS, AS STORED<input id="cub-input" type="text" spellcheck="false" autocomplete="off" value="15986688, 16757824, 4190336, 16774284"></label>
+					<p class="error-line" id="cub-error" aria-live="polite"></p>
+				</div>
+				<p class="muted">The block starts as a real chiseled block from the sample save, "Aged polished rock (Granite)": four boxes of one material. Each box has its own colour here; in the game all four are granite.</p>
+				<p class="source">Sources: all 20,407 boxes of a 1.19 save and 101,400 of a 1.22.7 save decode to boxes inside the block, with materials in the list · 1.22.7 code: <a href="https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Microblock/BEMicroBlock.cs">vssurvivalmod BEMicroBlock.cs</a> · <a href="README.md#chiseled-blocks-microblock-chisel">README §5</a></p>
+			</section>
+		</section>
+
+		<section id="mapchunk">
+			<h3><span class="num">3.2</span><span><code>mapchunk</code></span></h3>
+			<p>One row per chunk column, keyed by its x and z (<a href="#position">2.1</a>, y 0). Its message, <code>ServerMapChunk</code>, is 10 to 17 KB, and most of its fields are a value for each of the column's 1,024 block columns, at index z × 32 + x, written as one field each.</p>
+			<div class="table-wrap">
+				<table>
+					<thead><tr><th>#</th><th>name</th><th>what</th></tr></thead>
+					<tbody>
+						<tr class="key"><td>3</td><td><code>RainHeightMap</code></td><td>per block column: the height of the highest block rain can't fall through</td></tr>
+						<tr><td>4</td><td><code>currentpass</code></td><td>the world generation stage, below</td></tr>
+						<tr><td>7</td><td><code>WorldGenTerrainHeightMap</code></td><td>per block column: the ground before plants and trees grew</td></tr>
+						<tr><td>10</td><td><code>YMax</code></td><td>the highest block that isn't air</td></tr>
+						<tr><td>13</td><td><code>TopRockIdMap</code></td><td>per block column: the block ID of the top rock layer</td></tr>
+						<tr><td>16</td><td><code>WorldGenVersion</code></td><td>as <code>gamedata</code>'s</td></tr>
+						<tr><td>…</td><td></td><td>fields 1, 8, 9, 11, 12, 15 and 17: mods' and the game's data by key, scheduled updates, new block entities, snow, cave shapes, and an unused map</td></tr>
+						<tr><td>18</td><td></td><td>newer than the schema; unknown</td></tr>
+					</tbody>
+				</table>
 			</div>
-		</div>
-		<p class="muted">The top byte is always 0. The lowest isn't the climate: it's set in about 30% of the values in the test saves, and what it means isn't known. The test saves' temperatures are 84 to 139 and their rainfalls 4 to 255.</p>
-		<p>Height changes both: it's colder higher up, by 1 for every 1.5 blocks above sea level, and the rainfall changes too. The game tints grass, leaves and water by the result, picking a colour from a climate colour map by temperature across and rainfall down. That's checked against the game's own map, whose water is that colour to within 1%.</p>
-		<p class="source">Sources: the grid's sizes in every test save · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/IntDataMap2D.cs">vsapi IntDataMap2D.cs</a> and <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Climate.cs">Climate.cs</a> · <a href="../rendering.md#climate-and-season-tint">rendering.md: climate and season tint</a> · <a href="README.md#8-map-regions">README §8</a></p>
+			<p style="margin-top: var(--s4)"><b>The rain height</b> falls through plants and loose stones but stops at water, so it's the ground, or a water surface. The game's own map draws it. A column with no blocks has 0, and a few hold 65,531 to 65,535: the game keeps these heights as unsigned 16-bit numbers, so those are −5 to −1. A row stays when its blocks are removed, so a reader should check the block at the height it gives.</p>
+			<p><b>The terrain height</b> is set by world generation and never changed afterwards. For seas and lakes, it's their bed.</p>
+			<p><b>The stage</b> is the world generation pass the column is waiting for, not the last one done. Passes 2 to 5 need the columns around, so everything finished is ringed by partly generated columns, one ring per stage, each one chunk column wide. Only stage 6 is finished; at stages 2 and 3 there are no trees or plants yet.</p>
+			<div class="table-wrap">
+				<table>
+					<thead><tr><th>stage</th><th>waiting for</th><th>which adds</th></tr></thead>
+					<tbody>
+						<tr><td>1</td><td>Terrain</td><td>terrain, rock layers, caves</td></tr>
+						<tr><td>2</td><td>TerrainFeatures</td><td>deposits, structures, ponds</td></tr>
+						<tr><td>3</td><td>Vegetation</td><td>plants, shrubs, trees, rivulets</td></tr>
+						<tr><td>4</td><td>NeighbourSunLightFlood</td><td>snow, light across chunks</td></tr>
+						<tr><td>5</td><td>PreDone</td><td>creatures</td></tr>
+						<tr class="key"><td>6</td><td>Done</td><td>nothing: finished</td></tr>
+					</tbody>
+				</table>
+			</div>
+			<p class="source" style="margin-top: var(--s4)">Sources: every row of the test saves parses; heights checked against the highest block of every column · names from <a href="https://github.com/bluelightning32/vs-proto/blob/80ff05afa98af324425ef6f3e5f12b4bea9e6a3f/schema-1.21.0.rc.3.proto">vs-proto's schema</a> and meanings from <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IMapChunk.cs">vsapi IMapChunk.cs</a> · stages from the <a href="https://wiki.vintagestory.at/index.php/Modding:WorldGen_Concept">wiki: WorldGen Concept</a> · <a href="README.md#7-map-chunks">README §7</a></p>
+		</section>
+
+		<section id="mapregion">
+			<h3><span class="num">3.3</span><span><code>mapregion</code></span></h3>
+			<p>One row per 16 × 16 chunk columns, 512 × 512 blocks, keyed by the region's x and z (<a href="#position">2.1</a>). Its message, <code>ServerMapRegion</code>, holds the maps world generation drew the region from. Each map is a square grid of numbers, packed, with a few rows and columns of padding copied from the regions around it so they blend at the edges; inside the padding, a grid can be finer than one value per chunk column.</p>
+			<div class="table-wrap">
+				<table>
+					<thead><tr><th>#</th><th>map</th><th>grid inside its padding</th></tr></thead>
+					<tbody>
+						<tr><td>1</td><td><code>LandformMap</code></td><td>32 × 32</td></tr>
+						<tr><td>2</td><td><code>ForestMap</code></td><td>16 × 16</td></tr>
+						<tr class="key"><td>3</td><td><a href="#climate"><code>ClimateMap</code></a></td><td>16 × 16</td></tr>
+						<tr><td>4</td><td><code>GeologicProvinceMap</code></td><td>8 × 8</td></tr>
+						<tr><td>5, 6</td><td><code>BushMap</code>, <code>FlowerMap</code></td><td>32 × 32, 16 × 16</td></tr>
+						<tr><td>8</td><td><code>OreMaps</code></td><td>one per ore, by name: 31</td></tr>
+						<tr><td>12</td><td><code>RockStrata</code></td><td>one per rock layer: 16, each 32 × 32</td></tr>
+						<tr><td>15</td><td><code>BeachMap</code></td><td>32 × 32</td></tr>
+						<tr><td>16</td><td><code>BlockPatchMaps</code></td><td>one per kind of patch, such as mushrooms</td></tr>
+						<tr><td>17, 18</td><td><code>UpheavelMap</code>, <code>OceanMap</code></td><td>16 × 16</td></tr>
+					</tbody>
+				</table>
+			</div>
+			<p style="margin-top: var(--s4)">Besides the maps, field 11 lists the structures world generation placed: lakes, ruins, villages, traders and more, each with a code such as <code>small5.json/lakes</code> and its box in absolute block coordinates, so a map could label them. Field 9 keeps the game's and mods' data by key, such as the weather.</p>
+			<p class="source">Sources: sizes and keys in every test save · names from <a href="https://github.com/bluelightning32/vs-proto/blob/80ff05afa98af324425ef6f3e5f12b4bea9e6a3f/schema-1.21.0.rc.3.proto">vs-proto's schema</a> · <a href="https://wiki.vintagestory.at/Modding:VCDBS_format#mapregion">wiki: VCDBS format</a> · <a href="README.md#8-map-regions">README §8</a></p>
+
+			<section id="climate">
+				<h4><span class="num">3.3.1</span><span>Climate map</span></h4>
+				<p>The climate map, field 3, has a value every 32 blocks: 16 × 16 inside 2 cells of padding. Each value packs the climate there at sea level: <span class="seg-x">temperature</span> and <span class="seg-z">rainfall</span>, a byte each, 0 to 255. Between the values, the game interpolates.</p>
+				<div class="panel">
+					<div class="climate-inputs">
+						<label class="field">TEMPERATURE<input id="cl-t" type="number" min="0" max="255" value="93" inputmode="numeric"></label>
+						<label class="field">RAINFALL<input id="cl-r" type="number" min="0" max="255" value="83" inputmode="numeric"></label>
+						<label class="field">OTHER<input id="cl-o" type="number" min="0" max="255" value="0" inputmode="numeric"></label>
+					</div>
+					<label class="field pos-value">VALUE<input id="cl-value" type="text" inputmode="numeric" spellcheck="false" autocomplete="off"></label>
+					<p class="error-line" id="cl-error" aria-live="polite"></p>
+					<div class="bitbar bits32">
+						<div class="bitbar-labels" aria-hidden="true">
+							<span class="seg-pad" style="grid-column: span 8">0</span>
+							<span class="seg-x" style="grid-column: span 8">temperature</span>
+							<span class="seg-z" style="grid-column: span 8">rainfall</span>
+							<span class="seg-y" style="grid-column: span 8">other</span>
+						</div>
+						<div class="bitbar-cells" id="cl-bits" aria-hidden="true"></div>
+						<div class="bitbar-ends"><span>bit 31</span><span>bit 0</span></div>
+					</div>
+				</div>
+				<p class="muted">The top byte is always 0. The lowest isn't the climate: it's set in about 30% of the values in the test saves, and what it means isn't known. The test saves' temperatures are 84 to 139 and their rainfalls 4 to 255.</p>
+				<p>Height changes both: it's colder higher up, by 1 for every 1.5 blocks above sea level, and the rainfall changes too. The game tints grass, leaves and water by the result, picking a colour from a climate colour map by temperature across and rainfall down. That's checked against the game's own map, whose water is that colour to within 1%.</p>
+				<p class="source">Sources: the grid's sizes in every test save · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/IntDataMap2D.cs">vsapi IntDataMap2D.cs</a> and <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Climate.cs">Climate.cs</a> · <a href="../rendering.md#climate-and-season-tint">rendering.md: climate and season tint</a> · <a href="README.md#8-map-regions">README §8</a></p>
+			</section>
+		</section>
+
+		<section id="gamedata">
+			<h3><span class="num">3.4</span><span><code>gamedata</code></span></h3>
+			<p>A single row holding one <code>SaveGame</code> message: block and item IDs, the world's size, clock and settings, and more.</p>
+
+			<section id="block-names">
+				<h4><span class="num">3.4.1</span><span>Block and item IDs</span></h4>
+				<p>Palettes and chiseled blocks only hold numeric block IDs. The names are in field 11, a list of named entries: <code>BlockIDs</code> lists every ID with its block code, and <code>ItemIDs</code> does the same for items. A mod's codes carry its name, such as <code>primitivesurvival:</code>, and its IDs follow the game's.</p>
+				<div class="table-wrap">
+					<table>
+						<thead><tr><th>ID</th><th>1.22.7 world</th><th>1.19 sample</th></tr></thead>
+						<tbody>
+							<tr><td>0</td><td><code>air</code></td><td><code>air</code></td></tr>
+							<tr><td>1</td><td><code>mantle</code></td><td><code>mantle</code></td></tr>
+							<tr><td>164</td><td><code>creativeblock-2</code></td><td><code>creativeblock-12</code></td></tr>
+						</tbody>
+					</table>
+				</div>
+				<p style="margin-top: var(--s4)">The same number means different blocks in different saves: 2966 is <code>water-still-7</code> in the 1.22.7 world but a snowy fireclay roof corner in the 1.19 sample. So every save has to be read with its own list.</p>
+				<p class="source">Sources: every block ID in the test saves has a code · <a href="../../src/vs/GameData.zig">src/vs/GameData.zig</a> · <a href="README.md#block-and-item-ids">README §6</a></p>
+			</section>
+
+			<section id="sea-level">
+				<h4><span class="num">3.4.2</span><span>World size and sea level</span></h4>
+				<p>Fields 1, 2 and 3 are the world's size: 1,024,000 blocks east to west, 256 high and 1,024,000 north to south by default. The game shows positions from the middle, half of those across (<a href="#position">2.1</a>).</p>
+				<p>The sea level isn't stored; the game derives it from the height: × 110 / 255, rounded down, so 110 in a default world. Water fills the blocks below it, so the top water block of a sea or lake is at y 109.</p>
+				<p class="source">Sources: sea level from the <a href="https://wiki.vintagestory.at/Sea_level">wiki</a>, matching the water in the test saves · <a href="README.md#sea-level">README §6</a></p>
+			</section>
+
+			<section id="date">
+				<h4><span class="num">3.4.3</span><span>Date</span></h4>
+				<p><code>TotalGameSeconds</code>, field 12, counts game time from 00:00 on 1 January of the first year, which the calendar numbers 1386. Divide by 3,600 for hours and by <code>HoursPerDay</code>, field 25, 24, for days; a year is 12 months of the world's <code>daysPerMonth</code> (<a href="#world-config">3.4.4</a>), 9 by default. Field 38 is the time the world was created.</p>
+				<p>The 1.22.7 worlds were created at 3,139,200 seconds: 872 hours, so 36 days and 8 hours, which is 08:00 on 1 May 1386. A map coloured like the game's tints grass and leaves for the season on the save's date.</p>
+				<p class="source">Sources: the calendar from <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IGameCalendar.cs">vsapi IGameCalendar.cs</a> · <a href="README.md#the-date">README §6</a></p>
+			</section>
+
+			<section id="world-config">
+				<h4><span class="num">3.4.4</span><span>World configuration</span></h4>
+				<p>Field 31 is the world's settings, chosen when it was created, as a tree attribute (<a href="#tree-attributes">2.3</a>). The values are mostly strings, such as <code>gameMode: "survival"</code>, <code>startingClimate: "temperate"</code>, <code>seasons: "enabled"</code>, <code>daysPerMonth: "9"</code> and <code>spawnRadius: "5000"</code>, how far from the centre new players appear. A world with the colour-accurate map has <code>colorAccurateWorldmap</code> as the number 1.</p>
+				<p>The row holds more besides: the world's name (13), its seed (7), the game versions that created it and last saved it (18, 21), and an identifier (34) that names the game's map cache (<a href="#map">4</a>).</p>
+				<p class="source">Sources: every world configuration in the test saves parses · <a href="README.md#world-configuration">README §6</a></p>
+			</section>
+		</section>
+
+		<section id="playerdata">
+			<h3><span class="num">3.5</span><span><code>playerdata</code></span></h3>
+			<p>One row per player who has joined, keyed by <code>playeruid</code>. Its message, <code>ServerWorldPlayerData</code>, holds their inventories, game mode, death count and player entity, which includes their position. Their privileges aren't in the save but in JSON files in the data folder's <code>Playerdata</code>.</p>
+			<p>The message isn't decoded further, but a player's position can be found in it: the only run of three little-endian 64-bit floats inside the world, stored two or three times, the entity's x, y and z in absolute block coordinates.</p>
+			<p>This position confirms how the game shows coordinates (<a href="#position">2.1</a>). One player stood on the ground where the game showed 409, 111, −304; that column's rain height (<a href="#mapchunk">3.2</a>) is 110, so their feet were at 111. After they flew up and moved a few blocks, the save held them at 512,409.0, 193.9, 511,699.3: x 512,409 − 512,000 = 409, and z −300.7.</p>
+			<p class="source">Sources: table description from the <a href="https://wiki.vintagestory.at/Modding:VCDBS_format">wiki: VCDBS format</a> · the position found in the 1.22.7 saves · <a href="README.md#2-positions">README §2</a></p>
+		</section>
 	</section>
 
 	<section id="map">
-		<h2><span class="num">12</span><span>Using it: a top-down map</span></h2>
+		<h2><span class="num">4</span><span>Drawing a top-down map</span></h2>
 		<p>A simple map needs only the top block of each column. Scan each column down from the top until something isn't air, and colour the pixel by that height. Columns with no blocks at all stay black. Click cells in the side view to add or remove blocks.</p>
 		<div class="panel toy">
 			<div>
@@ -929,12 +1054,13 @@
 			</div>
 			<div class="buttons" style="margin-top: 0"><button type="button" class="btn" id="toy-reset">Reset</button></div>
 		</div>
-		<p>The game's own world map works the same way, with refinements: it takes each column's height from a stored rain height map instead of scanning, reads liquids too (they live in field 16, not field 1), looks under snow, colours by a per-block map colour, and shades slopes by comparing each column with its neighbours. Its colour-accurate mode colours each block by its texture instead, tinted by the climate (<a href="#climate">11</a>) and the season on the save's date (<a href="#block-names">10</a>).</p>
-		<p class="source">Source: 1.22.7 code, <a href="https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs">vsessentialsmod ChunkMapLayer.cs</a></p>
+		<p>The game's own world map works the same way, with refinements: it takes each column's height from the stored rain height (<a href="#mapchunk">3.2</a>) instead of scanning, reads liquids too (they live in field 16, not field 1), looks under snow, colours by a per-block map colour, and shades slopes by comparing each column with its neighbours. It only draws finished columns, at stage 6. Its colour-accurate mode colours each block by its texture instead, tinted by the climate (<a href="#climate">3.3.1</a>) and the season on the save's date (<a href="#date">3.4.3</a>).</p>
+		<p>That map isn't in the save. Each player's game keeps what it has drawn in the data folder, in <code>Maps/&lt;id&gt;.db</code>, where <code>&lt;id&gt;</code> is <code>gamedata</code>'s identifier (<a href="#world-config">3.4.4</a>): another SQLite database whose <code>mappiece</code> table has a row per chunk column, keyed like map chunks, holding its 32 × 32 pixels, red in the lowest byte, at index z × 32 + x. It only has what that player has seen, so a map of a whole world, or one made on a server, is drawn from the save, and the cache is a way to check it.</p>
+		<p class="source">Sources: 1.22.7 code, <a href="https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs">vsessentialsmod ChunkMapLayer.cs</a> · the map cache decoded and compared with Storymap's maps of 1.22.7 worlds · <a href="README.md#the-games-map-cache">README §7</a></p>
 	</section>
 
 	<section id="unknown">
-		<h2><span class="num">13</span><span>Still unknown</span></h2>
+		<h2><span class="num">5</span><span>Open questions</span></h2>
 		<ul class="list">
 			<li><b>The other fields.</b> Entities' data (6), field 10, the empty flag (13), decor (14) and the colour of light.</li>
 			<li><b>The other tables.</b> The schema names every field, but <code>playerdata</code> hasn't been decoded beyond the player's position, nor have the values of <code>mapregion</code>'s maps other than the climate's, the climate's lowest byte, or a few fields newer than the schema.</li>
@@ -964,19 +1090,21 @@
 	};
 
 	/* contents, from the sections' headings */
-	for (const section of document.querySelectorAll("main > section[id]")) {
-		const heading = section.querySelector("h2");
+	for (const section of document.querySelectorAll("main section[id]")) {
+		const heading = section.querySelector(":scope > h2, :scope > h3, :scope > h4");
 		const link = el("a");
 		link.href = `#${section.id}`;
 		const title = heading.lastElementChild.cloneNode(true);
 		title.className = "title";
 		link.append(el("span", "num", heading.querySelector(".num").textContent), title);
-		const item = el("li");
+		let depth = 0;
+		for (let parent = section.parentElement.closest("section"); parent; parent = parent.parentElement.closest("section")) depth++;
+		const item = el("li", `depth-${depth}`);
 		item.append(link);
 		$("#toc").append(item);
 	}
 
-	/* 02 position */
+	/* position */
 	const MAX21 = 2097151;
 	const M21 = BigInt(MAX21);
 	const posX = $("#pos-x");
@@ -1054,7 +1182,7 @@
 	posValue.addEventListener("input", fromValue);
 	fromCoords();
 
-	/* 11 climate */
+	/* climate */
 	const climateInputs = [[$("#cl-t"), "temperature", 16], [$("#cl-r"), "rainfall", 8], [$("#cl-o"), "other", 0]];
 	const climateValue = $("#cl-value");
 	const climateError = $("#cl-error");
@@ -1098,7 +1226,7 @@
 	climateValue.addEventListener("input", climateFromValue);
 	climateFromParts();
 
-	/* 04 blob */
+	/* blob */
 	const examples = {
 		raw: {
 			grow: [8, 27],
@@ -1149,7 +1277,7 @@
 	document.querySelectorAll("[data-ex]").forEach((btn) => btn.addEventListener("click", () => renderBlob(btn.dataset.ex)));
 	renderBlob("raw");
 
-	/* 05 palette */
+	/* palette */
 	const palN = $("#pal-n");
 	function renderPalette() {
 		const n = Number(palN.value);
@@ -1170,7 +1298,7 @@
 	palN.addEventListener("input", renderPalette);
 	renderPalette();
 
-	/* 06 order */
+	/* order */
 	const orderGrid = $("#order-grid");
 	const orderCells = [];
 	for (let i = 0; i < 1024; i++) {
@@ -1237,7 +1365,7 @@
 	});
 	renderOrder();
 
-	/* 07 planes playground */
+	/* planes playground */
 	const TYPES = [
 		{ name: "Air", color: "" },
 		{ name: "Stone", color: "#8a8f98" },
@@ -1428,10 +1556,10 @@
 	});
 	renderPlayground(null, null);
 
-	/* 08 example */
+	/* example */
 	$("#ex-pos").innerHTML = `chunk x <b>15,995</b> · y <b>4</b> · z <b>15,999</b> → position <b>${pack(15995, 4, 15999)}</b>`;
 
-	/* 09 chiseled block cuboids */
+	/* chiseled block cuboids */
 	const cubInput = $("#cub-input");
 	const CUB_DEFAULT = "15986688, 16757824, 4190336, 16774284";
 	// One hue per box, so the 3D view, the table and the sliders match up.
@@ -1656,7 +1784,7 @@
 	});
 	cuboidsChanged(true);
 
-	/* 10 map toy */
+	/* map toy */
 	const W = 16;
 	const H = 12;
 	const START_HEIGHTS = [5, 5, 6, 7, 7, 8, 9, 9, 8, 6, 5, 4, 4, 3, 3, 4];
