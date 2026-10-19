@@ -3,6 +3,10 @@
 //!
 //! The PNGs are encoded but not written, so the disk isn't timed. One untimed render first
 //! warms the file cache.
+//!
+//! Besides the summary on stderr, it prints the results on stdout as one line of JSON
+//! (`Result`), for scripts comparing versions: its keys keep their names and meaning, and
+//! later versions only add keys.
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
@@ -10,6 +14,7 @@ const DB = @import("sqlite.zig");
 const Chunk = @import("vs/Chunk.zig");
 const Save = @import("vs/Save.zig");
 const topdown = @import("renderer/topdown.zig");
+const build_options = @import("build_options");
 
 pub const usage =
     \\usage: storymap bench <save.vcdbs> [runs]
@@ -57,16 +62,82 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     }
 
     const threads = std.Thread.getCpuCount() catch 1;
-    std.debug.print("{s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs\n", .{
-        std.fs.path.basename(dbPath), chunks, stats.chunksRead, stats.tiles, threads, @tagName(builtin.mode), runs,
+    const world = std.fs.path.basename(dbPath);
+    std.debug.print("storymap {s}, {s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs\n", .{
+        build_options.version, world, chunks, stats.chunksRead, stats.tiles, threads, @tagName(builtin.mode), runs,
     });
-    printStage("open and block list", open, null);
-    printStage("decode every chunk", decode, chunks);
-    printStage("tiles", tiles, chunks);
-    printStage("end to end", total, chunks);
+    const seconds: Result.Seconds = .{
+        .open = printStage("open and block list", open, null),
+        .decode = printStage("decode every chunk", decode, chunks),
+        .tiles = printStage("tiles", tiles, chunks),
+        .total = printStage("end to end", total, chunks),
+    };
     std.mem.sort(f64, encodeShare, {}, std.sort.asc(f64));
     std.debug.print("  of the workers' time, {d:.0}% went to encoding PNGs\n", .{encodeShare[runs / 2] * 100});
+    // A block is a metre across, so the area in blocks is in square metres.
+    const area: f64 = @floatFromInt(stats.area);
+    std.debug.print("  map area {d:.2} km², drawn at {d:.1} km²/s end to end\n", .{ area / 1e6, area / 1e6 / seconds.total });
+
+    const result: Result = .{
+        .version = build_options.version,
+        .world = world,
+        .build = @tagName(builtin.mode),
+        .threads = threads,
+        .runs = runs,
+        .chunks = chunks,
+        .chunksRead = stats.chunksRead,
+        .tiles = stats.tiles,
+        .levels = stats.levels,
+        .area = stats.area,
+        .seconds = seconds,
+        .areaPerSecond = area / seconds.total,
+        .encodeShare = encodeShare[runs / 2],
+    };
+    var buffer: [1024]u8 = undefined;
+    var stdout = Io.File.stdout().writerStreaming(io, &buffer);
+    try stdout.interface.print("{f}\n", .{std.json.fmt(result, .{})});
+    try stdout.interface.flush();
 }
+
+/// A benchmark's results, printed as JSON for scripts. Keys keep their names and meaning from
+/// version to version; new ones may be added.
+const Result = struct {
+    /// The version of Storymap measured, from build.zig.zon.
+    version: []const u8,
+    /// The save's file name.
+    world: []const u8,
+    /// The build mode, as Zig names it, e.g. "fast" for -Doptimize=ReleaseFast.
+    build: []const u8,
+    /// The style drawn: always the default, as there are no prepared blocks or theme here.
+    style: []const u8 = "relief",
+    threads: usize,
+    /// Renders timed, after one untimed; every time is the median.
+    runs: usize,
+    /// Chunks in the save, and those read for the map.
+    chunks: usize,
+    chunksRead: usize,
+    /// Tiles written at every level, and the levels.
+    tiles: usize,
+    levels: usize,
+    /// The map's area, in square blocks (square metres): the block columns drawn.
+    area: usize,
+    seconds: Seconds,
+    /// Square metres drawn per second, end to end.
+    areaPerSecond: f64,
+    /// The share of the workers' time spent encoding PNGs.
+    encodeShare: f64,
+
+    const Seconds = struct {
+        /// Opening the save, its block list and which tiles it has.
+        open: f64,
+        /// Decoding every chunk, without drawing, for comparison.
+        decode: f64,
+        /// Drawing and encoding every tile.
+        tiles: f64,
+        /// Opening and the tiles: a whole render.
+        total: f64,
+    };
+};
 
 /// One render: the save opened, with its block list and which tiles it has, drawn without
 /// writing anything, and closed. Returns how long opening took.
@@ -79,11 +150,13 @@ fn renderOnce(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *
     return opened;
 }
 
-fn printStage(name: []const u8, times: []Io.Duration, chunks: ?usize) void {
+/// Prints a stage's median time, and returns it in seconds.
+fn printStage(name: []const u8, times: []Io.Duration, chunks: ?usize) f64 {
     const seconds = @as(f64, @floatFromInt(median(times).nanoseconds)) / std.time.ns_per_s;
     std.debug.print("  {s:<22} {d:>7.3} s", .{ name, seconds });
     if (chunks) |n| std.debug.print("  {d:>9.0} chunks/s", .{@as(f64, @floatFromInt(n)) / seconds});
     std.debug.print("\n", .{});
+    return seconds;
 }
 
 /// Decodes every chunk in the save on every core, and returns how many there are. Each worker

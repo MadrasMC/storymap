@@ -25,6 +25,8 @@ pub const Stats = struct {
     levels: usize = 0,
     /// Chunks read: those holding a surface block, in each tile and the ring around it.
     chunksRead: usize = 0,
+    /// The map's area, in blocks: the block columns drawn at full detail.
+    area: usize = 0,
     /// Rendering the tiles, start to finish.
     render: Io.Duration = .zero,
     /// Time the workers spent drawing tiles, and encoding and writing them, added up.
@@ -63,6 +65,7 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
             .tiles = rendered.tiles,
             .levels = rendered.levels,
             .chunksRead = view.chunksRead,
+            .area = view.drawn,
             .render = start.untilNow(io, .awake),
             .draw = rendered.draw,
             .encode = rendered.encode,
@@ -84,6 +87,8 @@ fn View(comptime Source: type) type {
         style: Style,
 
         chunksRead: usize = 0,
+        /// Block columns drawn at full detail.
+        drawn: usize = 0,
         /// How many columns show each block ID from above.
         blockCounts: []usize,
         /// The lowest and highest solid surface.
@@ -102,6 +107,7 @@ fn View(comptime Source: type) type {
 
         pub fn collect(self: *Self, worker: *const Worker) void {
             self.chunksRead += worker.reader.chunksRead;
+            self.drawn += worker.drawn;
             for (self.blockCounts, worker.blockCounts) |*total, count| total.* += count;
             self.lowest = @min(self.lowest, worker.lowest);
             self.highest = @max(self.highest, worker.highest);
@@ -118,6 +124,7 @@ fn View(comptime Source: type) type {
             unblurred: []u8,
 
             blockCounts: []usize,
+            drawn: usize = 0,
             lowest: u16 = std.math.maxInt(u16),
             highest: u16 = 0,
 
@@ -154,8 +161,9 @@ fn View(comptime Source: type) type {
                 };
             }
 
-            /// Counts what a column shows from above, for the summary.
+            /// Counts a column drawn, and what it shows from above, for the summary.
             fn count(self: *Worker, i: usize, block: i32) void {
+                self.drawn += 1;
                 if (self.surface.top[i]) |solid| {
                     self.lowest = @min(self.lowest, solid);
                     self.highest = @max(self.highest, solid);
