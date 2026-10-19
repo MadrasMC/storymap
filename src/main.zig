@@ -6,11 +6,13 @@ const bench = @import("bench.zig");
 const topdown = @import("renderer/topdown.zig");
 const Style = @import("renderer/Style.zig");
 const viewer = @import("viewer.zig");
+const build_options = @import("build_options");
 
 const usage =
     \\usage: storymap <save.vcdbs> [output folder] [--theme <theme>] [--season <season>] [--prepare] [--blocks <folder>] [--game <folder>] [--data <folder>]
     \\       storymap prepare [blocks folder] [--game <folder>] [--data <folder>]
     \\       storymap bench <save.vcdbs> [runs]
+    \\       storymap --version
     \\
     \\Renders a top-down map of a Vintage Story save as tiles in the output folder,
     \\or in out when no folder is given, with index.html beside them to view it.
@@ -57,6 +59,12 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) {
+        var buffer: [64]u8 = undefined;
+        var stdout = std.Io.File.stdout().writerStreaming(init.io, &buffer);
+        try stdout.interface.print("storymap {s}\n", .{build_options.version});
+        return stdout.interface.flush();
+    }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "bench")) return bench.run(init, args[2..]);
     if (args.len >= 2 and std.mem.eql(u8, args[1], "prepare")) {
         var folders: Folders = .{};
