@@ -17,6 +17,21 @@ pub const Block = struct {
     /// Which colour of the game's map palette it is, e.g. "land" or "forest": its
     /// `mapColorCode` attribute, or else the default for its material (docs/rendering.md#block-colours).
     colorCode: []const u8,
+    /// The textures the game's colour-accurate map takes its colour and grain from, or null
+    /// without one (see `Textures`).
+    textures: Textures,
+};
+
+/// Which of a block's textures colour it on the game's colour-accurate map (vsapi
+/// `Block.LoadTextureSubIdForBlockColor` and `Block.GetRandomColor`), as texture locations,
+/// "domain:path" below `textures/` without the ".png". A path may end in `*`, for any of the
+/// files it starts.
+pub const Textures = struct {
+    /// Its average colour: the texture named by its `textureCodeForBlockColor` attribute, else
+    /// its `up` texture, else its first.
+    colour: ?[]const u8 = null,
+    /// Its grain: the texture named by its `particlesTextureCode`, else `up`, else its first.
+    grain: ?[]const u8 = null,
 };
 
 /// The game's block materials (vsapi `EnumBlockMaterial`).
@@ -106,10 +121,10 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                     // keeps the defaults.
                     if (!warned) std.debug.print("storymap: can't resolve the …ByType properties of {s}:{s} ({s})\n", .{ name.domain, name.path, @errorName(err) });
                     warned = true;
-                    break :look Look{ .material = defaultMaterial, .colorCode = defaultColorCode(defaultMaterial) };
+                    break :look Look{ .material = defaultMaterial, .colorCode = defaultColorCode(defaultMaterial), .textures = .{} };
                 },
             };
-            try blocks.append(arena, .{ .code = saved, .material = look.material, .colorCode = look.colorCode });
+            try blocks.append(arena, .{ .code = saved, .material = look.material, .colorCode = look.colorCode, .textures = look.textures });
         }
     }
     return blocks.items;
@@ -118,16 +133,44 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
 const Look = struct {
     material: []const u8,
     colorCode: []const u8,
+    textures: Textures,
 };
 
-/// A variant's material and map colour code, from its block type's `blockmaterial` and
-/// `attributes.mapColorCode`, after resolving their `…ByType` forms for the variant.
+/// A variant's material, map colour code and textures, from its block type's
+/// `blockmaterial`, `attributes`, `textures` and `particlesTextureCode`, after resolving
+/// their `…ByType` forms for the variant.
 fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !Look {
     const materialValue = try property(arena, json, "blockmaterial", variant);
     const material = canonicalMaterial(if (materialValue) |m| m.asString() orelse defaultMaterial else defaultMaterial);
     const attributes = try property(arena, json, "attributes", variant);
     const colorCode = if (attributes) |a| if (a.get("mapColorCode")) |c| c.asString() else null else null;
-    return .{ .material = material, .colorCode = colorCode orelse defaultColorCode(material) };
+
+    var textures: Textures = .{};
+    if (try property(arena, json, "textures", variant)) |all| if (all == .object and all.object.len > 0) {
+        const forColour = if (attributes) |a| if (a.get("textureCodeForBlockColor")) |c| c.asString() else null else null;
+        const forGrain = if (try property(arena, json, "particlesTextureCode", variant)) |c| c.asString() else null;
+        textures = .{
+            .colour = try textureLocation(arena, pickTexture(all.object, forColour), variant.code.domain),
+            .grain = try textureLocation(arena, pickTexture(all.object, forGrain), variant.code.domain),
+        };
+    };
+    return .{ .material = material, .colorCode = colorCode orelse defaultColorCode(material), .textures = textures };
+}
+
+/// The texture named `code` if there is one, else `up`, else the first. The game looks them
+/// up minding case.
+fn pickTexture(textures: []const Json.Field, code: ?[]const u8) Json.Value {
+    if (code) |wanted| for (textures) |texture| if (std.mem.eql(u8, texture.key, wanted)) return texture.value;
+    for (textures) |texture| if (std.mem.eql(u8, texture.key, "up")) return texture.value;
+    return textures[0].value;
+}
+
+/// A texture's `base` as "domain:path", lowercase, in `domain` unless it names its own, or
+/// null if it has none.
+fn textureLocation(arena: std.mem.Allocator, texture: Json.Value, domain: []const u8) !?[]const u8 {
+    const base = (texture.get("base") orelse return null).asString() orelse return null;
+    const location: Location = try .parse(arena, base, domain);
+    return try std.fmt.allocPrint(arena, "{s}:{s}", .{ location.domain, location.path });
 }
 
 /// The material named `name`, in the game's spelling, or the default for an unknown one.
@@ -557,5 +600,31 @@ test "materials and map colour codes, resolved per variant" {
         } else return error.TestUnexpectedResult;
         try std.testing.expectEqualStrings(want[1], block.material);
         try std.testing.expectEqualStrings(want[2], block.colorCode);
+    }
+}
+
+test "the textures that colour a block" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const variant: Variant = .{ .code = .{ .domain = "game", .path = "rock-granite" }, .parts = &.{.{ .group = "rock", .state = "granite" }} };
+    const cases = [_]struct { json: []const u8, colour: ?[]const u8, grain: ?[]const u8 }{
+        // The first, as there's no up, with the placeholder filled.
+        .{ .json = "{ textures: { all: { base: 'block/stone/rock/{rock}1' }, north: { base: 'x' } } }", .colour = "game:block/stone/rock/granite1", .grain = "game:block/stone/rock/granite1" },
+        // Up, before the first.
+        .{ .json = "{ textures: { side: { base: 'Side' }, up: { base: 'top' } } }", .colour = "game:top", .grain = "game:top" },
+        // Each by its own code, from …ByType, in another domain.
+        .{
+            .json = "{ attributes: { textureCodeForBlockColor: 'side' }, particlesTextureCodeByType: { '*': 'other' }, texturesByType: { 'rock-*': { up: { base: 'top' }, side: { base: 'mod:side' }, other: { base: 'grain' } } } }",
+            .colour = "mod:side",
+            .grain = "game:grain",
+        },
+        .{ .json = "{ textures: {} }", .colour = null, .grain = null },
+        .{ .json = "{ code: 'rock' }", .colour = null, .grain = null },
+    };
+    for (cases) |case| {
+        const look = try describe(a, try Json.parse(a, case.json), variant);
+        try std.testing.expectEqualDeep(case.colour, look.textures.colour);
+        try std.testing.expectEqualDeep(case.grain, look.textures.grain);
     }
 }

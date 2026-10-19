@@ -133,8 +133,9 @@ pub fn look(self: *const Save, id: i32) columns.Look {
 
 /// Takes each block's look from the prepared blocks: its map type is its map colour code
 /// (docs/rendering.md#block-colours), and it's drawn as a lake if it's water, or ice other
-/// than glacier ice, and looked under if it's snow, as the game's map has it. Blocks they
-/// don't have keep what their code says.
+/// than glacier ice, and looked under if it's snow, as the game's map has it; its colour and
+/// grain are its texture's. Blocks they don't have keep what their code says. The looks
+/// point into `prepared`, which must outlast rendering.
 pub fn useBlocks(self: *Save, prepared: *const Prepared) void {
     for (self.looks, self.gameData.blockCodes) |*blockLook, maybeCode| {
         const code = maybeCode orelse continue;
@@ -144,6 +145,8 @@ pub fn useBlocks(self: *Save, prepared: *const Prepared) void {
             .mapType = std.meta.stringToEnum(columns.MapType, block.colorCode) orelse .land,
             .lake = std.mem.eql(u8, block.material, "Water") or (ice and !std.mem.eql(u8, code, "glacierice")),
             .cover = std.mem.eql(u8, block.material, "Snow"),
+            .colour = block.colour,
+            .grain = block.grain,
         };
     }
 }

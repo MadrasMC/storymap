@@ -5,7 +5,7 @@
 //! A source is a game's save, opened for reading, with:
 //! - `tileList: []const tiles.Tile`, the tiles that may have something to draw;
 //! - `game() viewer.Game`, `world() viewer.World` and `heights() columns.Heights`;
-//! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `mapType(id: i32) columns.MapType`,
+//! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `look(id: i32) columns.Look`,
 //!   for the game's block IDs;
 //! - `Reader`, one per thread, with `init(source: *const Source, allocator) !Reader`,
 //!   `deinit(*Reader, allocator)`, `read(*Reader, tile: tiles.Tile, area: *columns.Area) !void`
@@ -150,6 +150,7 @@ fn View(comptime Source: type) type {
                 return switch (self.view.style.kind) {
                     .relief => self.paintRelief(pixels),
                     .shaded => self.paintShaded(pixels),
+                    .coloured => self.paintColoured(tile, pixels),
                 };
             }
 
@@ -255,21 +256,50 @@ fn View(comptime Source: type) type {
                         continue;
                     }
                     pixels[p] = rgb(style.colours.get(look.mapType));
-                    const nw = rise(y, area, i - side - 1);
-                    const w = rise(y, area, i - 1);
-                    const n = rise(y, area, i - side);
-                    const direction = signOf(nw) + signOf(w) + signOf(n);
-                    const steepness: f32 = @floatFromInt(@max(@abs(nw), @abs(w), @abs(n)));
-                    const light: f32 = if (direction > 0)
-                        1.08 + @min(0.5, steepness / 10) / 1.25
-                    else if (direction < 0)
-                        0.92 - @min(0.5, steepness / 10) / 1.25
-                    else
-                        1;
-                    self.shade[p] = @intFromFloat(128 * light);
+                    self.shade[p] = hillShade(area, i, y);
                 };
                 if (!any) return false;
+                self.applyShading(pixels);
+                return true;
+            }
 
+            /// Colours the tile's pixels from the area as the game draws its colour-accurate
+            /// map, and counts what it shows. Returns false if nothing is drawn. As in
+            /// `ChunkMapLayer.GenerateChunkImage` with `colorAccurateWorldmap`: each column takes
+            /// its top block's texture colour, with grain, and every column is shaded, lakes
+            /// too; nothing is looked under.
+            fn paintColoured(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) bool {
+                const area = &self.area;
+                const view = self.view;
+                const side = columns.Area.side;
+                var any = false;
+                for (0..tiles.size) |py| for (0..tiles.size) |px| {
+                    const i = (py + 1) * side + px + 1;
+                    const p = py * tiles.size + px;
+                    self.shade[p] = 128;
+                    const here = Surface.of(area.top[i], area.liquidTop[i]);
+                    const y = here.height() orelse {
+                        pixels[p] = tiles.transparent;
+                        continue;
+                    };
+                    any = true;
+                    const top = if (here == .liquid) area.liquidBlock[i] else area.topBlock[i];
+                    self.count(i, top);
+                    const look = view.source.look(top);
+                    const x = tile.x * tiles.size + @as(i32, @intCast(px));
+                    const z = tile.y * tiles.size + @as(i32, @intCast(py));
+                    pixels[p] = rgb(textureColour(look, view.style.colours.get(look.mapType), x, y, z));
+                    self.shade[p] = hillShade(area, i, y);
+                };
+                if (!any) return false;
+                self.applyShading(pixels);
+                return true;
+            }
+
+            /// Blurs the tile's shading within each chunk and multiplies it into the pixels
+            /// that are drawn, as the game does: the blurred shading in fifths, and the
+            /// unblurred one's remainder.
+            fn applyShading(self: *Worker, pixels: *tiles.Pixels) void {
                 @memcpy(self.unblurred, self.shade);
                 var y: usize = 0;
                 while (y < tiles.size) : (y += 32) {
@@ -278,12 +308,10 @@ fn View(comptime Source: type) type {
                 }
                 for (pixels, self.shade, self.unblurred) |*pixel, blurred, original| {
                     if (pixel.* == tiles.transparent) continue;
-                    // The blurred shading in fifths, and the unblurred one's remainder.
                     const coarse = @trunc((@as(f32, @floatFromInt(blurred)) / 128 - 1) * 5) / 5;
                     const fine = @rem((@as(f32, @floatFromInt(original)) / 128 - 1) * 5, 1) / 5;
                     pixel.* = multiply(pixel.*, coarse + fine + 1);
                 }
-                return true;
             }
 
             /// Whether the block at height `y` in column `i`, which is drawn, is drawn as a lake.
@@ -312,6 +340,83 @@ fn signOf(value: i32) i32 {
 fn rise(y: u16, area: *const columns.Area, i: usize) i32 {
     const other = Surface.of(area.top[i], area.liquidTop[i]).height() orelse return 0;
     return @as(i32, y) - other;
+}
+
+/// The game map's hill shading for column `i` at height `y`, as a byte where 128 is level: a
+/// column higher than its north-west, west and north neighbours, as a whole, is lit, and one
+/// lower shaded, more for steeper slopes.
+fn hillShade(area: *const columns.Area, i: usize, y: u16) u8 {
+    const side = columns.Area.side;
+    const nw = rise(y, area, i - side - 1);
+    const w = rise(y, area, i - 1);
+    const n = rise(y, area, i - side);
+    const direction = signOf(nw) + signOf(w) + signOf(n);
+    const steepness: f32 = @floatFromInt(@max(@abs(nw), @abs(w), @abs(n)));
+    const light: f32 = if (direction > 0)
+        1.08 + @min(0.5, steepness / 10) / 1.25
+    else if (direction < 0)
+        0.92 - @min(0.5, steepness / 10) / 1.25
+    else
+        1;
+    return @intFromFloat(128 * light);
+}
+
+/// How much of a column's grain shows over its texture's average colour, as the game's
+/// world setting `colorRandomizationWeight` has it by default.
+const grainWeight: f32 = 0.6;
+
+/// The colour of block `look` at (`x`, `y`, `z`) on a colour-accurate map: its texture's
+/// average colour with one of its grain colours mixed in, picked by position with the game's
+/// hash, so it stays put; or `fallback` without a texture.
+fn textureColour(look: columns.Look, fallback: Rgb, x: i32, y: u16, z: i32) Rgb {
+    const average = look.colour orelse return fallback;
+    if (look.grain.len == 0) return average;
+    const sample = look.grain[grainIndex(x, y, z, look.grain.len)];
+    var out: Rgb = undefined;
+    // As `ColorUtil.ColorOverlay`, rounding down.
+    for (&out, average, sample) |*channel, a, s| channel.* = @intFromFloat(@as(f32, @floatFromInt(a)) * (1 - grainWeight) + grainWeight * @as(f32, @floatFromInt(s)));
+    return out;
+}
+
+test textureColour {
+    const grain = [_]Rgb{ .{ 0, 0, 0 }, .{ 200, 100, 50 } };
+    const look: columns.Look = .{ .mapType = .land, .colour = .{ 100, 100, 100 }, .grain = &grain };
+    const colour = textureColour(look, .{ 1, 2, 3 }, 409, 111, -304);
+    try std.testing.expect(std.meta.eql(colour, Rgb{ 40, 40, 40 }) or std.meta.eql(colour, Rgb{ 160, 100, 70 }));
+    try std.testing.expectEqual(colour, textureColour(look, .{ 1, 2, 3 }, 409, 111, -304));
+    try std.testing.expectEqual(Rgb{ 1, 2, 3 }, textureColour(.{ .mapType = .land }, .{ 1, 2, 3 }, 0, 0, 0));
+}
+
+/// The game's position hash (vsapi `GameMath.MurmurHash3`): MurmurHash3's mixing of the
+/// three coordinates, with its seed.
+fn murmurHash3(x: i32, y: i32, z: i32) u32 {
+    const c1: u32 = 0xcc9e2d51;
+    const c2: u32 = 0x1b873593;
+    var h: u32 = 144;
+    for ([_]i32{ x, y, z }) |value| {
+        h ^= std.math.rotl(u32, @as(u32, @bitCast(value)) *% c1, 15) *% c2;
+        h = std.math.rotl(u32, h, 13) *% 5 +% 0xe6546b64;
+    }
+    h ^= 3;
+    h = (h ^ h >> 16) *% 0x85ebca6b;
+    h = (h ^ h >> 13) *% 0xc2b2ae35;
+    return h ^ h >> 16;
+}
+
+/// Which of `count` grain colours the column at (`x`, `y`, `z`) shows, as the game's
+/// `GameMath.MurmurHash3Mod` picks it: the hash as a signed number, modulo `count`, from 0.
+fn grainIndex(x: i32, y: i32, z: i32, count: usize) usize {
+    return @intCast(@mod(@as(i32, @bitCast(murmurHash3(x, y, z))), @as(i32, @intCast(count))));
+}
+
+test grainIndex {
+    // From a separate port of the game's code.
+    try std.testing.expectEqual(0x744e1107, murmurHash3(1, 2, 3));
+    try std.testing.expectEqual(0x3901e003, murmurHash3(409, 111, -304));
+    try std.testing.expectEqual(15, grainIndex(409, 111, -304, 30));
+    // A hash that's negative as a signed number.
+    try std.testing.expectEqual(0x9d8b5138, murmurHash3(2, 0, 0));
+    try std.testing.expectEqual(12, grainIndex(2, 0, 0, 30));
 }
 
 /// Each channel of `pixel` times `factor`, kept within 0 to 255 and rounded down, as the

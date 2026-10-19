@@ -230,6 +230,7 @@ test {
     _ = @import("vs/Wildcard.zig");
     _ = @import("vs/BlockTypes.zig");
     _ = @import("vs/Prepared.zig");
+    _ = @import("vs/TextureColours.zig");
     _ = @import("vs/Save.zig");
     _ = @import("bench.zig");
     _ = @import("renderer/topdown.zig");

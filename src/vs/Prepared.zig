@@ -1,24 +1,31 @@
 //! What rendering needs to know about the game's and mods' blocks, prepared once from their
 //! assets and kept, so a render never reads assets itself (docs/rendering.md#preparing-blocks).
-//! For each block: its code, its material and its colour on the game's map.
+//! For each block: its code, its material, its colour on the game's map, and the colours of
+//! its texture.
 //!
 //! A prepared set is a folder `<blocks folder>/<key>/` holding `blocks.txt`, where the key
-//! depends on the game version and the mods, so each combination is prepared once:
+//! depends on the game version and the mods, so each combination is prepared once. Textures
+//! come first, each with its average colour and its grain (`TextureColours`), and blocks
+//! name theirs by number, counting from 0, or `-` for none:
 //!
-//!     storymap blocks 2
+//!     storymap blocks 3
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
 //!     domain primitivesurvival
-//!     block rock-granite Stone land
+//!     texture game:block/stone/rock/granite1 8A7F78 978B83 …
+//!     …
+//!     block rock-granite Stone land 0 0
 //!     …
 const Prepared = @This();
 
 const std = @import("std");
 const Io = std.Io;
 const Dir = Io.Dir;
+const columns = @import("../columns.zig");
 const Assets = @import("Assets.zig");
 const BlockTypes = @import("BlockTypes.zig");
+const TextureColours = @import("TextureColours.zig");
 
 arena: std.heap.ArenaAllocator,
 gameVersion: []const u8 = "",
@@ -33,11 +40,15 @@ pub const Block = struct {
     material: []const u8,
     /// Its colour on the game's map, e.g. "land" or "forest" (docs/rendering.md#block-colours).
     colorCode: []const u8,
+    /// Its texture's average colour, and its grain, from the textures the game's
+    /// colour-accurate map uses (`BlockTypes.Textures`), where they could be read.
+    colour: ?columns.Rgb = null,
+    grain: []const columns.Rgb = &.{},
 };
 
 /// The format of `blocks.txt`, and of what goes into it: raise it when either changes, so
 /// sets prepared before are prepared again.
-const formatVersion = 2;
+const formatVersion = 3;
 const fileName = "blocks.txt";
 
 /// Blocks the game registers itself rather than from a block type file.
@@ -78,18 +89,73 @@ pub fn key(buffer: *[16]u8, io: Io, assets: *const Assets) ![]const u8 {
 /// many blocks there are.
 pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: Dir) !usize {
     const blocks = try BlockTypes.expand(arena, io, assets);
+    var textures: Textures = .{ .arena = arena, .io = io, .assets = assets };
+    const numbers = try arena.alloc([2]?usize, blocks.len);
+    for (numbers, blocks) |*number, block| number.* = .{ try textures.number(block.textures.colour), try textures.number(block.textures.grain) };
+
     var text: std.Io.Writer.Allocating = .init(arena);
     const w = &text.writer;
     try w.print("storymap blocks {}\ngame {s}\n", .{ formatVersion, assets.version orelse "" });
     for (assets.sources.items[1..]) |source| try w.print("mod {s}\n", .{source.name});
     for (assets.domains.keys()) |domain| try w.print("domain {s}\n", .{domain});
-    for (blocks) |block| try w.print("block {s} {s} {s}\n", .{ block.code, block.material, block.colorCode });
+    for (textures.read.items) |texture| {
+        try w.print("texture {s} {X}", .{ texture.location, &texture.colours.average });
+        for (texture.colours.grain) |sample| try w.print(" {X}", .{&sample});
+        try w.writeByte('\n');
+    }
+    for (blocks, numbers) |block, number| {
+        try w.print("block {s} {s} {s}", .{ block.code, block.material, block.colorCode });
+        for (number) |n| if (n) |i| try w.print(" {}", .{i}) else try w.writeAll(" -");
+        try w.writeByte('\n');
+    }
     // Written beside it first, so a set is never left half written.
     const partial = fileName ++ ".partial";
     try folder.writeFile(io, .{ .sub_path = partial, .data = text.written() });
     try folder.rename(partial, folder, fileName, io);
     return blocks.len;
 }
+
+/// The textures the blocks name, each read once, numbered in the order they're first named.
+const Textures = struct {
+    arena: std.mem.Allocator,
+    io: Io,
+    assets: *const Assets,
+    /// Each location named so far, and its number, or null if it can't be read.
+    numbers: std.StringHashMapUnmanaged(?usize) = .empty,
+    read: std.ArrayList(struct { location: []const u8, colours: TextureColours }) = .empty,
+    /// Every texture file, listed the first time a location ends in `*`.
+    files: ?[]const Assets.Name = null,
+
+    /// The number of the texture at `location`, reading it the first time; null without one,
+    /// or if it can't be read.
+    fn number(self: *Textures, location: ?[]const u8) !?usize {
+        const wanted = location orelse return null;
+        const entry = try self.numbers.getOrPut(self.arena, wanted);
+        if (entry.found_existing) return entry.value_ptr.*;
+        entry.value_ptr.* = null;
+        const colours = try self.readColours(wanted) orelse return null;
+        try self.read.append(self.arena, .{ .location = wanted, .colours = colours });
+        entry.value_ptr.* = self.read.items.len - 1;
+        return entry.value_ptr.*;
+    }
+
+    fn readColours(self: *Textures, location: []const u8) !?TextureColours {
+        const colon = std.mem.indexOfScalar(u8, location, ':').?;
+        const domain = location[0..colon];
+        var path = try std.fmt.allocPrint(self.arena, "textures/{s}.png", .{location[colon + 1 ..]});
+        if (std.mem.endsWith(u8, location, "*")) {
+            // The first file it starts, by name (vsapi `CompositeTexture.Bake`).
+            const start = path[0 .. path.len - "*.png".len];
+            const files = self.files orelse try self.assets.list(self.arena, self.io, "textures");
+            self.files = files;
+            path = for (files) |file| {
+                if (std.mem.eql(u8, file.domain, domain) and std.mem.startsWith(u8, file.path, start) and std.mem.endsWith(u8, file.path, ".png")) break @constCast(file.path);
+            } else return null;
+        }
+        const png = try self.assets.read(self.arena, self.io, domain, path) orelse return null;
+        return TextureColours.ofPng(png);
+    }
+};
 
 /// Whether `folder` holds a prepared set.
 pub fn exists(io: Io, folder: Dir) bool {
@@ -106,6 +172,7 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
     var lines = std.mem.tokenizeScalar(u8, text, '\n');
     const header = lines.next() orelse return error.NotPreparedBlocks;
     if (!std.mem.eql(u8, header, std.fmt.comptimePrint("storymap blocks {}", .{formatVersion}))) return error.NotPreparedBlocks;
+    var textures: std.ArrayList(*const TextureColours) = .empty;
     while (lines.next()) |line| {
         var words = std.mem.tokenizeScalar(u8, std.mem.trimEnd(u8, line, "\r"), ' ');
         const kind = words.next() orelse continue;
@@ -116,13 +183,42 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
             try self.mods.append(arena, first);
         } else if (std.mem.eql(u8, kind, "domain")) {
             try self.domains.put(arena, first, {});
+        } else if (std.mem.eql(u8, kind, "texture")) {
+            const colours = try arena.create(TextureColours);
+            colours.average = try parseRgb(words.next());
+            for (&colours.grain) |*sample| sample.* = try parseRgb(words.next());
+            try textures.append(arena, colours);
         } else if (std.mem.eql(u8, kind, "block")) {
             const material = words.next() orelse return error.NotPreparedBlocks;
             const colorCode = words.next() orelse return error.NotPreparedBlocks;
-            try self.blocks.put(arena, first, .{ .material = material, .colorCode = colorCode });
+            const colour = try textureAt(textures.items, words.next());
+            const grain = try textureAt(textures.items, words.next());
+            try self.blocks.put(arena, first, .{
+                .material = material,
+                .colorCode = colorCode,
+                .colour = if (colour) |texture| texture.average else null,
+                .grain = if (grain) |texture| &texture.grain else &.{},
+            });
         }
     }
     return self;
+}
+
+fn parseRgb(word: ?[]const u8) !columns.Rgb {
+    const hex = word orelse return error.NotPreparedBlocks;
+    var rgb: columns.Rgb = undefined;
+    if (hex.len != 6) return error.NotPreparedBlocks;
+    _ = std.fmt.hexToBytes(&rgb, hex) catch return error.NotPreparedBlocks;
+    return rgb;
+}
+
+/// The texture a block names by its number, or null for `-`.
+fn textureAt(textures: []const *const TextureColours, word: ?[]const u8) !?*const TextureColours {
+    const n = word orelse return error.NotPreparedBlocks;
+    if (std.mem.eql(u8, n, "-")) return null;
+    const i = std.fmt.parseInt(usize, n, 10) catch return error.NotPreparedBlocks;
+    if (i >= textures.len) return error.NotPreparedBlocks;
+    return textures[i];
 }
 
 /// The newest set prepared in the blocks folder `blocks`, by when it was prepared, for when
@@ -181,7 +277,9 @@ test "prepare, load and compare with a save" {
     const files = [_][2][]const u8{
         .{ "game/assets/version-1.22.7.txt", "" },
         .{ "game/assets/survival/worldproperties/block/rock.json", "{ code: 'rock', variants: [ { code: 'granite' } ] }" },
-        .{ "game/assets/survival/blocktypes/rock.json", "{ code: 'rock', variantgroups: [ { loadFromProperties: 'block/rock' } ] }" },
+        .{ "game/assets/survival/blocktypes/rock.json", "{ code: 'rock', variantgroups: [ { loadFromProperties: 'block/rock' } ], textures: { all: { base: 'block/stone/{rock}*' } } }" },
+        .{ "game/assets/survival/textures/block/stone/granite1.png", @embedFile("testdata/red.png") },
+        .{ "game/assets/survival/textures/block/stone/granite2.png", "not read: granite1 comes first" },
         .{ "data/Mods/testmod.zip", @embedFile("testdata/testmod.zip") },
     };
     for (files) |file| {
@@ -214,7 +312,11 @@ test "prepare, load and compare with a save" {
     try std.testing.expectEqualStrings("testmod.zip", prepared.mods.items[0]);
     try std.testing.expectEqualStrings("Stone", prepared.blocks.get("rock-granite").?.material);
     try std.testing.expectEqualStrings("land", prepared.blocks.get("rock-granite").?.colorCode);
+    // The transparent pixel counts for nothing.
+    try std.testing.expectEqual(columns.Rgb{ 200, 40, 20 }, prepared.blocks.get("rock-granite").?.colour.?);
+    try std.testing.expectEqual(TextureColours.samples, prepared.blocks.get("rock-granite").?.grain.len);
     try std.testing.expect(prepared.blocks.contains("testmod:thing"));
+    try std.testing.expectEqual(null, prepared.blocks.get("testmod:thing").?.colour);
 
     const codes = [_]?[]const u8{ "air", "rock-granite", "rock-basalt", null, "testmod:thing", "othermod:x", "othermod:y" };
     const missing = try prepared.unknown(std.testing.allocator, &codes);

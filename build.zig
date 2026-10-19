@@ -75,13 +75,17 @@ pub fn build(b: *std.Build) void {
     exe_mod.addImport("sqlite3", sqlite3_translate_c.createModule());
     exe_mod.linkLibrary(sqlite3_lib);
 
-    // stb_image_write
+    // stb_image_write, and stb_image for the PNG textures read when preparing blocks
 
     const stb = b.dependency("stb", .{});
 
-    const stb_impl = b.addWriteFiles().add("stb_image_write.c",
+    const stb_impl = b.addWriteFiles().add("stb.c",
         \\#define STB_IMAGE_WRITE_IMPLEMENTATION
         \\#include "stb_image_write.h"
+        \\#define STB_IMAGE_IMPLEMENTATION
+        \\#define STBI_ONLY_PNG
+        \\#define STBI_NO_STDIO
+        \\#include "stb_image.h"
         \\
     );
     exe_mod.addCSourceFile(.{ .file = stb_impl });
@@ -93,6 +97,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe_mod.addImport("stb_image_write", stb_translate_c.createModule());
+
+    const stb_image_translate_c = b.addTranslateC(.{
+        .root_source_file = stb.path("stb_image.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    stb_image_translate_c.defineCMacroRaw("STBI_NO_STDIO");
+    exe_mod.addImport("stb_image", stb_image_translate_c.createModule());
 
     // storymap
 

@@ -22,6 +22,9 @@ pub const Kind = enum {
     /// As the game draws its own map: each type's colour as it is, whatever the height, with
     /// the game's hill shading, and lakes unshaded with an edge in `wateredge`.
     shaded,
+    /// As the game draws its colour-accurate map: each block in its texture's colour, with
+    /// grain, and the game's hill shading. A block without a texture takes its type's colour.
+    coloured,
 };
 
 kind: Kind,
@@ -100,7 +103,7 @@ pub fn parse(text: []const u8, problem: *Problem) error{InvalidStyle}!File {
 
         if (std.mem.eql(u8, name, "style")) {
             if (seenKind) return fail(problem, number, "names the style a second time", name);
-            file.kind = std.meta.stringToEnum(Kind, value) orelse return fail(problem, number, "names a style that isn't relief or shaded", value);
+            file.kind = std.meta.stringToEnum(Kind, value) orelse return fail(problem, number, "names a style that isn't relief, shaded or coloured", value);
             seenKind = true;
             continue;
         }

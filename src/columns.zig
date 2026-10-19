@@ -35,6 +35,11 @@ pub const Look = struct {
     /// A thin layer a shaded map looks under, showing the block beneath it instead, as the
     /// game's map does with snow.
     cover: bool = false,
+    /// The average colour of its texture, for a map coloured by what blocks look like, or
+    /// null if the game's reader doesn't know it.
+    colour: ?Rgb = null,
+    /// Colours from across its texture, for grain: each column shows one of them, mixed in.
+    grain: []const Rgb = &.{},
 };
 
 /// A colour, red, green and blue.
