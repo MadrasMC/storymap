@@ -317,10 +317,10 @@ pub const Reader = struct {
         self.db.deinit();
     }
 
-    /// Fills `area` with the tile's block columns and the ring around them, from the save.
-    pub fn read(self: *Reader, tile: tiles.Tile, area: *columns.Area) !void {
-        area.clear();
-        // The area's north-west corner, in blocks, and the chunk column holding it.
+    /// Fills `surface` with the tile's block columns and the ring around them, from the save.
+    pub fn read(self: *Reader, tile: tiles.Tile, surface: *columns.Surface) !void {
+        surface.clear();
+        // The surface's north-west corner, in blocks, and the chunk column holding it.
         const x0 = @as(i64, tile.x) * tiles.size - 1;
         const z0 = @as(i64, tile.y) * tiles.size - 1;
         const cx0 = @as(i64, tile.x) * chunksPerTile - 1;
@@ -329,15 +329,15 @@ pub const Reader = struct {
             const cx = cx0 + @as(i64, @intCast(i));
             const cz = cz0 + @as(i64, @intCast(j));
             if (cx < 0 or cz < 0 or cx > Chunk.Position.maxXZ or cz > Chunk.Position.maxXZ) continue;
-            try self.readColumn(area.*, @intCast(cx), @intCast(cz), x0, z0);
+            try self.readColumn(surface.*, @intCast(cx), @intCast(cz), x0, z0);
         };
-        if (area.topTint.len > 0) try self.readTints(tile, area.*);
+        if (surface.topTint.len > 0) try self.readTints(tile, surface.*);
     }
 
     /// Tints the top solid block and the top liquid of each of the tile's own columns by
     /// the climate there, from the tile's map region (the same area), and the season. A tile
     /// without a climate map stays untinted.
-    fn readTints(self: *Reader, tile: tiles.Tile, area: columns.Area) !void {
+    fn readTints(self: *Reader, tile: tiles.Tile, surface: columns.Surface) !void {
         const save = self.save;
         if (tile.x < 0 or tile.y < 0) return;
         const region: Chunk.Position = .{ .x = @intCast(tile.x), .z = @intCast(tile.y) };
@@ -351,22 +351,22 @@ pub const Reader = struct {
         if (!found) return;
 
         const sea: i32 = @intCast(save.gameData.seaLevel());
-        const side = columns.Area.side;
+        const side = columns.Surface.side;
         for (0..tiles.size) |pz| for (0..tiles.size) |px| {
             const i = (pz + 1) * side + px + 1;
-            const top = if (area.top[i] != null) save.blockTint(area.topBlock[i]) else BlockTint{};
-            const liquid = if (area.liquidTop[i] != null) save.blockTint(area.liquidBlock[i]) else BlockTint{};
+            const top = if (surface.top[i] != null) save.blockTint(surface.topBlock[i]) else BlockTint{};
+            const liquid = if (surface.liquidTop[i] != null) save.blockTint(surface.liquidBlock[i]) else BlockTint{};
             if (top.climate == null and top.season == null and liquid.climate == null and liquid.season == null) continue;
             const here = self.climate.at(@as(f32, @floatFromInt(px)) / tiles.size, @as(f32, @floatFromInt(pz)) / tiles.size);
-            if (top.climate != null or top.season != null) area.topTint[i] = Tint.tint(top.climate, top.season, here, area.top[i].?, sea, save.seasonProgress);
-            if (liquid.climate != null or liquid.season != null) area.liquidTint[i] = Tint.tint(liquid.climate, liquid.season, here, area.liquidTop[i].?, sea, save.seasonProgress);
+            if (top.climate != null or top.season != null) surface.topTint[i] = Tint.tint(top.climate, top.season, here, surface.top[i].?, sea, save.seasonProgress);
+            if (liquid.climate != null or liquid.season != null) surface.liquidTint[i] = Tint.tint(liquid.climate, liquid.season, here, surface.liquidTop[i].?, sea, save.seasonProgress);
         };
     }
 
-    /// Records one chunk column's block columns that fall in the area: from their stored
-    /// heights where they have them, reading only the chunks those point into, and by
+    /// Records one chunk column's block columns that fall in the tile or its ring: from their
+    /// stored heights where they have them, reading only the chunks those point into, and by
     /// scanning down where they don't.
-    fn readColumn(self: *Reader, area: columns.Area, cx: u64, cz: u64, x0: i64, z0: i64) !void {
+    fn readColumn(self: *Reader, surface: columns.Surface, cx: u64, cz: u64, x0: i64, z0: i64) !void {
         // Keys in the world itself, dimension 0.
         const base: Chunk.Position = .{ .x = @intCast(cx), .z = @intCast(cz) };
         // Only fully generated chunk columns are drawn: the partly generated ones around
@@ -389,14 +389,14 @@ pub const Reader = struct {
         };
         if (stored.stage != .done) return;
 
-        // The block columns, within the chunk column, that fall in the area.
+        // The block columns, within the chunk column, that fall in the tile or its ring.
         const span: Span = .{
             .chunkX = cx,
             .chunkZ = cz,
             .x0 = @intCast(std.math.clamp(x0 - @as(i64, @intCast(cx * 32)), 0, 32)),
-            .x1 = @intCast(std.math.clamp(x0 + columns.Area.side - @as(i64, @intCast(cx * 32)), 0, 32)),
+            .x1 = @intCast(std.math.clamp(x0 + columns.Surface.side - @as(i64, @intCast(cx * 32)), 0, 32)),
             .z0 = @intCast(std.math.clamp(z0 - @as(i64, @intCast(cz * 32)), 0, 32)),
-            .z1 = @intCast(std.math.clamp(z0 + columns.Area.side - @as(i64, @intCast(cz * 32)), 0, 32)),
+            .z1 = @intCast(std.math.clamp(z0 + columns.Surface.side - @as(i64, @intCast(cz * 32)), 0, 32)),
             .areaX = x0,
             .areaZ = z0,
         };
@@ -431,7 +431,7 @@ pub const Reader = struct {
             }
             self.chunksRead += 1;
             decodeOrWarn(&self.decoder, self.chunk, position, self.chunkRow.column([]const u8, 0)) catch continue;
-            if (recordChunk(area, self.chunk, stored, span)) scanFrom = @max(scanFrom orelse level, level);
+            if (recordChunk(surface, self.chunk, stored, span)) scanFrom = @max(scanFrom orelse level, level);
         }
     }
 };
@@ -439,14 +439,14 @@ pub const Reader = struct {
 /// Records the block columns of `span` in one chunk: from their stored heights where they
 /// have them, by scanning down where they don't. Returns whether a stored height turned out
 /// stale, in which case its column needs the chunks below scanned too.
-fn recordChunk(area: columns.Area, chunk: *const Chunk, stored: *MapChunk, span: Span) bool {
+fn recordChunk(surface: columns.Surface, chunk: *const Chunk, stored: *MapChunk, span: Span) bool {
     var stale = false;
     for (span.z0..span.z1) |z| for (span.x0..span.x1) |x| {
         const index = span.index(x, z);
         const rain = &stored.rainHeight[z * 32 + x];
         if (rain.* != MapChunk.unset) {
             if (rain.* / 32 != chunk.position.y) continue;
-            if (recordStored(area, chunk, x, rain.* % 32, z, rain.*, stored.terrainHeight[z * 32 + x], index)) continue;
+            if (recordStored(surface, chunk, x, rain.* % 32, z, rain.*, stored.terrainHeight[z * 32 + x], index)) continue;
             // The block there is gone: the column has no blocks at all (the game stores 0
             // then), or it changed after its height was stored. Scan it instead.
             rain.* = MapChunk.unset;
@@ -454,10 +454,10 @@ fn recordChunk(area: columns.Area, chunk: *const Chunk, stored: *MapChunk, span:
         }
         // Plants growing in water, such as seaweed and reeds, share their place with it:
         // from above, the water shows, and its depth goes down to the ground below them.
-        recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &area.top[index], &area.topBlock[index]);
-        recordTop(&chunk.liquids, null, chunk.position.y, x, z, &area.liquidTop[index], &area.liquidBlock[index]);
-        if (area.top[index]) |top| if (top / 32 == chunk.position.y) {
-            area.underBlock[index] = blockBelow(chunk, x, top % 32, z);
+        recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &surface.top[index], &surface.topBlock[index]);
+        recordTop(&chunk.liquids, null, chunk.position.y, x, z, &surface.liquidTop[index], &surface.liquidBlock[index]);
+        if (surface.top[index]) |top| if (top / 32 == chunk.position.y) {
+            surface.underBlock[index] = blockBelow(chunk, x, top % 32, z);
         };
     };
     return stale;
@@ -476,21 +476,21 @@ fn blockBelow(chunk: *const Chunk, x: usize, y: usize, z: usize) i32 {
 /// Records a column from its stored heights: the block at the rain height, in the chunk that
 /// holds it. Rain stops at water, so a liquid there is the water surface, and the terrain
 /// height is its bed. Returns false, recording nothing, if there's no block there.
-fn recordStored(area: columns.Area, chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, index: usize) bool {
+fn recordStored(surface: columns.Surface, chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, index: usize) bool {
     const block = (y * 32 + z) * 32 + x;
     const liquidId = if (chunk.liquids.bits == 0) 0 else chunk.liquids.get(block);
     const solid = if (chunk.blocks.bits == 0) 0 else chunk.blocks.get(block);
     if (liquidId == 0 and solid == 0) return false;
     if (liquidId != 0) {
-        area.liquidTop[index] = rain;
-        area.liquidBlock[index] = liquidId;
+        surface.liquidTop[index] = rain;
+        surface.liquidBlock[index] = liquidId;
         // The block under the water isn't looked up; only its depth is drawn.
-        area.top[index] = if (terrain == MapChunk.unset) rain else @min(terrain, rain);
-        area.topBlock[index] = 0;
+        surface.top[index] = if (terrain == MapChunk.unset) rain else @min(terrain, rain);
+        surface.topBlock[index] = 0;
     } else {
-        area.top[index] = rain;
-        area.topBlock[index] = solid;
-        area.underBlock[index] = blockBelow(chunk, x, y, z);
+        surface.top[index] = rain;
+        surface.topBlock[index] = solid;
+        surface.underBlock[index] = blockBelow(chunk, x, y, z);
         // Liquid under the top block, such as a lake under a tree's leaves: the highest
         // liquid in the column, though the solid block above it is what shows. It can only
         // be above the terrain height, the ground before trees and plants grew, which for
@@ -505,8 +505,8 @@ fn recordStored(area: columns.Area, chunk: *const Chunk, x: usize, y: usize, z: 
                 below -= 1;
                 const liquidBelow = chunk.liquids.get((below * 32 + z) * 32 + x);
                 if (liquidBelow == 0) continue;
-                area.liquidTop[index] = rain - @as(u16, @intCast(y - below));
-                area.liquidBlock[index] = liquidBelow;
+                surface.liquidTop[index] = rain - @as(u16, @intCast(y - below));
+                surface.liquidBlock[index] = liquidBelow;
                 break;
             }
         }
@@ -514,7 +514,8 @@ fn recordStored(area: columns.Area, chunk: *const Chunk, x: usize, y: usize, z: 
     return true;
 }
 
-/// The block columns of one chunk column that fall in an area: x0..x1 and z0..z1 within it.
+/// The block columns of one chunk column that fall in a tile or its ring: x0..x1 and z0..z1
+/// within it.
 const Span = struct {
     chunkX: u64,
     chunkZ: u64,
@@ -522,15 +523,15 @@ const Span = struct {
     x1: usize,
     z0: usize,
     z1: usize,
-    /// The area's north-west corner, in blocks.
+    /// The surface's north-west corner, in blocks.
     areaX: i64,
     areaZ: i64,
 
-    /// The area index of block column (x, z) of the chunk column.
+    /// The index in the surface of block column (x, z) of the chunk column.
     fn index(self: Span, x: usize, z: usize) usize {
         const ax: usize = @intCast(@as(i64, @intCast(self.chunkX * 32 + x)) - self.areaX);
         const az: usize = @intCast(@as(i64, @intCast(self.chunkZ * 32 + z)) - self.areaZ);
-        return az * columns.Area.side + ax;
+        return az * columns.Surface.side + ax;
     }
 };
 

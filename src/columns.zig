@@ -1,4 +1,4 @@
-//! What a game tells the renderers about its world, the same for every game: for an area of
+//! What a game tells the renderers about its world, the same for every game: for a tile's
 //! block columns, what's on top of each one. A game's reader (src/vs/ for Vintage Story) fills
 //! these in from its saves; the renderers draw from them and know nothing of any save format.
 const std = @import("std");
@@ -62,10 +62,10 @@ pub const Heights = struct {
     sea: u16,
 };
 
-/// A tile's block columns and a one-block ring around them, so hill shading and coastlines
-/// match across tile edges. Column (x, z) of the area is at index `z * side + x`; the tile's
-/// own columns start at (1, 1).
-pub const Area = struct {
+/// The surface of a tile: what's on top of each of its block columns, and of a one-block ring
+/// around them, so hill shading and coastlines match across tile edges. Column (x, z) is at
+/// index `z * side + x`; the tile's own columns start at (1, 1).
+pub const Surface = struct {
     pub const side = tiles.size + 2;
 
     /// Height of the highest solid block in each column, or null if there is none. Under
@@ -92,7 +92,7 @@ pub const Area = struct {
         tints: bool = false,
     };
 
-    pub fn init(allocator: std.mem.Allocator, options: Options) !Area {
+    pub fn init(allocator: std.mem.Allocator, options: Options) !Surface {
         const top = try allocator.alloc(?u16, side * side);
         errdefer allocator.free(top);
         const topBlock = try allocator.alloc(i32, side * side);
@@ -109,7 +109,7 @@ pub const Area = struct {
         return .{ .top = top, .topBlock = topBlock, .liquidTop = liquidTop, .liquidBlock = liquidBlock, .underBlock = underBlock, .topTint = topTint, .liquidTint = liquidTint };
     }
 
-    pub fn deinit(self: Area, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: Surface, allocator: std.mem.Allocator) void {
         allocator.free(self.top);
         allocator.free(self.topBlock);
         allocator.free(self.liquidTop);
@@ -119,7 +119,7 @@ pub const Area = struct {
         allocator.free(self.liquidTint);
     }
 
-    pub fn clear(self: Area) void {
+    pub fn clear(self: Surface) void {
         @memset(self.top, null);
         @memset(self.topBlock, 0);
         @memset(self.liquidTop, null);

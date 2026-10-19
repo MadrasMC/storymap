@@ -8,7 +8,7 @@
 //! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `look(id: i32) columns.Look`,
 //!   for the game's block IDs;
 //! - `Reader`, one per thread, with `init(source: *const Source, allocator) !Reader`,
-//!   `deinit(*Reader, allocator)`, `read(*Reader, tile: tiles.Tile, area: *columns.Area) !void`
+//!   `deinit(*Reader, allocator)`, `read(*Reader, tile: tiles.Tile, surface: *columns.Surface) !void`
 //!   and a `chunksRead: usize` count.
 const std = @import("std");
 const Io = std.Io;
@@ -70,7 +70,7 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
         return;
     }
     std.debug.print("{} tiles in {} levels, surface y {}..{}\n", .{ rendered.tiles, rendered.levels, view.lowest, view.highest });
-    printSurfaceBlocks(Source, source, view.surface);
+    printSurfaceBlocks(Source, source, view.blockCounts);
 }
 
 /// What every worker shares, read-only while they draw, and their totals once they're done.
@@ -85,24 +85,24 @@ fn View(comptime Source: type) type {
 
         chunksRead: usize = 0,
         /// How many columns show each block ID from above.
-        surface: []usize,
+        blockCounts: []usize,
         /// The lowest and highest solid surface.
         lowest: u16 = std.math.maxInt(u16),
         highest: u16 = 0,
 
         fn init(allocator: std.mem.Allocator, source: *const Source, style: Style) !Self {
-            const surface = try allocator.alloc(usize, source.blockCount());
-            @memset(surface, 0);
-            return .{ .source = source, .heights = .of(source.heights()), .style = style, .surface = surface };
+            const blockCounts = try allocator.alloc(usize, source.blockCount());
+            @memset(blockCounts, 0);
+            return .{ .source = source, .heights = .of(source.heights()), .style = style, .blockCounts = blockCounts };
         }
 
         fn deinit(self: Self, allocator: std.mem.Allocator) void {
-            allocator.free(self.surface);
+            allocator.free(self.blockCounts);
         }
 
         pub fn collect(self: *Self, worker: *const Worker) void {
             self.chunksRead += worker.reader.chunksRead;
-            for (self.surface, worker.surface) |*total, count| total.* += count;
+            for (self.blockCounts, worker.blockCounts) |*total, count| total.* += count;
             self.lowest = @min(self.lowest, worker.lowest);
             self.highest = @max(self.highest, worker.highest);
         }
@@ -111,42 +111,42 @@ fn View(comptime Source: type) type {
         pub const Worker = struct {
             view: *const Self,
             reader: Source.Reader,
-            area: columns.Area,
+            surface: columns.Surface,
             /// The shaded style's shading, a byte per pixel as the game keeps it, and a copy of
             /// it before blurring.
             shade: []u8,
             unblurred: []u8,
 
-            surface: []usize,
+            blockCounts: []usize,
             lowest: u16 = std.math.maxInt(u16),
             highest: u16 = 0,
 
             pub fn init(view: *const Self, allocator: std.mem.Allocator) !Worker {
                 var reader: Source.Reader = try .init(view.source, allocator);
                 errdefer reader.deinit(allocator);
-                var area: columns.Area = try .init(allocator, .{ .tints = view.style.kind == .coloured });
-                errdefer area.deinit(allocator);
+                var surface: columns.Surface = try .init(allocator, .{ .tints = view.style.kind == .coloured });
+                errdefer surface.deinit(allocator);
                 const shade = try allocator.alloc(u8, tiles.size * tiles.size);
                 errdefer allocator.free(shade);
                 const unblurred = try allocator.alloc(u8, tiles.size * tiles.size);
                 errdefer allocator.free(unblurred);
-                const surface = try allocator.alloc(usize, view.surface.len);
-                @memset(surface, 0);
-                return .{ .view = view, .reader = reader, .area = area, .shade = shade, .unblurred = unblurred, .surface = surface };
+                const blockCounts = try allocator.alloc(usize, view.blockCounts.len);
+                @memset(blockCounts, 0);
+                return .{ .view = view, .reader = reader, .surface = surface, .shade = shade, .unblurred = unblurred, .blockCounts = blockCounts };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
-                allocator.free(self.surface);
+                allocator.free(self.blockCounts);
                 allocator.free(self.unblurred);
                 allocator.free(self.shade);
-                self.area.deinit(allocator);
+                self.surface.deinit(allocator);
                 self.reader.deinit(allocator);
             }
 
             /// Reads the tile's block columns and the ring around them, then colours its
             /// pixels. Returns false if it has nothing on it.
             pub fn draw(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) !bool {
-                try self.reader.read(tile, &self.area);
+                try self.reader.read(tile, &self.surface);
                 return switch (self.view.style.kind) {
                     .relief => self.paintRelief(pixels),
                     .shaded => self.paintShaded(pixels),
@@ -156,35 +156,35 @@ fn View(comptime Source: type) type {
 
             /// Counts what a column shows from above, for the summary.
             fn count(self: *Worker, i: usize, block: i32) void {
-                if (self.area.top[i]) |solid| {
+                if (self.surface.top[i]) |solid| {
                     self.lowest = @min(self.lowest, solid);
                     self.highest = @max(self.highest, solid);
                 }
-                if (block >= 0 and block < self.surface.len) self.surface[@intCast(block)] += 1;
+                if (block >= 0 and block < self.blockCounts.len) self.blockCounts[@intCast(block)] += 1;
             }
 
-            /// Colours the tile's pixels from the area as a relief map, and counts what it
+            /// Colours the tile's pixels from the surface as a relief map, and counts what it
             /// shows. Returns false if nothing is drawn.
             fn paintRelief(self: *Worker, pixels: *tiles.Pixels) bool {
-                const area = &self.area;
+                const surface = &self.surface;
                 const view = self.view;
-                const side = columns.Area.side;
+                const side = columns.Surface.side;
                 var any = false;
                 for (0..tiles.size) |py| for (0..tiles.size) |px| {
                     const i = (py + 1) * side + px + 1;
                     const pixel = &pixels[py * tiles.size + px];
-                    const here = Surface.of(area.top[i], area.liquidTop[i]);
+                    const here = ColumnTop.of(surface.top[i], surface.liquidTop[i]);
                     const y = here.height() orelse {
                         pixel.* = tiles.transparent;
                         continue;
                     };
                     any = true;
-                    const west: Surface = .of(area.top[i - 1], area.liquidTop[i - 1]);
-                    const north: Surface = .of(area.top[i - side], area.liquidTop[i - side]);
-                    const east: Surface = .of(area.top[i + 1], area.liquidTop[i + 1]);
-                    const south: Surface = .of(area.top[i + side], area.liquidTop[i + side]);
+                    const west: ColumnTop = .of(surface.top[i - 1], surface.liquidTop[i - 1]);
+                    const north: ColumnTop = .of(surface.top[i - side], surface.liquidTop[i - side]);
+                    const east: ColumnTop = .of(surface.top[i + 1], surface.liquidTop[i + 1]);
+                    const south: ColumnTop = .of(surface.top[i + side], surface.liquidTop[i + side]);
 
-                    const block = if (here == .liquid) area.liquidBlock[i] else area.topBlock[i];
+                    const block = if (here == .liquid) surface.liquidBlock[i] else surface.topBlock[i];
                     self.count(i, block);
 
                     const style = &view.style;
@@ -197,7 +197,7 @@ fn View(comptime Source: type) type {
                         pixel.* = if (shore and liquid != .lava)
                             rgb(style.wateredge)
                         else
-                            liquidColour(style.colours.get(liquid), if (area.top[i]) |ground| y - ground else maxDepth);
+                            liquidColour(style.colours.get(liquid), if (surface.top[i]) |ground| y - ground else maxDepth);
                         continue;
                     }
                     // Neighbours without blocks count as level ground.
@@ -207,7 +207,7 @@ fn View(comptime Source: type) type {
                 return any;
             }
 
-            /// Colours the tile's pixels from the area as the game draws its own map, and
+            /// Colours the tile's pixels from the surface as the game draws its own map, and
             /// counts what it shows. Returns false if nothing is drawn. As in vsessentialsmod's
             /// `ChunkMapLayer.GenerateChunkImage`: each column takes its type's colour; a
             /// column higher than its north-west, west and north neighbours, as a whole, is
@@ -215,28 +215,28 @@ fn View(comptime Source: type) type {
             /// each chunk and multiplied in. Lakes aren't shaded, and are edged in `wateredge`
             /// where they meet anything else.
             fn paintShaded(self: *Worker, pixels: *tiles.Pixels) bool {
-                const area = &self.area;
+                const surface = &self.surface;
                 const view = self.view;
                 const style = &view.style;
-                const side = columns.Area.side;
+                const side = columns.Surface.side;
                 var any = false;
                 for (0..tiles.size) |py| for (0..tiles.size) |px| {
                     const i = (py + 1) * side + px + 1;
                     const p = py * tiles.size + px;
                     self.shade[p] = 128;
-                    const here = Surface.of(area.top[i], area.liquidTop[i]);
+                    const here = ColumnTop.of(surface.top[i], surface.liquidTop[i]);
                     const y = here.height() orelse {
                         pixels[p] = tiles.transparent;
                         continue;
                     };
                     any = true;
-                    const top = if (here == .liquid) area.liquidBlock[i] else area.topBlock[i];
+                    const top = if (here == .liquid) surface.liquidBlock[i] else surface.topBlock[i];
                     self.count(i, top);
                     var look = view.source.look(top);
                     // Under a cover such as snow, what's beneath shows, one block lower.
                     var at = y;
-                    if (here == .land and look.cover and area.underBlock[i] != 0) {
-                        look = view.source.look(area.underBlock[i]);
+                    if (here == .land and look.cover and surface.underBlock[i] != 0) {
+                        look = view.source.look(surface.underBlock[i]);
                         at = y - 1;
                     }
                     if (look.lake or (here == .liquid and !look.mapType.isLiquid())) {
@@ -245,7 +245,7 @@ fn View(comptime Source: type) type {
                         const neighbours = [_]usize{ i - 1, i + 1, i - side, i + side };
                         var surrounded = true;
                         for (neighbours) |j| {
-                            if (area.top[j] == null and area.liquidTop[j] == null) {
+                            if (surface.top[j] == null and surface.liquidTop[j] == null) {
                                 surrounded = true;
                                 break;
                             }
@@ -256,41 +256,41 @@ fn View(comptime Source: type) type {
                         continue;
                     }
                     pixels[p] = rgb(style.colours.get(look.mapType));
-                    self.shade[p] = hillShade(area, i, y);
+                    self.shade[p] = hillShade(surface, i, y);
                 };
                 if (!any) return false;
                 self.applyShading(pixels);
                 return true;
             }
 
-            /// Colours the tile's pixels from the area as the game draws its colour-accurate
+            /// Colours the tile's pixels from the surface as the game draws its colour-accurate
             /// map, and counts what it shows. Returns false if nothing is drawn. As in
             /// `ChunkMapLayer.GenerateChunkImage` with `colorAccurateWorldmap`: each column takes
             /// its top block's texture colour, with grain, tinted as the reader says, and every
             /// column is shaded, lakes too; nothing is looked under.
             fn paintColoured(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) bool {
-                const area = &self.area;
+                const surface = &self.surface;
                 const view = self.view;
-                const side = columns.Area.side;
+                const side = columns.Surface.side;
                 var any = false;
                 for (0..tiles.size) |py| for (0..tiles.size) |px| {
                     const i = (py + 1) * side + px + 1;
                     const p = py * tiles.size + px;
                     self.shade[p] = 128;
-                    const here = Surface.of(area.top[i], area.liquidTop[i]);
+                    const here = ColumnTop.of(surface.top[i], surface.liquidTop[i]);
                     const y = here.height() orelse {
                         pixels[p] = tiles.transparent;
                         continue;
                     };
                     any = true;
-                    const top = if (here == .liquid) area.liquidBlock[i] else area.topBlock[i];
+                    const top = if (here == .liquid) surface.liquidBlock[i] else surface.topBlock[i];
                     self.count(i, top);
                     const look = view.source.look(top);
                     const x = tile.x * tiles.size + @as(i32, @intCast(px));
                     const z = tile.y * tiles.size + @as(i32, @intCast(py));
-                    const tint = if (here == .liquid) area.liquidTint[i] else area.topTint[i];
+                    const tint = if (here == .liquid) surface.liquidTint[i] else surface.topTint[i];
                     pixels[p] = rgb(textureColour(look, view.style.colours.get(look.mapType), tint, x, y, z));
-                    self.shade[p] = hillShade(area, i, y);
+                    self.shade[p] = hillShade(surface, i, y);
                 };
                 if (!any) return false;
                 self.applyShading(pixels);
@@ -317,15 +317,15 @@ fn View(comptime Source: type) type {
 
             /// Whether the block at height `y` in column `i`, which is drawn, is drawn as a lake.
             fn lakeAt(self: *const Worker, i: usize, y: u16) bool {
-                const area = &self.area;
+                const surface = &self.surface;
                 const source = self.view.source;
-                if (area.liquidTop[i]) |liquid| {
+                if (surface.liquidTop[i]) |liquid| {
                     // Liquid reaches down to `y` unless the solid block is in the way: below
                     // it is the ground it stands on, above it something over it, like leaves.
-                    const solid = area.top[i];
-                    if (liquid >= y and (solid == null or solid.? < y or solid.? > liquid)) return source.look(area.liquidBlock[i]).lake;
+                    const solid = surface.top[i];
+                    if (liquid >= y and (solid == null or solid.? < y or solid.? > liquid)) return source.look(surface.liquidBlock[i]).lake;
                 }
-                if (area.top[i]) |solid| if (solid == y) return source.look(area.topBlock[i]).lake;
+                if (surface.top[i]) |solid| if (solid == y) return source.look(surface.topBlock[i]).lake;
                 return false;
             }
         };
@@ -338,19 +338,19 @@ fn signOf(value: i32) i32 {
 }
 
 /// How much higher a column at height `y` is than column `i`, or 0 if `i` isn't drawn.
-fn rise(y: u16, area: *const columns.Area, i: usize) i32 {
-    const other = Surface.of(area.top[i], area.liquidTop[i]).height() orelse return 0;
+fn rise(y: u16, surface: *const columns.Surface, i: usize) i32 {
+    const other = ColumnTop.of(surface.top[i], surface.liquidTop[i]).height() orelse return 0;
     return @as(i32, y) - other;
 }
 
 /// The game map's hill shading for column `i` at height `y`, as a byte where 128 is level: a
 /// column higher than its north-west, west and north neighbours, as a whole, is lit, and one
 /// lower shaded, more for steeper slopes.
-fn hillShade(area: *const columns.Area, i: usize, y: u16) u8 {
-    const side = columns.Area.side;
-    const nw = rise(y, area, i - side - 1);
-    const w = rise(y, area, i - 1);
-    const n = rise(y, area, i - side);
+fn hillShade(surface: *const columns.Surface, i: usize, y: u16) u8 {
+    const side = columns.Surface.side;
+    const nw = rise(y, surface, i - side - 1);
+    const w = rise(y, surface, i - 1);
+    const n = rise(y, surface, i - side);
     const direction = signOf(nw) + signOf(w) + signOf(n);
     const steepness: f32 = @floatFromInt(@max(@abs(nw), @abs(w), @abs(n)));
     const light: f32 = if (direction > 0)
@@ -489,9 +489,9 @@ test blurLine {
 }
 
 /// The five most common blocks seen from above, by name.
-fn printSurfaceBlocks(comptime Source: type, source: *const Source, surface: []const usize) void {
+fn printSurfaceBlocks(comptime Source: type, source: *const Source, blockCounts: []const usize) void {
     var columnCount: usize = 0;
-    for (surface) |n| columnCount += n;
+    for (blockCounts) |n| columnCount += n;
     if (columnCount == 0) return;
     var shown: [5]usize = undefined;
     var count: usize = 0;
@@ -499,13 +499,13 @@ fn printSurfaceBlocks(comptime Source: type, source: *const Source, surface: []c
     while (count < shown.len) : (count += 1) {
         // The most common block not shown yet.
         var best: ?usize = null;
-        for (surface, 0..) |n, id| {
+        for (blockCounts, 0..) |n, id| {
             if (n == 0 or std.mem.indexOfScalar(usize, shown[0..count], id) != null) continue;
-            if (best == null or n > surface[best.?]) best = id;
+            if (best == null or n > blockCounts[best.?]) best = id;
         }
         const id = best orelse break;
         shown[count] = id;
-        const percent = surface[id] * 100 / columnCount;
+        const percent = blockCounts[id] * 100 / columnCount;
         const separator = if (count == 0) "" else ",";
         if (source.blockName(@intCast(id))) |code| {
             std.debug.print("{s} {s} {}%", .{ separator, code, percent });
@@ -517,7 +517,7 @@ fn printSurfaceBlocks(comptime Source: type, source: *const Source, surface: []c
 }
 
 /// What a column shows from above, and at what height.
-const Surface = union(enum) {
+const ColumnTop = union(enum) {
     /// No blocks at all, as far as the save goes.
     none,
     land: u16,
@@ -525,13 +525,13 @@ const Surface = union(enum) {
     /// block with it, so the water still shows.
     liquid: u16,
 
-    fn of(top: ?u16, liquidTop: ?u16) Surface {
+    fn of(top: ?u16, liquidTop: ?u16) ColumnTop {
         const liquid = liquidTop orelse return if (top) |y| .{ .land = y } else .none;
         const land = top orelse return .{ .liquid = liquid };
         return if (liquid >= land) .{ .liquid = liquid } else .{ .land = land };
     }
 
-    fn height(self: Surface) ?u16 {
+    fn height(self: ColumnTop) ?u16 {
         return switch (self) {
             .none => null,
             .land, .liquid => |y| y,
@@ -539,13 +539,13 @@ const Surface = union(enum) {
     }
 };
 
-test Surface {
-    try std.testing.expectEqual(Surface.none, Surface.of(null, null));
-    try std.testing.expectEqual(Surface{ .land = 90 }, Surface.of(90, null));
-    try std.testing.expectEqual(Surface{ .liquid = 109 }, Surface.of(90, 109));
-    try std.testing.expectEqual(Surface{ .liquid = 109 }, Surface.of(109, 109)); // seaweed
-    try std.testing.expectEqual(Surface{ .land = 120 }, Surface.of(120, 12)); // water in a cave
-    try std.testing.expectEqual(Surface{ .liquid = 109 }, Surface.of(null, 109));
+test ColumnTop {
+    try std.testing.expectEqual(ColumnTop.none, ColumnTop.of(null, null));
+    try std.testing.expectEqual(ColumnTop{ .land = 90 }, ColumnTop.of(90, null));
+    try std.testing.expectEqual(ColumnTop{ .liquid = 109 }, ColumnTop.of(90, 109));
+    try std.testing.expectEqual(ColumnTop{ .liquid = 109 }, ColumnTop.of(109, 109)); // seaweed
+    try std.testing.expectEqual(ColumnTop{ .land = 120 }, ColumnTop.of(120, 12)); // water in a cave
+    try std.testing.expectEqual(ColumnTop{ .liquid = 109 }, ColumnTop.of(null, 109));
 }
 
 /// Water this deep or deeper takes the darkest colour.
