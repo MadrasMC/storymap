@@ -103,6 +103,13 @@
 		padding: var(--s2) var(--s3);
 	}
 
+	.toc { margin: 0 0 var(--s8); }
+	.toc ol { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: var(--s6); }
+	.toc li { break-inside: avoid; }
+	.toc a { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s1) 0; text-decoration: none; }
+	.toc a:hover .title { text-decoration: underline; }
+	.toc .num { flex: none; font: 600 var(--t-micro)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+
 	section { margin: 0 0 var(--s8); scroll-margin-top: var(--s5); }
 	h2 {
 		display: flex;
@@ -228,8 +235,13 @@
 	.pos-inputs label:nth-child(3) { color: var(--z); }
 	.pos-inputs label:nth-child(4) { color: var(--accent); }
 	.pos-value { margin-top: var(--s3); }
+	.climate-inputs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); }
+	.climate-inputs label:nth-child(1) { color: var(--x); }
+	.climate-inputs label:nth-child(2) { color: var(--z); }
+	.climate-inputs label:nth-child(3) { color: var(--y); }
 	.bitbar { margin-top: var(--s5); }
 	.bitbar-labels, .bitbar-cells { display: grid; grid-template-columns: repeat(64, minmax(0, 1fr)); gap: 1px; }
+	.bitbar.bits32 .bitbar-labels, .bitbar.bits32 .bitbar-cells { grid-template-columns: repeat(32, minmax(0, 1fr)); }
 	.bitbar-labels span {
 		font: 600 var(--t-micro)/1 var(--mono);
 		padding-bottom: var(--s2);
@@ -505,6 +517,7 @@
 		.hex-anatomy .prefix { font-size: 1.125rem; line-height: 2rem; }
 		.hex-anatomy .gap { width: var(--s1); }
 		.panel { padding: var(--s4) var(--s3); }
+		.toc ol { columns: 1; }
 		.bitbar-cells span { font-size: 0; height: 1.125rem; }
 		.bits16 { gap: 2px; }
 		td code { overflow-wrap: anywhere; }
@@ -529,6 +542,7 @@
 		<p class="lede">How a <code>.vcdbs</code> save stores the world's blocks, from a database row down to a single block. The full text reference, with sources for every claim, is <a href="README.md">README.md</a>.</p>
 		<div class="versions"><span class="label">verified with</span><span class="version">1.19.1</span><span class="version">1.19.2</span><span class="version">1.22.7</span></div>
 	</header>
+	<nav class="toc" aria-label="Contents"><ol id="toc"></ol></nav>
 
 	<section id="save">
 		<h2><span class="num">01</span><span>The save is an SQLite database</span></h2>
@@ -546,6 +560,7 @@
 			<li><b><code>mapchunk</code> is a 2D layer on top.</b> One row per <b>chunk column</b>, the stack of chunks with the same x and z, keyed by just x and z. For each of its 32 × 32 block columns it keeps a few numbers, such as the height of the highest block rain can't fall through.</li>
 			<li><b><code>mapregion</code> is coarser still.</b> One row per 16 × 16 chunk columns, with world generation data.</li>
 		</ul>
+		<p>The other two tables aren't about places: <code>gamedata</code> is a single row of world-wide data, such as the block names and the clock (<a href="#block-names">10</a>), and <code>playerdata</code> has a row per player who has joined, with their inventory and where they are (<a href="#position">02</a>).</p>
 		<p>So a block column's map chunk gives its surface height, and that height names the one chunk holding the surface block. A top-down map only needs those chunks: about a fifth of the chunks in the test saves.</p>
 		<figure class="panel figure">
 			<svg class="diagram" viewBox="0 0 360 430" role="img" aria-labelledby="column-diagram-title">
@@ -639,9 +654,12 @@
 				<div class="bitbar-ends"><span>bit 63</span><span>bit 0</span></div>
 			</div>
 			<p class="stat" id="pos-range" style="margin: var(--s4) 0 0"></p>
+			<p class="stat" id="pos-game" style="margin: var(--s2) 0 0"></p>
 		</div>
-		<p class="muted">The grey bits are always 0, so positions are never negative. <code>mapchunk</code> positions use the same packing with y = 0.</p>
-		<p class="source">Sources: <a href="https://wiki.vintagestory.at/Modding:VCDBS_format#ChunkPos">wiki: VCDBS format</a> · verified against 1.19 and 1.22.7 saves · <a href="README.md#2-positions">README §2</a></p>
+		<p class="muted">The grey bits are always 0, so positions are never negative. <code>mapchunk</code> and <code>mapregion</code> positions use the same packing with y = 0, a map region's x and z counting regions of 16 × 16 chunk columns.</p>
+		<p>These coordinates are absolute. The game shows x and z from the world's centre instead, half the world's size in <code>gamedata</code>: in a default world of 1,024,000 × 1,024,000 blocks, block 512,000 is 0. It shows y as it is.</p>
+		<p>That's checked against a player. A player's position is in <code>playerdata</code>, as three 64-bit floats in their entity. One player stood on the ground where the game showed 409, 111, −304; that column's rain height is 110, so their feet were at 111. After they flew up and moved a few blocks, the save held them at 512,409.0, 193.9, 511,699.3: x 512,409 − 512,000 = 409, and z −300.7.</p>
+		<p class="source">Sources: <a href="https://wiki.vintagestory.at/Modding:VCDBS_format#ChunkPos">wiki: VCDBS format</a> · verified against 1.19 and 1.22.7 saves · the player check from a 1.22.7 world · <a href="README.md#2-positions">README §2</a></p>
 	</section>
 
 	<section id="fields">
@@ -865,11 +883,40 @@
 		</div>
 		<p style="margin-top: var(--s4)">The same number means different blocks in different saves: 2966 is <code>water-still-7</code> in the 1.22.7 world but a snowy fireclay roof corner in the 1.19 sample. So every save has to be read with its own list. The same row also holds the world's settings, such as how far from the centre new players spawn.</p>
 		<p>It also holds the world's height, 256 blocks by default, but not its sea level. The game derives that: the height × 110 / 255, rounded down, so 110 in a default world. Water fills the blocks below it, so the top water block of a sea or lake is at y 109.</p>
-		<p class="source">Sources: every block ID in both saves has a code · <a href="../../src/vs/GameData.zig">src/vs/GameData.zig</a> · sea level from the <a href="https://wiki.vintagestory.at/Sea_level">wiki</a>, matching the water in both saves · <a href="README.md#6-game-data">README §6</a></p>
+		<p>And the date: <code>TotalGameSeconds</code> counts game time from 00:00 on 1 January of the first year, which the calendar numbers 1386. Divide by 3,600 for hours and by <code>HoursPerDay</code>, 24, for days; a year is 12 months of the world's <code>daysPerMonth</code>, 9 by default. The 1.22.7 worlds were created at 3,139,200 seconds: 872 hours, so 36 days and 8 hours, which is 08:00 on 1 May 1386. A map coloured like the game's tints grass and leaves for the season on that date.</p>
+		<p class="source">Sources: every block ID in both saves has a code · <a href="../../src/vs/GameData.zig">src/vs/GameData.zig</a> · sea level from the <a href="https://wiki.vintagestory.at/Sea_level">wiki</a>, matching the water in both saves · the calendar from <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IGameCalendar.cs">vsapi IGameCalendar.cs</a> · <a href="README.md#6-game-data">README §6</a></p>
+	</section>
+
+	<section id="climate">
+		<h2><span class="num">11</span><span>Map regions: the climate</span></h2>
+		<p>Each <code>mapregion</code> row covers 16 × 16 chunk columns, 512 × 512 blocks, with the maps world generation drew it from: landforms, forests, rock strata, ores, and the climate. Each map is a square grid of numbers with a few rows and columns of padding, copied from the regions around it so they blend at the edges.</p>
+		<p>The climate map, field 3, has a value every 32 blocks: 16 × 16 inside 2 cells of padding. Each value packs the climate there at sea level: <span class="seg-x">temperature</span> and <span class="seg-z">rainfall</span>, a byte each, 0 to 255. Between the values, the game interpolates.</p>
+		<div class="panel">
+			<div class="climate-inputs">
+				<label class="field">TEMPERATURE<input id="cl-t" type="number" min="0" max="255" value="93" inputmode="numeric"></label>
+				<label class="field">RAINFALL<input id="cl-r" type="number" min="0" max="255" value="83" inputmode="numeric"></label>
+				<label class="field">OTHER<input id="cl-o" type="number" min="0" max="255" value="0" inputmode="numeric"></label>
+			</div>
+			<label class="field pos-value">VALUE<input id="cl-value" type="text" inputmode="numeric" spellcheck="false" autocomplete="off"></label>
+			<p class="error-line" id="cl-error" aria-live="polite"></p>
+			<div class="bitbar bits32">
+				<div class="bitbar-labels" aria-hidden="true">
+					<span class="seg-pad" style="grid-column: span 8">0</span>
+					<span class="seg-x" style="grid-column: span 8">temperature</span>
+					<span class="seg-z" style="grid-column: span 8">rainfall</span>
+					<span class="seg-y" style="grid-column: span 8">other</span>
+				</div>
+				<div class="bitbar-cells" id="cl-bits" aria-hidden="true"></div>
+				<div class="bitbar-ends"><span>bit 31</span><span>bit 0</span></div>
+			</div>
+		</div>
+		<p class="muted">The top byte is always 0. The lowest isn't the climate: it's set in about 30% of the values in the test saves, and what it means isn't known. The test saves' temperatures are 84 to 139 and their rainfalls 4 to 255.</p>
+		<p>Height changes both: it's colder higher up, by 1 for every 1.5 blocks above sea level, and the rainfall changes too. The game tints grass, leaves and water by the result, picking a colour from a climate colour map by temperature across and rainfall down. That's checked against the game's own map, whose water is that colour to within 1%.</p>
+		<p class="source">Sources: the grid's sizes in every test save · <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Datastructures/IntDataMap2D.cs">vsapi IntDataMap2D.cs</a> and <a href="https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Climate.cs">Climate.cs</a> · <a href="../rendering.md#climate-and-season-tint">rendering.md: climate and season tint</a> · <a href="README.md#8-map-regions">README §8</a></p>
 	</section>
 
 	<section id="map">
-		<h2><span class="num">11</span><span>Using it: a top-down map</span></h2>
+		<h2><span class="num">12</span><span>Using it: a top-down map</span></h2>
 		<p>A simple map needs only the top block of each column. Scan each column down from the top until something isn't air, and colour the pixel by that height. Columns with no blocks at all stay black. Click cells in the side view to add or remove blocks.</p>
 		<div class="panel toy">
 			<div>
@@ -882,15 +929,15 @@
 			</div>
 			<div class="buttons" style="margin-top: 0"><button type="button" class="btn" id="toy-reset">Reset</button></div>
 		</div>
-		<p>The game's own world map works the same way, with refinements: it takes each column's height from a stored rain height map instead of scanning, reads liquids too (they live in field 16, not field 1), looks under snow, colours by a per-block map colour, and shades slopes by comparing each column with its neighbours.</p>
+		<p>The game's own world map works the same way, with refinements: it takes each column's height from a stored rain height map instead of scanning, reads liquids too (they live in field 16, not field 1), looks under snow, colours by a per-block map colour, and shades slopes by comparing each column with its neighbours. Its colour-accurate mode colours each block by its texture instead, tinted by the climate (<a href="#climate">11</a>) and the season on the save's date (<a href="#block-names">10</a>).</p>
 		<p class="source">Source: 1.22.7 code, <a href="https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Systems/WorldMap/ChunkLayer/ChunkMapLayer.cs">vsessentialsmod ChunkMapLayer.cs</a></p>
 	</section>
 
 	<section id="unknown">
-		<h2><span class="num">12</span><span>Still unknown</span></h2>
+		<h2><span class="num">13</span><span>Still unknown</span></h2>
 		<ul class="list">
 			<li><b>The other fields.</b> Entities' data (6), field 10, the empty flag (13), decor (14) and the colour of light.</li>
-			<li><b>The other tables.</b> The schema names every field, but <code>playerdata</code> hasn't been decoded, nor have the values of <code>mapregion</code>'s maps, other than the climate map's, or a few fields newer than the schema.</li>
+			<li><b>The other tables.</b> The schema names every field, but <code>playerdata</code> hasn't been decoded beyond the player's position, nor have the values of <code>mapregion</code>'s maps other than the climate's, the climate's lowest byte, or a few fields newer than the schema.</li>
 			<li><b>Other dimensions.</b> No test save has chunks outside dimension 0.</li>
 			<li><b>Mods.</b> Modded block and item codes carry their mod's domain, such as <code>primitivesurvival:</code>; which generated structures come from a mod isn't known.</li>
 		</ul>
@@ -916,6 +963,19 @@
 		return bits;
 	};
 
+	/* contents, from the sections' headings */
+	for (const section of document.querySelectorAll("main > section[id]")) {
+		const heading = section.querySelector("h2");
+		const link = el("a");
+		link.href = `#${section.id}`;
+		const title = heading.lastElementChild.cloneNode(true);
+		title.className = "title";
+		link.append(el("span", "num", heading.querySelector(".num").textContent), title);
+		const item = el("li");
+		item.append(link);
+		$("#toc").append(item);
+	}
+
 	/* 02 position */
 	const MAX21 = 2097151;
 	const M21 = BigInt(MAX21);
@@ -926,6 +986,7 @@
 	const posValue = $("#pos-value");
 	const posError = $("#pos-error");
 	const posRange = $("#pos-range");
+	const posGame = $("#pos-game");
 	const bitCells = [];
 	// Bit 63 reserved, then y, the dimension's high half, a guard bit, z, its low half, a guard bit, x.
 	const segment = (i) => i === 63 || i === 48 || i === 21 ? "seg-pad" : i >= 54 ? "seg-y" : i >= 49 ? "seg-d" : i >= 27 ? "seg-z" : i >= 22 ? "seg-d" : "seg-x";
@@ -953,6 +1014,9 @@
 		const signed = BigInt.asIntN(64, v);
 		const stored = signed < 0n ? ` · stored as <b>${signed}</b>` : "";
 		posRange.innerHTML = `blocks <b>x ${fmt(x * 32)}–${fmt(x * 32 + 31)}</b> · <b>y ${fmt(y * 32)}–${fmt(y * 32 + 31)}</b> · <b>z ${fmt(z * 32)}–${fmt(z * 32 + 31)}</b>${d ? ` · dimension <b>${d}</b>` : ""}${stored}`;
+		const centre = 512000;
+		const shown = (n) => fmt(n).replace("-", "−");
+		posGame.innerHTML = `as the game shows it, in a default world: <b>x ${shown(x * 32 - centre)} to ${shown(x * 32 + 31 - centre)}</b> · <b>z ${shown(z * 32 - centre)} to ${shown(z * 32 + 31 - centre)}</b>`;
 	}
 	function setError(message, inputs) {
 		posError.textContent = message;
@@ -989,6 +1053,50 @@
 	[posX, posY, posZ, posD].forEach((input) => input.addEventListener("input", fromCoords));
 	posValue.addEventListener("input", fromValue);
 	fromCoords();
+
+	/* 11 climate */
+	const climateInputs = [[$("#cl-t"), "temperature", 16], [$("#cl-r"), "rainfall", 8], [$("#cl-o"), "other", 0]];
+	const climateValue = $("#cl-value");
+	const climateError = $("#cl-error");
+	const climateCells = [];
+	const climateSegment = (i) => i >= 24 ? "seg-pad" : i >= 16 ? "seg-x" : i >= 8 ? "seg-z" : "seg-y";
+	for (let i = 31; i >= 0; i--) {
+		const cell = el("span", climateSegment(i));
+		$("#cl-bits").append(cell);
+		climateCells[i] = cell;
+	}
+	function showClimate(v) {
+		for (let i = 0; i < 32; i++) {
+			const on = ((v >>> i) & 1) === 1;
+			climateCells[i].classList.toggle("on", on);
+			climateCells[i].textContent = on ? "1" : "0";
+		}
+	}
+	function setClimateError(message, inputs) {
+		climateError.textContent = message;
+		[...climateInputs.map(([input]) => input), climateValue].forEach((input) => input.setAttribute("aria-invalid", String(inputs.includes(input))));
+	}
+	function climateFromParts() {
+		const values = climateInputs.map(([input, name]) => readCoord(input, 255, name));
+		const bad = values.findIndex((v) => typeof v === "string");
+		if (bad >= 0) return setClimateError(values[bad], [climateInputs[bad][0]]);
+		setClimateError("", []);
+		const v = climateInputs.reduce((sum, [, , shift], i) => sum + values[i] * 2 ** shift, 0);
+		climateValue.value = String(v);
+		showClimate(v);
+	}
+	function climateFromValue() {
+		const text = climateValue.value.trim();
+		if (!/^\d+$/.test(text)) return setClimateError("value must be a whole number", [climateValue]);
+		const v = Number(text);
+		if (v > 0xffffff) return setClimateError(`value must be 0–${fmt(0xffffff)}: the top byte is 0`, [climateValue]);
+		setClimateError("", []);
+		climateInputs.forEach(([input, , shift]) => (input.value = (v >>> shift) & 255));
+		showClimate(v);
+	}
+	climateInputs.forEach(([input]) => input.addEventListener("input", climateFromParts));
+	climateValue.addEventListener("input", climateFromValue);
+	climateFromParts();
 
 	/* 04 blob */
 	const examples = {
