@@ -105,7 +105,7 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
     var problem: Style.Problem = .{};
-    const style = Style.parse(theme.topdown, &problem) catch {
+    const styleFile = Style.parse(theme.topdown, &problem) catch {
         if (problem.line == 0)
             exitWith("the theme {s}'s topdown/style.txt {s} {s}\n", .{ themeName, problem.message, problem.name })
         else
@@ -125,6 +125,7 @@ pub fn main(init: std.process.Init) !void {
         try warnUnknownBlocks(allocator, blocks, &save);
         save.useBlocks(blocks);
     }
+    const style = styleFile.complete(Save.palette);
     try topdown.render(Save, allocator, init.io, &save, .{ .folder = out }, .{ .theme = theme, .style = style });
 }
 
@@ -236,4 +237,12 @@ test {
     _ = @import("columns.zig");
     _ = @import("tiles.zig");
     _ = @import("viewer.zig");
+}
+
+test "the plain theme's colours are the game's" {
+    const style = Style.plain;
+    try std.testing.expectEqual(Save.palette.colours, style.colours);
+    try std.testing.expectEqual(Save.palette.wateredge, style.wateredge);
+    var problem: Style.Problem = .{};
+    try std.testing.expectEqual(style, (try Style.parse("style shaded\n", &problem)).complete(Save.palette));
 }

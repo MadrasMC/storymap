@@ -37,6 +37,17 @@ pub const Look = struct {
     cover: bool = false,
 };
 
+/// A colour, red, green and blue.
+pub const Rgb = [3]u8;
+
+/// How a game colours its own map, which a theme's style starts from: a colour for each map
+/// type, and the ink for water's edges and low ground.
+pub const Palette = struct {
+    colours: std.EnumArray(MapType, Rgb),
+    ink: Rgb,
+    wateredge: Rgb,
+};
+
 /// The heights a map is coloured by: they depend only on the world, so every part of a map,
 /// and every world, is coloured the same way.
 pub const Heights = struct {

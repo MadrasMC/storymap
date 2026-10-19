@@ -106,6 +106,26 @@ pub fn blockName(self: *const Save, id: i32) ?[]const u8 {
     return self.gameData.blockCode(id);
 }
 
+/// The game's own map colours (vsessentialsmod `ChunkMapLayer`), for what a theme's style
+/// leaves out. Its edges are in the same ink as the rest of its lines.
+pub const palette: columns.Palette = .{
+    .colours = .init(.{
+        .land = .{ 0xAC, 0x88, 0x58 },
+        .desert = .{ 0xC4, 0xA4, 0x68 },
+        .forest = .{ 0x98, 0x84, 0x4C },
+        .plant = .{ 0x80, 0x86, 0x50 },
+        .settlement = .{ 0x85, 0x68, 0x44 },
+        .road = .{ 0x80, 0x50, 0x30 },
+        .devastation = .{ 0x75, 0x5C, 0x3C },
+        .glacier = .{ 0xE0, 0xE0, 0xC0 },
+        .lake = .{ 0xCC, 0xC8, 0x90 },
+        .ocean = .{ 0xCC, 0xC8, 0x90 },
+        .lava = .{ 0xCC, 0xC8, 0x90 },
+    }),
+    .ink = .{ 0x48, 0x30, 0x18 },
+    .wateredge = .{ 0x48, 0x30, 0x18 },
+};
+
 /// What a block ID looks like on the map. Anything unknown is land.
 pub fn look(self: *const Save, id: i32) columns.Look {
     return if (id >= 0 and id < self.looks.len) self.looks[@intCast(id)] else .{ .mapType = .land };
