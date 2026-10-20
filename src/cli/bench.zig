@@ -14,7 +14,6 @@ const DB = @import("sqlite");
 const Chunk = @import("vs").Chunk;
 const SaveFile = @import("vs").SaveFile;
 const topdown = @import("renderer").topdown;
-const Style = @import("renderer").Style;
 const Theme = @import("theme");
 const build_options = @import("build_options");
 const console = @import("console");
@@ -158,10 +157,7 @@ const Result = struct {
 };
 
 /// The style every render is drawn in: the default theme's.
-const style = style: {
-    var problem: Style.Problem = .{};
-    break :style Style.parse(Theme.printed.topdown, SaveFile.palette, &problem) catch @compileError(problem.message ++ " " ++ problem.name);
-};
+const style = Theme.printed.topdown;
 
 /// One render: the save opened, with its block list and which tiles it has, drawn without
 /// writing anything, and closed. Returns how long opening took.

@@ -14,7 +14,7 @@ const std = @import("std");
 const Io = std.Io;
 const world = @import("world");
 const tiles = @import("tiles");
-const Style = @import("Style.zig");
+const Style = @import("theme").Style;
 const Rgb = Style.Rgb;
 
 /// What a render covered and how long it took.

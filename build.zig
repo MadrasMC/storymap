@@ -145,6 +145,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/theme/Theme.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{.{ .name = "world", .module = world_mod }},
     });
 
     const viewer_mod = b.createModule(.{
@@ -171,6 +172,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "world", .module = world_mod },
             .{ .name = "tiles", .module = tiles_mod },
+            .{ .name = "theme", .module = theme_mod },
         },
     });
 

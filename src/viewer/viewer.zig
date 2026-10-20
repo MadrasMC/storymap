@@ -41,7 +41,7 @@ pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, description: 
     defer allocator.free(inlined);
     // The theme goes in first: it's ours, while the description holds the world's name, which
     // could contain anything.
-    const themed = try fill(allocator, template, styleMarker, &.{ "<style id=\"theme-style\">", theme.style, "</style>" });
+    const themed = try fill(allocator, template, styleMarker, &.{ "<style id=\"theme-style\">", theme.stylesheet, "</style>" });
     defer allocator.free(themed);
     const scripted = try fill(allocator, themed, scriptMarker, &.{ "<script id=\"theme-script\">", theme.script, "</script>" });
     defer allocator.free(scripted);

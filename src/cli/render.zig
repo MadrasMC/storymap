@@ -4,7 +4,7 @@ const std = @import("std");
 const SaveFile = @import("vs").SaveFile;
 const Prepared = @import("vs").Prepared;
 const topdown = @import("renderer").topdown;
-const Style = @import("renderer").Style;
+const Style = @import("theme").Style;
 const viewer = @import("viewer");
 const Theme = @import("theme");
 const console = @import("console");
@@ -50,17 +50,15 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     };
     const force = parsed.flag("prepare");
 
-    const theme = Theme.load(init.arena.allocator(), init.io, themeName) catch |err| switch (err) {
-        error.ThemeStyleEndsItsElement => console.fail("{s}/theme.css can't contain </style: it would end the theme's style in the page early\n", .{themeName}),
-        error.ThemeScriptEndsItsElement => console.fail("{s}/theme.js can't contain </script: it would end the theme's script in the page early\n", .{themeName}),
-        else => console.fail("there's no theme {s}: it isn't printed or plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(err) }),
-    };
-    var problem: Style.Problem = .{};
-    const style = Style.parse(theme.topdown, SaveFile.palette, &problem) catch {
-        if (problem.line == 0)
-            console.fail("the theme {s}'s topdown/style.txt {s}{s}{s}\n", .{ themeName, problem.message, if (problem.name.len > 0) " " else "", problem.name })
+    var problem: Theme.Problem = .{};
+    const theme = Theme.load(init.arena.allocator(), init.io, themeName, SaveFile.palette, &problem) catch switch (problem.kind) {
+        .unreadable => console.fail("there's no theme {s}: it isn't printed or plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(problem.cause.?) }),
+        .stylesheetEndsItsElement => console.fail("{s}/theme.css can't contain </style: it would end the theme's style in the page early\n", .{themeName}),
+        .scriptEndsItsElement => console.fail("{s}/theme.js can't contain </script: it would end the theme's script in the page early\n", .{themeName}),
+        .invalidStyle => if (problem.style.line == 0)
+            console.fail("the theme {s}'s topdown/style.txt {s}{s}{s}\n", .{ themeName, problem.style.message, if (problem.style.name.len > 0) " " else "", problem.style.name })
         else
-            console.fail("the theme {s}'s topdown/style.txt, line {}: {s} {s}\n", .{ themeName, problem.line, problem.name, problem.message });
+            console.fail("the theme {s}'s topdown/style.txt, line {}: {s} {s}\n", .{ themeName, problem.style.line, problem.style.name, problem.style.message }),
     };
 
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err|
@@ -75,7 +73,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         try warnUnknownBlocks(allocator, blocks, &save);
         save.useBlocks(blocks);
     }
-    const written = try topdown.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .style = style });
+    const written = try topdown.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .style = theme.topdown });
     defer allocator.free(written);
 
     // The viewer page goes next to the tiles. With more views, it'll list them all.
@@ -110,17 +108,9 @@ fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, sa
     if (unknown.example) |example| std.debug.print("storymap: {} of the world's blocks aren't defined by the game or its mods, such as {s}\n", .{ unknown.codes, example });
 }
 
-test "the built-in themes' styles give every colour" {
-    var problem: Style.Problem = .{};
-    for (Theme.builtIn) |entry| _ = try Style.parse(entry.theme.topdown, null, &problem);
-    const printed = try Style.parse(Theme.printed.topdown, null, &problem);
-    try std.testing.expectEqual(.relief, printed.kind);
-    try std.testing.expectEqual(Style.Rgb{ 0xE4, 0xD2, 0xA0 }, printed.colours.get(.land));
-}
-
 test "the plain theme's colours are the game's" {
     var problem: Style.Problem = .{};
-    const style = try Style.parse(Theme.plain.topdown, null, &problem);
+    const style = Theme.plain.topdown;
     try std.testing.expectEqual(.shaded, style.kind);
     try std.testing.expectEqual(SaveFile.palette.colours, style.colours);
     try std.testing.expectEqual(SaveFile.palette.wateredge, style.wateredge);

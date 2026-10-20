@@ -10,10 +10,10 @@ Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a r
 | --- | --- |
 | `tiles` | – |
 | `world` | `tiles` |
-| `theme` | – |
+| `theme` | `world` |
 | `viewer` | `tiles`, `theme`, `world` |
 | `console` | – |
-| `renderer` | `world`, `tiles` |
+| `renderer` | `world`, `tiles`, `theme` |
 | `vs` | `world`, `tiles`, `sqlite`, `protobuf` |
 | `cli` | `vs`, `renderer`, `viewer`, `theme`, `console`, `sqlite`, `args` |
 
