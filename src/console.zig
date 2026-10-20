@@ -36,3 +36,9 @@ pub fn exit(status: u8) noreturn {
     restore();
     std.process.exit(status);
 }
+
+/// Prints what went wrong after "storymap: " on stderr, and exits with 1.
+pub fn fail(comptime format: []const u8, values: anytype) noreturn {
+    std.debug.print("storymap: " ++ format, values);
+    exit(1);
+}
