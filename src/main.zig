@@ -12,7 +12,7 @@ const console = @import("console.zig");
 const usage =
     \\usage: storymap <save.vcdbs> [output folder] [--theme <theme>] [--season <season>] [--prepare] [--blocks <folder>] [--game <folder>] [--data <folder>]
     \\       storymap prepare [blocks folder] [--game <folder>] [--data <folder>]
-    \\       storymap bench <save.vcdbs> [runs]
+    \\       storymap bench <save.vcdbs> [runs] [--json]
     \\       storymap --version
     \\
     \\Renders a top-down map of a Vintage Story save as tiles in the output folder,

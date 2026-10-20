@@ -4,7 +4,7 @@
 //! The PNGs are encoded but not written, so the disk isn't timed. One untimed render first
 //! warms the file cache.
 //!
-//! Besides the summary on stderr, it prints the results on stdout as one line of JSON
+//! It prints a summary on stderr, or with `--json` the results on stdout as one line of JSON
 //! (`Result`), for scripts comparing versions: its keys keep their names and meaning, and
 //! later versions only add keys.
 const std = @import("std");
@@ -18,9 +18,10 @@ const build_options = @import("build_options");
 const console = @import("console.zig");
 
 pub const usage =
-    \\usage: storymap bench <save.vcdbs> [runs]
+    \\usage: storymap bench <save.vcdbs> [runs] [--json]
     \\
     \\Renders the save `runs` times (5 by default) and prints the median time of each stage.
+    \\--json prints the results as one line of JSON instead, for scripts.
     \\
 ;
 
@@ -28,9 +29,22 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     const allocator = init.gpa;
     const io = init.io;
 
-    if (args.len < 1 or args.len > 2) fail(usage, .{});
-    const dbPath = args[0];
-    const runs = if (args.len == 2) std.fmt.parseInt(usize, args[1], 10) catch 0 else 5;
+    // The save and the number of runs in order, and --json anywhere among them.
+    var json = false;
+    var positional: [2][]const u8 = undefined;
+    var count: usize = 0;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            json = true;
+        } else {
+            if (count == positional.len) fail(usage, .{});
+            positional[count] = arg;
+            count += 1;
+        }
+    }
+    if (count == 0) fail(usage, .{});
+    const dbPath = positional[0];
+    const runs = if (count == 2) std.fmt.parseInt(usize, positional[1], 10) catch 0 else 5;
     if (runs == 0) fail("runs must be a whole number above 0\n\n" ++ usage, .{});
 
     const open = try allocator.alloc(Io.Duration, runs);
@@ -64,20 +78,28 @@ pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
 
     const threads = std.Thread.getCpuCount() catch 1;
     const world = std.fs.path.basename(dbPath);
-    std.debug.print("storymap {s}, {s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs\n", .{
-        build_options.version, world, chunks, stats.chunksRead, stats.tiles, threads, @tagName(builtin.mode), runs,
-    });
     const seconds: Result.Seconds = .{
-        .open = printStage("open and block list", open, null),
-        .decode = printStage("decode every chunk", decode, chunks),
-        .tiles = printStage("tiles", tiles, chunks),
-        .total = printStage("end to end", total, chunks),
+        .open = medianSeconds(open),
+        .decode = medianSeconds(decode),
+        .tiles = medianSeconds(tiles),
+        .total = medianSeconds(total),
     };
     std.mem.sort(f64, encodeShare, {}, std.sort.asc(f64));
-    std.debug.print("  of the workers' time, {d:.0}% went to encoding PNGs\n", .{encodeShare[runs / 2] * 100});
     // A block is a metre across, so the area in blocks is in square metres.
     const area: f64 = @floatFromInt(stats.area);
-    std.debug.print("  map area {d:.2} km², drawn at {d:.1} km²/s end to end\n", .{ area / 1e6, area / 1e6 / seconds.total });
+
+    if (!json) {
+        std.debug.print("storymap {s}, {s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs\n", .{
+            build_options.version, world, chunks, stats.chunksRead, stats.tiles, threads, @tagName(builtin.mode), runs,
+        });
+        printStage("open and block list", seconds.open, null);
+        printStage("decode every chunk", seconds.decode, chunks);
+        printStage("tiles", seconds.tiles, chunks);
+        printStage("end to end", seconds.total, chunks);
+        std.debug.print("  of the workers' time, {d:.0}% went to encoding PNGs\n", .{encodeShare[runs / 2] * 100});
+        std.debug.print("  map area {d:.2} km², drawn at {d:.1} km²/s end to end\n", .{ area / 1e6, area / 1e6 / seconds.total });
+        return;
+    }
 
     const result: Result = .{
         .version = build_options.version,
@@ -151,13 +173,16 @@ fn renderOnce(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *
     return opened;
 }
 
-/// Prints a stage's median time, and returns it in seconds.
-fn printStage(name: []const u8, times: []Io.Duration, chunks: ?usize) f64 {
-    const seconds = @as(f64, @floatFromInt(median(times).nanoseconds)) / std.time.ns_per_s;
+/// The median of `times`, in seconds.
+fn medianSeconds(times: []Io.Duration) f64 {
+    return @as(f64, @floatFromInt(median(times).nanoseconds)) / std.time.ns_per_s;
+}
+
+/// Prints a stage's time, and the chunks per second it makes if `chunks` is given.
+fn printStage(name: []const u8, seconds: f64, chunks: ?usize) void {
     std.debug.print("  {s:<22} {d:>7.3} s", .{ name, seconds });
     if (chunks) |n| std.debug.print("  {d:>9.0} chunks/s", .{@as(f64, @floatFromInt(n)) / seconds});
     std.debug.print("\n", .{});
-    return seconds;
 }
 
 /// Decodes every chunk in the save on every core, and returns how many there are. Each worker
