@@ -56,9 +56,9 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         else => console.fail("there's no theme {s}: it isn't printed or plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(err) }),
     };
     var problem: Style.Problem = .{};
-    const styleFile = Style.parse(theme.topdown, &problem) catch {
+    const style = Style.parse(theme.topdown, SaveFile.palette, &problem) catch {
         if (problem.line == 0)
-            console.fail("the theme {s}'s topdown/style.txt {s} {s}\n", .{ themeName, problem.message, problem.name })
+            console.fail("the theme {s}'s topdown/style.txt {s}{s}{s}\n", .{ themeName, problem.message, if (problem.name.len > 0) " " else "", problem.name })
         else
             console.fail("the theme {s}'s topdown/style.txt, line {}: {s} {s}\n", .{ themeName, problem.line, problem.name, problem.message });
     };
@@ -75,7 +75,6 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         try warnUnknownBlocks(allocator, blocks, &save);
         save.useBlocks(blocks);
     }
-    const style = styleFile.complete(SaveFile.palette);
     const written = try topdown.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .style = style });
     defer allocator.free(written);
 
@@ -111,19 +110,19 @@ fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, sa
     if (unknown.example) |example| std.debug.print("storymap: {} of the world's blocks aren't defined by the game or its mods, such as {s}\n", .{ unknown.codes, example });
 }
 
-test "the built-in themes' styles" {
-    const printed = comptime Style.parsed(Theme.printed.topdown);
+test "the built-in themes' styles give every colour" {
+    var problem: Style.Problem = .{};
+    for (Theme.builtIn) |entry| _ = try Style.parse(entry.theme.topdown, null, &problem);
+    const printed = try Style.parse(Theme.printed.topdown, null, &problem);
     try std.testing.expectEqual(.relief, printed.kind);
     try std.testing.expectEqual(Style.Rgb{ 0xE4, 0xD2, 0xA0 }, printed.colours.get(.land));
-    const plain = comptime Style.parsed(Theme.plain.topdown);
-    try std.testing.expectEqual(.shaded, plain.kind);
-    try std.testing.expectEqual(Style.Rgb{ 0xAC, 0x88, 0x58 }, plain.colours.get(.land));
 }
 
 test "the plain theme's colours are the game's" {
-    const style = comptime Style.parsed(Theme.plain.topdown);
+    var problem: Style.Problem = .{};
+    const style = try Style.parse(Theme.plain.topdown, null, &problem);
+    try std.testing.expectEqual(.shaded, style.kind);
     try std.testing.expectEqual(SaveFile.palette.colours, style.colours);
     try std.testing.expectEqual(SaveFile.palette.wateredge, style.wateredge);
-    var problem: Style.Problem = .{};
-    try std.testing.expectEqual(style, (try Style.parse("style shaded\n", &problem)).complete(SaveFile.palette));
+    try std.testing.expectEqual(style, try Style.parse("style shaded\n", SaveFile.palette, &problem));
 }

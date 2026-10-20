@@ -158,7 +158,10 @@ const Result = struct {
 };
 
 /// The style every render is drawn in: the default theme's.
-const style = Style.parsed(Theme.printed.topdown);
+const style = style: {
+    var problem: Style.Problem = .{};
+    break :style Style.parse(Theme.printed.topdown, SaveFile.palette, &problem) catch @compileError(problem.message ++ " " ++ problem.name);
+};
 
 /// One render: the save opened, with its block list and which tiles it has, drawn without
 /// writing anything, and closed. Returns how long opening took.
