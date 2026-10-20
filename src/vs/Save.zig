@@ -4,18 +4,18 @@
 const Save = @This();
 
 const std = @import("std");
-const DB = @import("../sqlite.zig");
-const tiles = @import("../tiles.zig");
-const columns = @import("../columns.zig");
-const viewer = @import("../viewer.zig");
+const DB = @import("sqlite");
+const tiles = @import("tiles");
+const columns = @import("columns");
+const viewer = @import("viewer");
 const Chunk = @import("Chunk.zig");
 const Compression = @import("Compression.zig");
 const MapChunk = @import("MapChunk.zig");
 const GameData = @import("GameData.zig");
 const Prepared = @import("Prepared.zig");
 const Tint = @import("Tint.zig");
-const ProtoBuf = @import("../ProtoBuf.zig");
-const console = @import("../console.zig");
+const ProtoBuf = @import("protobuf");
+const console = @import("console");
 
 path: []const u8,
 db: DB,

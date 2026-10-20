@@ -3,7 +3,7 @@
 const MapChunk = @This();
 
 const std = @import("std");
-const ProtoBuf = @import("../ProtoBuf.zig");
+const ProtoBuf = @import("protobuf");
 
 pub const Error = ProtoBuf.Error || error{
     /// A height map is missing, has the wrong number of values, or a value over 65,535.

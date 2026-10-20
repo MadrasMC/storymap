@@ -1,4 +1,4 @@
-//! A minimal reader for the Protobuf wire format, enough for save files:
+//! A minimal reader for the Protobuf wire format, without a schema:
 //! https://protobuf.dev/programming-guides/encoding/
 //!
 //! Every read is bounds-checked, so truncated or corrupt data is an error, not a crash.
@@ -67,7 +67,7 @@ pub fn next(self: *ProtoBuf) Error!?Message {
         .field_number = field_number,
         .data = switch (tag & 0b111) {
             0 => .{ .VARINT = try self.parseVarInt() },
-            // Fixed-width values (double, float, fixed32/64); `gamedata` has a few.
+            // Fixed-width values (double, float, fixed32/64).
             1 => .{ .I64 = std.mem.readInt(u64, (try self.take(8))[0..8], .little) },
             2 => blk: {
                 const len = try self.parseVarInt();
@@ -103,7 +103,7 @@ test "117" {
     try std.testing.expect(try parser.parseVarInt() == 117);
 }
 
-test "every wire type Storymap reads" {
+test "every wire type" {
     // field 1 varint 300, field 2 bytes "hi", field 3 fixed64, field 4 fixed32.
     var parser: ProtoBuf = .{ .buf = &.{
         0x08, 0xac, 0x02, 0x12, 0x02, 'h', 'i', 0x19, 1, 0, 0, 0, 0, 0, 0, 0,

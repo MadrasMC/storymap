@@ -1,6 +1,6 @@
 # Themes
 
-The map viewer is two parts. The map itself, in [`src/viewer.html`](../src/viewer.html), is the same for everyone: the tiles, panning and zooming, the zoom steps, and the place kept in the page's address. A **theme** draws everything around it: where the map sits on the page, a title, the position and scale, zoom controls, a grid, and what to show when there's no map. Storymap inlines the theme into `index.html` when it renders, so the page still opens straight from the disk. A theme also says how the map itself is coloured ([Map colours](#map-colours)).
+The map viewer is two parts. The map itself, in [`src/viewer/viewer.html`](../src/viewer/viewer.html), is the same for everyone: the tiles, panning and zooming, the zoom steps, and the place kept in the page's address. A **theme** draws everything around it: where the map sits on the page, a title, the position and scale, zoom controls, a grid, and what to show when there's no map. Storymap inlines the theme into `index.html` when it renders, so the page still opens straight from the disk. A theme also says how the map itself is coloured ([Map colours](#map-colours)).
 
 ## Choosing a theme
 
@@ -10,9 +10,9 @@ Pass `--theme` when rendering:
 zig build run -- path/to/save.vcdbs out --theme plain
 ```
 
-- **`printed`** (the default, [`src/themes/printed`](../src/themes/printed)): the map as a printed sheet, with a neatline, a grid labelled in the margin, a title cartouche, a scale bar and a key of hills for zooming.
-- **`plain`** ([`src/themes/plain`](../src/themes/plain)): the map filling the window, with its name, the position, a scale and zoom buttons in small panels, light or dark with the reader's setting. It's short on purpose, so it's a good place to start your own.
-- **A folder of your own:** `--theme path/to/my-theme`, holding a `theme.css` and a `theme.js` as described below. Copying `src/themes/plain` is the quickest start.
+- **`printed`** (the default, [`src/viewer/themes/printed`](../src/viewer/themes/printed)): the map as a printed sheet, with a neatline, a grid labelled in the margin, a title cartouche, a scale bar and a key of hills for zooming.
+- **`plain`** ([`src/viewer/themes/plain`](../src/viewer/themes/plain)): the map filling the window, with its name, the position, a scale and zoom buttons in small panels, light or dark with the reader's setting. It's short on purpose, so it's a good place to start your own.
+- **A folder of your own:** `--theme path/to/my-theme`, holding a `theme.css` and a `theme.js` as described below. Copying `src/viewer/themes/plain` is the quickest start.
 
 ## Files
 

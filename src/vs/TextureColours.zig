@@ -5,7 +5,7 @@
 const TextureColours = @This();
 
 const std = @import("std");
-const columns = @import("../columns.zig");
+const columns = @import("columns");
 const stb = @import("stb_image");
 
 const Rgb = columns.Rgb;

@@ -2,7 +2,7 @@
 //! block columns, what's on top of each one. A game's reader (src/vs/ for Vintage Story) fills
 //! these in from its saves; the renderers draw from them and know nothing of any save format.
 const std = @import("std");
-const tiles = @import("tiles.zig");
+const tiles = @import("tiles");
 
 /// What a block is on a map, which picks its colour from a theme's style
 /// (docs/themes.md#map-colours). The names are Vintage Story's map colour codes; a game's

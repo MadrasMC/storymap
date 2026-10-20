@@ -11,7 +11,8 @@
 const Style = @This();
 
 const std = @import("std");
-const columns = @import("../columns.zig");
+const columns = @import("columns");
+const viewer = @import("viewer");
 
 /// How the colours are used.
 pub const Kind = enum {
@@ -54,9 +55,9 @@ pub const File = struct {
 };
 
 /// The Printed theme's style, the default.
-pub const printed = parsed(@embedFile("../themes/printed/topdown/style.txt"));
+pub const printed = parsed(viewer.printed.topdown);
 /// The plain theme's: the game's own map colours, drawn as the game draws them.
-pub const plain = parsed(@embedFile("../themes/plain/topdown/style.txt"));
+pub const plain = parsed(viewer.plain.topdown);
 
 /// A style parsed when compiling, for the built-in themes. They give every colour, so they
 /// don't depend on any game.

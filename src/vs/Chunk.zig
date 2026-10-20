@@ -1,7 +1,7 @@
 const Chunk = @This();
 
 const std = @import("std");
-const ProtoBuf = @import("../ProtoBuf.zig");
+const ProtoBuf = @import("protobuf");
 const Compression = @import("Compression.zig");
 const BlockEntity = @import("BlockEntity.zig");
 

@@ -10,12 +10,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
-const DB = @import("../sqlite.zig");
-const Chunk = @import("../vs/Chunk.zig");
-const Save = @import("../vs/Save.zig");
-const topdown = @import("../renderer/topdown.zig");
+const DB = @import("sqlite");
+const Chunk = @import("vs").Chunk;
+const Save = @import("vs").Save;
+const topdown = @import("renderer").topdown;
 const build_options = @import("build_options");
-const console = @import("../console.zig");
+const console = @import("console");
 const args = @import("args");
 
 /// What `storymap bench` takes.

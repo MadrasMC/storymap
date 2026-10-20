@@ -12,9 +12,9 @@
 //!   and a `chunksRead: usize` count.
 const std = @import("std");
 const Io = std.Io;
-const columns = @import("../columns.zig");
-const tiles = @import("../tiles.zig");
-const viewer = @import("../viewer.zig");
+const columns = @import("columns");
+const tiles = @import("tiles");
+const viewer = @import("viewer");
 const Style = @import("Style.zig");
 const Rgb = Style.Rgb;
 

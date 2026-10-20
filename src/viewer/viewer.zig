@@ -4,7 +4,7 @@
 //! disk won't let it fetch files beside it. `map.json` is for other tools.
 const std = @import("std");
 const Io = std.Io;
-const tiles = @import("tiles.zig");
+const tiles = @import("tiles");
 
 const template = @embedFile("viewer.html");
 /// Where the page expects the map's description. The template leaves it null, which the page

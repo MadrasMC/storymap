@@ -101,7 +101,7 @@
 <body>
 <main>
 	<h1>The tile pipeline</h1>
-	<p class="lead">How Storymap turns a save into a pyramid of map tiles, and shares the work between CPU cores. The real code is <code>src/tiles.zig</code>; <a href="rendering.md#output-tiles-and-levels-of-detail">rendering.md</a> has the plan.</p>
+	<p class="lead">How Storymap turns a save into a pyramid of map tiles, and shares the work between CPU cores. The real code is <code>src/tiles/tiles.zig</code>; <a href="rendering.md#output-tiles-and-levels-of-detail">rendering.md</a> has the plan.</p>
 
 	<h2>How a render works</h2>
 	<p><b>Tiles and levels.</b> The map is drawn as square tiles. Level 0 has full detail. Each tile at level 1 is made from the four tiles under it at level 0, each shrunk to half size and placed in one of its quarters. Level 2 is made from level 1 the same way, and so on up to a single tile showing the whole world.</p>
@@ -295,7 +295,7 @@
 		return ctx;
 	}
 
-	// The simulation: the same steps as src/tiles.zig, one action per worker per step.
+	// The simulation: the same steps as src/tiles/tiles.zig, one action per worker per step.
 	let workerCount = 2;
 	let sim;
 

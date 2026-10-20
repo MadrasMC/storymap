@@ -4,26 +4,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-
-    // Command-line arguments: a library of its own in lib/, which knows nothing of Storymap.
-    const args_mod = b.createModule(.{
-        .root_source_file = b.path("lib/args/args.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    exe_mod.addImport("args", args_mod);
-
-    // The version, from build.zig.zon, for `storymap --version` and `storymap bench`.
-    const options = b.addOptions();
-    options.addOption([]const u8, "version", @import("build.zig.zon").version);
-    exe_mod.addOptions("build_options", options);
-
     // zstd
 
     const zstd = b.dependency("zstd", .{});
@@ -59,9 +39,6 @@ pub fn build(b: *std.Build) void {
     });
     zstd_translate_c.defineCMacroRaw("ZSTD_STATIC_LINKING_ONLY");
 
-    exe_mod.addImport("zstd", zstd_translate_c.createModule());
-    exe_mod.linkLibrary(zstd_lib);
-
     // sqlite3
 
     const sqlite3 = b.dependency("sqlite3", .{});
@@ -85,31 +62,29 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe_mod.addImport("sqlite3", sqlite3_translate_c.createModule());
-    exe_mod.linkLibrary(sqlite3_lib);
-
-    // stb_image_write, and stb_image for the PNG textures read when preparing blocks
+    // stb_image_write, for the tiles, and stb_image, for the PNG textures read when preparing
+    // blocks: each built into the module that uses it.
 
     const stb = b.dependency("stb", .{});
-
-    const stb_impl = b.addWriteFiles().add("stb.c",
+    const stb_impl = b.addWriteFiles();
+    const stb_image_write_impl = stb_impl.add("stb_image_write.c",
         \\#define STB_IMAGE_WRITE_IMPLEMENTATION
         \\#include "stb_image_write.h"
+        \\
+    );
+    const stb_image_impl = stb_impl.add("stb_image.c",
         \\#define STB_IMAGE_IMPLEMENTATION
         \\#define STBI_ONLY_PNG
         \\#define STBI_NO_STDIO
         \\#include "stb_image.h"
         \\
     );
-    exe_mod.addCSourceFile(.{ .file = stb_impl });
-    exe_mod.addIncludePath(stb.path("."));
 
     const stb_translate_c = b.addTranslateC(.{
         .root_source_file = stb.path("stb_image_write.h"),
         .target = target,
         .optimize = optimize,
     });
-    exe_mod.addImport("stb_image_write", stb_translate_c.createModule());
 
     const stb_image_translate_c = b.addTranslateC(.{
         .root_source_file = stb.path("stb_image.h"),
@@ -117,9 +92,128 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     stb_image_translate_c.defineCMacroRaw("STBI_NO_STDIO");
-    exe_mod.addImport("stb_image", stb_image_translate_c.createModule());
+
+    // Libraries in lib/, which know nothing of Storymap.
+
+    const args_mod = b.createModule(.{
+        .root_source_file = b.path("lib/args/args.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const sqlite_mod = b.createModule(.{
+        .root_source_file = b.path("lib/sqlite/sqlite.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "sqlite3", .module = sqlite3_translate_c.createModule() }},
+    });
+    sqlite_mod.linkLibrary(sqlite3_lib);
+
+    const protobuf_mod = b.createModule(.{
+        .root_source_file = b.path("lib/protobuf/ProtoBuf.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // The version, from build.zig.zon, for `storymap --version` and `storymap bench`.
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", @import("build.zig.zon").version);
+    const options_mod = options.createModule();
+
+    // Storymap's modules. Each is given only the modules it may import, so the renderers can't
+    // import the game's reader (CONVENTIONS.md, "Keeping the game apart").
+
+    const tiles_mod = b.createModule(.{
+        .root_source_file = b.path("src/tiles/tiles.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "stb_image_write", .module = stb_translate_c.createModule() }},
+    });
+    tiles_mod.addCSourceFile(.{ .file = stb_image_write_impl });
+    tiles_mod.addIncludePath(stb.path("."));
+
+    const columns_mod = b.createModule(.{
+        .root_source_file = b.path("src/columns/columns.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "tiles", .module = tiles_mod }},
+    });
+
+    const viewer_mod = b.createModule(.{
+        .root_source_file = b.path("src/viewer/viewer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "tiles", .module = tiles_mod }},
+    });
+
+    const console_mod = b.createModule(.{
+        .root_source_file = b.path("src/console/console.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const renderer_mod = b.createModule(.{
+        .root_source_file = b.path("src/renderer/renderer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "columns", .module = columns_mod },
+            .{ .name = "tiles", .module = tiles_mod },
+            .{ .name = "viewer", .module = viewer_mod },
+        },
+    });
+
+    const vs_mod = b.createModule(.{
+        .root_source_file = b.path("src/vs/vs.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "columns", .module = columns_mod },
+            .{ .name = "tiles", .module = tiles_mod },
+            .{ .name = "viewer", .module = viewer_mod },
+            .{ .name = "console", .module = console_mod },
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "protobuf", .module = protobuf_mod },
+            .{ .name = "zstd", .module = zstd_translate_c.createModule() },
+            .{ .name = "stb_image", .module = stb_image_translate_c.createModule() },
+        },
+    });
+    vs_mod.linkLibrary(zstd_lib);
+    vs_mod.addCSourceFile(.{ .file = stb_image_impl });
+    vs_mod.addIncludePath(stb.path("."));
+
+    const cli_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli/cli.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "vs", .module = vs_mod },
+            .{ .name = "renderer", .module = renderer_mod },
+            .{ .name = "viewer", .module = viewer_mod },
+            .{ .name = "console", .module = console_mod },
+            .{ .name = "sqlite", .module = sqlite_mod },
+            .{ .name = "args", .module = args_mod },
+            .{ .name = "build_options", .module = options_mod },
+        },
+    });
 
     // storymap
+
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "cli", .module = cli_mod },
+            .{ .name = "console", .module = console_mod },
+            .{ .name = "args", .module = args_mod },
+            .{ .name = "build_options", .module = options_mod },
+        },
+    });
 
     const exe = b.addExecutable(.{
         .name = "storymap",
@@ -142,10 +236,13 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Time each stage of a render (use -Doptimize=ReleaseFast)");
     bench_step.dependOn(&bench_cmd.step);
 
-    const unit_tests = b.addTest(.{ .root_module = exe_mod });
-    const run_unit_tests = b.addRunArtifact(unit_tests);
-
+    // Every module's tests.
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_unit_tests.step);
-    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = args_mod })).step);
+    const tested = [_]*std.Build.Module{
+        args_mod,    sqlite_mod,   protobuf_mod, tiles_mod, columns_mod, viewer_mod,
+        console_mod, renderer_mod, vs_mod,       cli_mod,
+    };
+    for (tested) |module| {
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = module })).step);
+    }
 }

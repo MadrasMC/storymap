@@ -730,7 +730,7 @@
 				<h3><span class="num">2.2</span><span>Protobuf messages</span></h3>
 				<p>Every table's <code>data</code> column is a <a href="https://protobuf.dev/programming-guides/encoding/">Protobuf</a> message: like JSON where every key is a number and every value is raw bytes. Each field is its number and a wire type, then a varint, 4 or 8 bytes, or a length and that many bytes; a field can be another message. The names are the game's own, from a schema generated from its code.</p>
 				<p>A list of numbers comes either way Protobuf allows: as the same field repeated, one value each, as in map chunks, or packed into one field of varints, as in map regions. A reader should take both. The messages aren't compressed; only a chunk's blocks, liquids and light are, inside their fields.</p>
-				<p class="source">Sources: every row of every table in the test saves parses · names from <a href="https://github.com/bluelightning32/vs-proto/blob/80ff05afa98af324425ef6f3e5f12b4bea9e6a3f/schema-1.21.0.rc.3.proto">vs-proto's schema</a> · <a href="../../src/ProtoBuf.zig">src/ProtoBuf.zig</a> · <a href="README.md#3-chunk-data-protobuf-fields">README §3</a></p>
+				<p class="source">Sources: every row of every table in the test saves parses · names from <a href="https://github.com/bluelightning32/vs-proto/blob/80ff05afa98af324425ef6f3e5f12b4bea9e6a3f/schema-1.21.0.rc.3.proto">vs-proto's schema</a> · <a href="../../lib/protobuf/ProtoBuf.zig">lib/protobuf/ProtoBuf.zig</a> · <a href="README.md#3-chunk-data-protobuf-fields">README §3</a></p>
 			</div>
 		</section>
 

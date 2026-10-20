@@ -41,7 +41,7 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Water from the liquid layer: shaded by depth, saltwater (seas) apart from other water, inked coastlines; water plants don't hide the water.
 - Heights from `mapchunk`: the rain height map, so plants and loose stones don't hide the ground, and the terrain height for water depth. Block columns without a stored height, or whose stored height is out of date, are scanned.
 - Only the chunks holding the surface are read, fetched by key: 1,244 of 6,224 in the 1.22.7 world ([`docs/rendering.md`](docs/rendering.md#performance)).
-- Tiles: the top-down map is written as 512 × 512 tiles by a pipeline every view shares (`src/tiles.zig`), seamless across tile edges, with zoomed-out levels up to a single tile.
+- Tiles: the top-down map is written as 512 × 512 tiles by a pipeline every view shares (`src/tiles/tiles.zig`), seamless across tile edges, with zoomed-out levels up to a single tile.
 - Only fully generated chunk columns (world-generation stage 6, Done) are drawn, like the game's own map: the rings of partly generated columns around them are left out ([save format §7](docs/save-format/README.md#world-generation-stages)).
 - A viewer: `index.html` and `map.json` written beside the tiles; one page without libraries, panning and zooming with the mouse, touch and keyboard ([`docs/rendering.md`](docs/rendering.md#output-tiles-and-levels-of-detail)).
 - The viewer's positions match the game's, relative to the world's centre: checked against a position the game showed and the player's position in the save ([save format §2](docs/save-format/README.md#2-positions)).

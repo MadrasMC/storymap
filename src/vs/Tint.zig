@@ -4,7 +4,7 @@
 //! in closed code; this follows its shader, `shaderincludes/colormap.vsh` and `.fsh`, which
 //! does the same for the world it draws.
 const std = @import("std");
-const columns = @import("../columns.zig");
+const columns = @import("columns");
 const stb = @import("stb_image");
 
 const Rgb = columns.Rgb;
@@ -83,7 +83,7 @@ pub const ClimateMap = struct {
     /// Reads the grid from an `IntDataMap2D` message into `values`, which holds `maxSize` ×
     /// `maxSize`. Returns false if it doesn't fit or isn't complete.
     pub fn decode(self: *ClimateMap, message: []const u8) !bool {
-        const ProtoBuf = @import("../ProtoBuf.zig");
+        const ProtoBuf = @import("protobuf");
         var count: usize = 0;
         var bottomRight: usize = 0;
         self.padding = 0;

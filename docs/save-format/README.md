@@ -118,7 +118,7 @@ const Position = packed struct(u64) {
 
 ## 3. Chunk data: Protobuf fields
 
-`chunk.data` is a [Protobuf](https://protobuf.dev/programming-guides/encoding/) message: a sequence of `(field number, wire type, value)` entries with no schema in the file. Storymap parses it with [`src/ProtoBuf.zig`](../../src/ProtoBuf.zig).
+`chunk.data` is a [Protobuf](https://protobuf.dev/programming-guides/encoding/) message: a sequence of `(field number, wire type, value)` entries with no schema in the file. Storymap parses it with [`lib/protobuf/ProtoBuf.zig`](../../lib/protobuf/ProtoBuf.zig).
 
 The names are the schema's (`ServerChunk`).
 

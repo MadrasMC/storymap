@@ -2,13 +2,29 @@
 
 How code in this project is written. Applies to everyone and every tool working on it.
 
+## Modules
+
+Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a root file of the folder's name (`src/vs/vs.zig`), imported by name (`@import("vs")`). A module can import only the modules `build.zig` gives it, and no file outside its folder, so the compiler checks the rules below. Within a module, files import each other by path.
+
+| module | imports |
+| --- | --- |
+| `tiles` | – |
+| `columns` | `tiles` |
+| `viewer` | `tiles` |
+| `console` | – |
+| `renderer` | `columns`, `tiles`, `viewer` |
+| `vs` | `columns`, `tiles`, `viewer`, `console`, `sqlite`, `protobuf` |
+| `cli` | `vs`, `renderer`, `viewer`, `console`, `sqlite`, `args` |
+
+`main.zig` only imports `cli`, `console` and `args`.
+
 ## Keeping the game apart
 
-Everything that knows Vintage Story, its save format, its assets and its block names, lives in `src/vs/`. The renderers, the tile pipeline, the viewer and `src/columns.zig` don't import it: a game's reader tells the renderers what's on top of each block column (`columns.zig`), and they draw from that alone, so another game could be read the same way. Only the commands in `src/cli/`, which put the program together, import both.
+Everything that knows Vintage Story, its save format, its assets and its block names, lives in `vs`. The renderers, the tile pipeline, the viewer and `columns` don't import it: a game's reader tells the renderers what's on top of each block column (`columns`), and they draw from that alone, so another game could be read the same way. Only the commands in `cli`, which put the program together, import both.
 
 ## Libraries
 
-`lib/` holds libraries that know nothing of Storymap, such as `lib/args/` for command lines. Each is a folder with its own README, and a module of its own in `build.zig`, imported by name (`@import("args")`), so it can't import Storymap's code. Anything about Storymap itself, such as how its messages read or when it exits, stays in Storymap: a library returns what happened and leaves the rest to the program.
+`lib/` holds libraries that know nothing of Storymap: `args` for command lines, `sqlite` and `protobuf`. Each has its own README. Anything about Storymap itself, such as how its messages read or when it exits, stays in Storymap: a library returns what happened and leaves the rest to the program.
 
 ## Zig conventions
 

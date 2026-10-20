@@ -1,3 +1,5 @@
+//! A small wrapper over SQLite's C API: opening a database, and stepping through the rows of a
+//! prepared statement.
 const std = @import("std");
 
 const c = @import("sqlite3");
@@ -57,7 +59,7 @@ pub fn init(filename: [*:0]const u8, flags: OpenFlags) !DB {
 }
 
 /// Opens a database without writing anything next to it. A plain read-only open of a
-/// database in write-ahead-log mode (like a Vintage Story save) still creates `-shm` and
+/// database in write-ahead-log mode still creates `-shm` and
 /// `-wal` files beside it; `immutable=1` doesn't, but also ignores any `-wal` file that's
 /// already there.
 pub fn initImmutable(allocator: std.mem.Allocator, path: []const u8) !DB {
@@ -89,18 +91,18 @@ fn immutableUri(allocator: std.mem.Allocator, path: []const u8) ![:0]u8 {
 
 test immutableUri {
     const cases = [_][2][]const u8{
-        .{ "content/gloomy cave valley.vcdbs", "file:content/gloomy%20cave%20valley.vcdbs?immutable=1" },
-        .{ "C:\\Users\\mkr\\Saves\\a.vcdbs", "file:///C:/Users/mkr/Saves/a.vcdbs?immutable=1" },
-        .{ "/home/mkr/save #1?.vcdbs", "file:/home/mkr/save%20%231%3F.vcdbs?immutable=1" },
-        .{ "Welt 100%.vcdbs", "file:Welt%20100%25.vcdbs?immutable=1" },
-        .{ "ü.vcdbs", "file:%C3%BC.vcdbs?immutable=1" },
+        .{ "data/my notes.db", "file:data/my%20notes.db?immutable=1" },
+        .{ "C:\\Data\\a.db", "file:///C:/Data/a.db?immutable=1" },
+        .{ "/srv/db #1?.db", "file:/srv/db%20%231%3F.db?immutable=1" },
+        .{ "Welt 100%.db", "file:Welt%20100%25.db?immutable=1" },
+        .{ "ü.db", "file:%C3%BC.db?immutable=1" },
     };
     for (cases) |case| {
         const uri = try immutableUri(std.testing.allocator, case[0]);
         defer std.testing.allocator.free(uri);
         try std.testing.expectEqualStrings(case[1], uri);
     }
-    try std.testing.expectError(error.RelativeDrivePath, immutableUri(std.testing.allocator, "C:save.vcdbs"));
+    try std.testing.expectError(error.RelativeDrivePath, immutableUri(std.testing.allocator, "C:a.db"));
 }
 
 pub fn deinit(self: DB) void {

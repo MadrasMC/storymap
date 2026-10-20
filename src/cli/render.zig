@@ -1,12 +1,12 @@
 //! `storymap <save>`, the default command: renders a top-down map of a save as tiles, with
 //! index.html beside them to view it.
 const std = @import("std");
-const Save = @import("../vs/Save.zig");
-const Prepared = @import("../vs/Prepared.zig");
-const topdown = @import("../renderer/topdown.zig");
-const Style = @import("../renderer/Style.zig");
-const viewer = @import("../viewer.zig");
-const console = @import("../console.zig");
+const Save = @import("vs").Save;
+const Prepared = @import("vs").Prepared;
+const topdown = @import("renderer").topdown;
+const Style = @import("renderer").Style;
+const viewer = @import("viewer");
+const console = @import("console");
 const prepare = @import("prepare.zig");
 const args = @import("args");
 

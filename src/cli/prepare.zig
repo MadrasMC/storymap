@@ -1,9 +1,9 @@
 //! `storymap prepare`: prepares what the map needs from the game's and mods' assets into the
 //! blocks folder. A render does the same the first time it needs it (`blocks`).
 const std = @import("std");
-const Assets = @import("../vs/Assets.zig");
-const Prepared = @import("../vs/Prepared.zig");
-const console = @import("../console.zig");
+const Assets = @import("vs").Assets;
+const Prepared = @import("vs").Prepared;
+const console = @import("console");
 const args = @import("args");
 
 pub const gameOption: args.Option = .{ .name = "game", .value = "folder", .description = "The game's install folder, if it isn't in the standard place." };
