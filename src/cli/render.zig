@@ -6,6 +6,7 @@ const Prepared = @import("vs").Prepared;
 const topdown = @import("renderer").topdown;
 const Style = @import("renderer").Style;
 const viewer = @import("viewer");
+const Theme = @import("theme");
 const console = @import("console");
 const prepare = @import("prepare.zig");
 const args = @import("args");
@@ -49,7 +50,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     };
     const force = parsed.flag("prepare");
 
-    const theme = viewer.loadTheme(init.arena.allocator(), init.io, themeName) catch |err| switch (err) {
+    const theme = Theme.load(init.arena.allocator(), init.io, themeName) catch |err| switch (err) {
         error.ThemeStyleEndsItsElement => console.fail("{s}/theme.css can't contain </style: it would end the theme's style in the page early\n", .{themeName}),
         error.ThemeScriptEndsItsElement => console.fail("{s}/theme.js can't contain </script: it would end the theme's script in the page early\n", .{themeName}),
         else => console.fail("there's no theme {s}: it isn't printed or plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(err) }),
@@ -75,7 +76,13 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         save.useBlocks(blocks);
     }
     const style = styleFile.complete(Save.palette);
-    try topdown.render(Save, allocator, init.io, &save, .{ .folder = out }, .{ .theme = theme, .style = style });
+    const written = try topdown.render(Save, allocator, init.io, &save, .{ .folder = out }, .{ .style = style });
+    defer allocator.free(written);
+
+    // The viewer page goes next to the tiles. With more views, it'll list them all.
+    const views = [_]viewer.View{.{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .written = written }};
+    const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
+    try viewer.write(allocator, init.io, out, save.game(), save.world(), now, &views, theme);
 }
 
 /// Warns about the save's blocks that the prepared ones don't have: those of mods that
@@ -87,8 +94,17 @@ fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, sa
     if (unknown.example) |example| std.debug.print("storymap: {} of the world's blocks aren't defined by the game or its mods, such as {s}\n", .{ unknown.codes, example });
 }
 
+test "the built-in themes' styles" {
+    const printed = comptime Style.parsed(Theme.printed.topdown);
+    try std.testing.expectEqual(.relief, printed.kind);
+    try std.testing.expectEqual(Style.Rgb{ 0xE4, 0xD2, 0xA0 }, printed.colours.get(.land));
+    const plain = comptime Style.parsed(Theme.plain.topdown);
+    try std.testing.expectEqual(.shaded, plain.kind);
+    try std.testing.expectEqual(Style.Rgb{ 0xAC, 0x88, 0x58 }, plain.colours.get(.land));
+}
+
 test "the plain theme's colours are the game's" {
-    const style = Style.plain;
+    const style = comptime Style.parsed(Theme.plain.topdown);
     try std.testing.expectEqual(Save.palette.colours, style.colours);
     try std.testing.expectEqual(Save.palette.wateredge, style.wateredge);
     var problem: Style.Problem = .{};

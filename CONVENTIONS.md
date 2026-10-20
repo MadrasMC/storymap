@@ -10,11 +10,12 @@ Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a r
 | --- | --- |
 | `tiles` | – |
 | `columns` | `tiles` |
-| `viewer` | `tiles` |
+| `theme` | – |
+| `viewer` | `tiles`, `theme` |
 | `console` | – |
-| `renderer` | `columns`, `tiles`, `viewer` |
+| `renderer` | `columns`, `tiles` |
 | `vs` | `columns`, `tiles`, `viewer`, `console`, `sqlite`, `protobuf` |
-| `cli` | `vs`, `renderer`, `viewer`, `console`, `sqlite`, `args` |
+| `cli` | `vs`, `renderer`, `viewer`, `theme`, `console`, `sqlite`, `args` |
 
 `main.zig` only imports `cli`, `console` and `args`.
 

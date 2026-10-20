@@ -12,7 +12,6 @@ const Style = @This();
 
 const std = @import("std");
 const columns = @import("columns");
-const viewer = @import("viewer");
 
 /// How the colours are used.
 pub const Kind = enum {
@@ -54,13 +53,8 @@ pub const File = struct {
     }
 };
 
-/// The Printed theme's style, the default.
-pub const printed = parsed(viewer.printed.topdown);
-/// The plain theme's: the game's own map colours, drawn as the game draws them.
-pub const plain = parsed(viewer.plain.topdown);
-
-/// A style parsed when compiling, for the built-in themes. They give every colour, so they
-/// don't depend on any game.
+/// A style parsed when compiling, for a built-in theme's. It gives every colour, so it doesn't
+/// depend on any game.
 pub fn parsed(comptime text: []const u8) Style {
     comptime {
         @setEvalBranchQuota(100_000);
@@ -138,11 +132,6 @@ fn parseColour(text: []const u8) ?Rgb {
 }
 
 test parse {
-    try std.testing.expectEqual(Kind.relief, printed.kind);
-    try std.testing.expectEqual(Rgb{ 0xE4, 0xD2, 0xA0 }, printed.colours.get(.land));
-    try std.testing.expectEqual(Kind.shaded, plain.kind);
-    try std.testing.expectEqual(Rgb{ 0xAC, 0x88, 0x58 }, plain.colours.get(.land));
-
     var problem: Problem = .{};
     const file = try parse("# A comment\nstyle shaded\nland #010203\nwateredge #FFFFFF\n", &problem);
     try std.testing.expectEqual(Kind.shaded, file.kind);

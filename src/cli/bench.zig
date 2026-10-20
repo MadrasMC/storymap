@@ -14,6 +14,8 @@ const DB = @import("sqlite");
 const Chunk = @import("vs").Chunk;
 const Save = @import("vs").Save;
 const topdown = @import("renderer").topdown;
+const Style = @import("renderer").Style;
+const Theme = @import("theme");
 const build_options = @import("build_options");
 const console = @import("console");
 const args = @import("args");
@@ -123,8 +125,8 @@ const Result = struct {
     world: []const u8,
     /// The build mode, as Zig names it, e.g. "fast" for -Doptimize=ReleaseFast.
     build: []const u8,
-    /// The style drawn: always the default, as there are no prepared blocks or theme here.
-    style: []const u8 = "relief",
+    /// The style drawn: always the default theme's, as there are no prepared blocks here.
+    style: []const u8 = @tagName(style.kind),
     threads: usize,
     /// Renders timed, after one untimed; every time is the median.
     runs: usize,
@@ -154,6 +156,9 @@ const Result = struct {
     };
 };
 
+/// The style every render is drawn in: the default theme's.
+const style = Style.parsed(Theme.printed.topdown);
+
 /// One render: the save opened, with its block list and which tiles it has, drawn without
 /// writing anything, and closed. Returns how long opening took.
 fn renderOnce(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *topdown.Stats) !Io.Duration {
@@ -161,7 +166,7 @@ fn renderOnce(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *
     const save = try Save.open(allocator, io, dbPath);
     defer save.close(allocator);
     const opened = start.untilNow(io, .awake);
-    try topdown.render(Save, allocator, io, &save, .discard, .{ .stats = stats });
+    allocator.free(try topdown.render(Save, allocator, io, &save, .discard, .{ .style = style, .stats = stats }));
     return opened;
 }
 

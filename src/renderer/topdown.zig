@@ -4,7 +4,7 @@
 //!
 //! A source is a game's save, opened for reading, with:
 //! - `tileList: []const tiles.Tile`, the tiles that may have something to draw;
-//! - `game() viewer.Game`, `world() viewer.World` and `heights() columns.Heights`;
+//! - `heights() columns.Heights`;
 //! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `look(id: i32) columns.Look`,
 //!   for the game's block IDs;
 //! - `Reader`, one per thread, with `init(source: *const Source, allocator) !Reader`,
@@ -14,7 +14,6 @@ const std = @import("std");
 const Io = std.Io;
 const columns = @import("columns");
 const tiles = @import("tiles");
-const viewer = @import("viewer");
 const Style = @import("Style.zig");
 const Rgb = Style.Rgb;
 
@@ -34,31 +33,30 @@ pub const Stats = struct {
     encode: Io.Duration = .zero,
 };
 
+/// The view's folder among the tiles, e.g. `topdown/0/1000_999.png`.
+pub const folder = "topdown";
+pub const title = "Top-down";
+/// How a level-0 pixel maps to a block: one pixel per block, pixel x and y being block x and z.
+pub const projection = "topdown";
+
 pub const Options = struct {
+    /// How the map is coloured: a theme's `topdown/style.txt`.
+    style: Style,
     /// Records the stages' times here instead of printing a summary of the map.
     stats: ?*Stats = null,
-    /// What draws the viewer page around the map, when the tiles go into a folder.
-    theme: viewer.Theme = viewer.printed,
-    /// How the map is coloured: the theme's `topdown/style.txt`.
-    style: Style = Style.printed,
 };
 
-/// Renders the top-down tiles of `source` into `output`, with the viewer page beside them.
-pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options) !void {
+/// Renders the top-down tiles of `source` into `output`, and returns the tiles written, at every
+/// level, which the caller frees with `allocator`.
+pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options) ![]tiles.Written {
     const start: Io.Timestamp = .now(io, .awake);
     var view: View(Source) = try .init(allocator, source, options.style);
     defer view.deinit(allocator);
 
     var written: std.ArrayList(tiles.Written) = .empty;
-    defer written.deinit(allocator);
+    errdefer written.deinit(allocator);
     const rendered = try tiles.render(View(Source), allocator, io, &view, source.tileList, output, &written);
-    // The viewer page goes next to the tiles. With more views, it'll list them all.
-    switch (output) {
-        .folder => |folder| try viewer.write(allocator, io, folder, source.game(), source.world(), Io.Timestamp.now(io, .real).toSeconds(), &.{
-            .{ .name = View(Source).name, .title = "Top-down", .projection = "topdown", .written = written.items },
-        }, options.theme),
-        .discard => {},
-    }
+    const list = try written.toOwnedSlice(allocator);
 
     if (options.stats) |out| {
         out.* = .{
@@ -70,17 +68,18 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
             .draw = rendered.draw,
             .encode = rendered.encode,
         };
-        return;
+        return list;
     }
     std.debug.print("{} tiles in {} levels, surface y {}..{}\n", .{ rendered.tiles, rendered.levels, view.lowest, view.highest });
     printSurfaceBlocks(Source, source, view.blockCounts);
+    return list;
 }
 
 /// What every worker shares, read-only while they draw, and their totals once they're done.
 fn View(comptime Source: type) type {
     return struct {
         const Self = @This();
-        pub const name = "topdown";
+        pub const name = folder;
 
         source: *const Source,
         heights: Heights,
@@ -568,8 +567,11 @@ fn liquidColour(base: Rgb, depth: u16) u32 {
     return rgb(mix(base, .{ 0, 0, 0 }, fraction));
 }
 
+/// A relief style for the tests: sepia ground and dark ink.
+const testStyle: Style = .{ .kind = .relief, .colours = .initFill(.{ 0xE4, 0xD2, 0xA0 }), .ink = .{ 0x4A, 0x30, 0x1A }, .wateredge = .{ 0x5C, 0x46, 0x2E } };
+
 test liquidColour {
-    const lake = Style.printed.colours.get(.lake);
+    const lake = testStyle.colours.get(.lake);
     try std.testing.expectEqual(rgb(lake), liquidColour(lake, 0));
     try std.testing.expectEqual(liquidColour(lake, maxDepth), liquidColour(lake, 200));
     try std.testing.expect(liquidColour(lake, maxDepth) & 0xFF < rgb(lake) & 0xFF);
@@ -645,7 +647,7 @@ fn rgb(colour: Rgb) u32 {
 }
 
 test groundColour {
-    const style = &Style.printed;
+    const style = &testStyle;
     const land = style.colours.get(.land);
     const heights: Heights = .{ .low = 10, .ground = 60, .high = 110 };
     // Level ground: ink at the low end, its own colour at sea level, pale at the high end.

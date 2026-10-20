@@ -141,11 +141,20 @@ pub fn build(b: *std.Build) void {
         .imports = &.{.{ .name = "tiles", .module = tiles_mod }},
     });
 
+    const theme_mod = b.createModule(.{
+        .root_source_file = b.path("src/theme/Theme.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const viewer_mod = b.createModule(.{
         .root_source_file = b.path("src/viewer/viewer.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "tiles", .module = tiles_mod }},
+        .imports = &.{
+            .{ .name = "tiles", .module = tiles_mod },
+            .{ .name = "theme", .module = theme_mod },
+        },
     });
 
     const console_mod = b.createModule(.{
@@ -161,7 +170,6 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "columns", .module = columns_mod },
             .{ .name = "tiles", .module = tiles_mod },
-            .{ .name = "viewer", .module = viewer_mod },
         },
     });
 
@@ -193,6 +201,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "vs", .module = vs_mod },
             .{ .name = "renderer", .module = renderer_mod },
             .{ .name = "viewer", .module = viewer_mod },
+            .{ .name = "theme", .module = theme_mod },
             .{ .name = "console", .module = console_mod },
             .{ .name = "sqlite", .module = sqlite_mod },
             .{ .name = "args", .module = args_mod },
@@ -239,7 +248,7 @@ pub fn build(b: *std.Build) void {
     // Every module's tests.
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
-        args_mod,    sqlite_mod,   protobuf_mod, tiles_mod, columns_mod, viewer_mod,
+        args_mod,    sqlite_mod,   protobuf_mod, tiles_mod, columns_mod, theme_mod, viewer_mod,
         console_mod, renderer_mod, vs_mod,       cli_mod,
     };
     for (tested) |module| {
