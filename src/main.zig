@@ -8,52 +8,56 @@ const Style = @import("renderer/Style.zig");
 const viewer = @import("viewer.zig");
 const build_options = @import("build_options");
 const console = @import("console.zig");
+const cli = @import("cli.zig");
+const clap = @import("clap");
 
 const usage =
-    \\usage: storymap <save.vcdbs> [output folder] [--theme <theme>] [--season <season>] [--prepare] [--blocks <folder>] [--game <folder>] [--data <folder>]
+    \\usage: storymap <save.vcdbs> [output folder] [options]
     \\       storymap prepare [blocks folder] [--game <folder>] [--data <folder>]
     \\       storymap bench <save.vcdbs> [runs] [--json]
     \\       storymap --version
     \\
     \\Renders a top-down map of a Vintage Story save as tiles in the output folder,
     \\or in out when no folder is given, with index.html beside them to view it.
-    \\--theme draws the page around the map: printed (the default), plain, or the
-    \\folder of a theme of your own (see docs/themes.md). A theme that colours
-    \\blocks as they look tints grass and leaves for the season on the save's
-    \\date, or for --season: spring, summer, fall or winter.
     \\
     \\What the map needs from the game's and mods' assets is prepared once into the
     \\blocks folder, or blocks when none is given, the first time a render needs it,
-    \\or again with --prepare; prepare does only that. --game and --data are the
-    \\game's install and data folders, and default to the standard locations.
+    \\or again with --prepare; prepare does only that.
     \\
 ;
+
+/// A render's parameters, the program's default command.
+const renderParams = clap.parseParamsComptime(
+    \\-h, --help              Show this help.
+    \\    --version           Show Storymap's version.
+    \\    --theme <theme>     What draws the page around the map, and colours it: printed (the default), plain, or a theme's folder (docs/themes.md).
+    \\    --season <season>   Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date.
+    \\    --prepare           Prepare the blocks again, even if they were prepared before.
+    \\    --blocks <folder>   The blocks folder: blocks by default.
+    \\    --game <folder>     The game's install folder, if it isn't in the standard place.
+    \\    --data <folder>     The game's data folder, if it isn't in the standard place.
+    \\<save>                  The save to render.
+    \\<folder>...             The output folder: out by default.
+    \\
+);
+
+/// `storymap prepare`'s parameters.
+const prepareParams = clap.parseParamsComptime(
+    \\-h, --help              Show this help.
+    \\    --game <folder>     The game's install folder, if it isn't in the standard place.
+    \\    --data <folder>     The game's data folder, if it isn't in the standard place.
+    \\<folder>...             The blocks folder: blocks by default.
+    \\
+);
+
+/// Every value is read as given; Storymap checks the ones with a fixed set of choices itself.
+const parsers = .{ .save = clap.parsers.string, .folder = clap.parsers.string, .theme = clap.parsers.string, .season = clap.parsers.string };
 
 /// Where the game, its mods and the prepared blocks are.
 const Folders = struct {
     game: ?[]const u8 = null,
     data: ?[]const u8 = null,
     blocks: []const u8 = Prepared.defaultFolder,
-
-    /// Takes `args[i]` and its value if it's one of the folder options; returns whether it was.
-    fn option(self: *Folders, args: []const [:0]const u8, i: *usize) bool {
-        if (std.mem.eql(u8, args[i.*], "--blocks")) {
-            i.* += 1;
-            if (i.* == args.len) exitWithUsage();
-            self.blocks = args[i.*];
-            return true;
-        }
-        const field: *?[]const u8 = if (std.mem.eql(u8, args[i.*], "--game"))
-            &self.game
-        else if (std.mem.eql(u8, args[i.*], "--data"))
-            &self.data
-        else
-            return false;
-        i.* += 1;
-        if (i.* == args.len) exitWithUsage();
-        field.* = args[i.*];
-        return true;
-    }
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -61,58 +65,47 @@ pub fn main(init: std.process.Init) !void {
     console.useUtf8();
     defer console.restore();
 
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) {
-        var buffer: [64]u8 = undefined;
-        var stdout = std.Io.File.stdout().writerStreaming(init.io, &buffer);
-        try stdout.interface.print("storymap {s}\n", .{build_options.version});
-        return stdout.interface.flush();
-    }
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "bench")) return bench.run(init, args[2..]);
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "prepare")) {
-        var folders: Folders = .{};
-        var blocksGiven = false;
-        var i: usize = 2;
-        while (i < args.len) : (i += 1) {
-            if (folders.option(args, &i)) continue;
-            if (blocksGiven or std.mem.startsWith(u8, args[i], "--")) exitWithUsage();
-            folders.blocks = args[i];
-            blocksGiven = true;
-        }
+    // Without the program's name, as clap takes them.
+    const arena = init.arena.allocator();
+    const all = try init.minimal.args.toSlice(arena);
+    const args = try arena.alloc([]const u8, all.len -| 1);
+    for (args, all[1..]) |*arg, given| arg.* = given;
+
+    if (args.len > 0 and std.mem.eql(u8, args[0], "bench")) return bench.run(init, args[1..]);
+    if (args.len > 0 and std.mem.eql(u8, args[0], "prepare")) {
+        const parsed = cli.parse(&prepareParams, parsers, arena, args[1..], usage);
+        if (parsed.args.help != 0) return cli.printHelp(init.io, &prepareParams, usage);
+        const folders: Folders = .{
+            .game = parsed.args.game,
+            .data = parsed.args.data,
+            .blocks = cli.first(parsed.positionals[0]) orelse Prepared.defaultFolder,
+        };
         var prepared = prepareBlocks(init, folders, true) orelse unreachable;
         prepared.deinit();
         return;
     }
 
-    // The save and the output folder in order, and the options anywhere among them.
-    var paths: [2][]const u8 = undefined;
-    var pathCount: usize = 0;
-    var themeName: []const u8 = "printed";
-    var season: ?Save.Season = null;
-    var folders: Folders = .{};
-    var force = false;
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (folders.option(args, &i)) continue;
-        if (std.mem.eql(u8, args[i], "--prepare")) {
-            force = true;
-        } else if (std.mem.eql(u8, args[i], "--theme")) {
-            i += 1;
-            if (i == args.len) exitWithUsage();
-            themeName = args[i];
-        } else if (std.mem.eql(u8, args[i], "--season")) {
-            i += 1;
-            if (i == args.len) exitWithUsage();
-            season = std.meta.stringToEnum(Save.Season, args[i]) orelse exitWith("there's no season {s}: it's spring, summer, fall or winter\n", .{args[i]});
-        } else {
-            if (pathCount == paths.len) exitWithUsage();
-            paths[pathCount] = args[i];
-            pathCount += 1;
-        }
+    const parsed = cli.parse(&renderParams, parsers, arena, args, usage);
+    if (parsed.args.help != 0) return cli.printHelp(init.io, &renderParams, usage);
+    if (parsed.args.version != 0) {
+        var buffer: [64]u8 = undefined;
+        var stdout = std.Io.File.stdout().writerStreaming(init.io, &buffer);
+        try stdout.interface.print("storymap {s}\n", .{build_options.version});
+        return stdout.interface.flush();
     }
-    if (pathCount == 0) exitWithUsage();
-    const dbPath = paths[0];
-    const outPath = if (pathCount == 2) paths[1] else "out";
+    const dbPath = parsed.positionals[0] orelse exitWithUsage();
+    const outPath = cli.first(parsed.positionals[1]) orelse "out";
+    const themeName = parsed.args.theme orelse "printed";
+    const season: ?Save.Season = if (parsed.args.season) |name|
+        std.meta.stringToEnum(Save.Season, name) orelse exitWith("there's no season {s}: it's spring, summer, fall or winter\n", .{name})
+    else
+        null;
+    const folders: Folders = .{
+        .game = parsed.args.game,
+        .data = parsed.args.data,
+        .blocks = parsed.args.blocks orelse Prepared.defaultFolder,
+    };
+    const force = parsed.args.prepare != 0;
 
     const theme = viewer.loadTheme(init.arena.allocator(), init.io, themeName) catch |err| {
         switch (err) {
@@ -257,6 +250,7 @@ test {
     _ = @import("renderer/Style.zig");
     _ = @import("columns.zig");
     _ = @import("console.zig");
+    _ = @import("cli.zig");
     _ = @import("tiles.zig");
     _ = @import("viewer.zig");
 }

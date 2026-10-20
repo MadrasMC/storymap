@@ -17,5 +17,9 @@
             .url = "https://github.com/nothings/stb/archive/ae721c50eaf761660b4f90cc590453cdb0c2acd0.tar.gz",
             .hash = "N-V-__8AADb7TQBhnAapR8-szphSk_8WmU22BY8jadPC_8-d",
         },
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/05faf3905e8548f5cc269a8836e154065e70128d.tar.gz",
+            .hash = "clap-0.12.0-oBajB4XpAQCF1WRKnD5KOKPsnwwT_NNdAJ7Ww3irYJac",
+        },
     },
 }

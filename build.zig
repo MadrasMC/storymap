@@ -11,6 +11,9 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
+    // Command-line parsing.
+    exe_mod.addImport("clap", b.dependency("clap", .{}).module("clap"));
+
     // The version, from build.zig.zon, for `storymap --version` and `storymap bench`.
     const options = b.addOptions();
     options.addOption([]const u8, "version", @import("build.zig.zon").version);
