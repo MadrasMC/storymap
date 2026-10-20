@@ -6,6 +6,10 @@ How code in this project is written. Applies to everyone and every tool working 
 
 Everything that knows Vintage Story, its save format, its assets and its block names, lives in `src/vs/`. The renderers, the tile pipeline, the viewer and `src/columns.zig` don't import it: a game's reader tells the renderers what's on top of each block column (`columns.zig`), and they draw from that alone, so another game could be read the same way. Only `main.zig` and `bench.zig`, which put the program together, import both.
 
+## Libraries
+
+`lib/` holds libraries that know nothing of Storymap, such as `lib/args.zig` for command lines. Each is a module of its own in `build.zig`, imported by name (`@import("args")`), so it can't import Storymap's code. Anything about Storymap itself, such as how its messages read or when it exits, stays in Storymap: a library returns what happened and leaves the rest to the program.
+
 ## Zig conventions
 
 ### Parameter order
