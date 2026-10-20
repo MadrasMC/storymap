@@ -16,37 +16,28 @@ const Save = @import("vs/Save.zig");
 const topdown = @import("renderer/topdown.zig");
 const build_options = @import("build_options");
 const console = @import("console.zig");
-const cli = @import("cli.zig");
-const clap = @import("clap");
+const args = @import("args");
 
-pub const usage =
-    \\usage: storymap bench <save.vcdbs> [runs] [--json]
-    \\
-    \\Renders the save `runs` times (5 by default) and prints the median time of each stage.
-    \\
-;
+/// What `storymap bench` takes.
+pub const spec: args.Spec = .{
+    .options = &.{
+        .{ .name = "json", .description = "Print the results as one line of JSON, for scripts, instead of the summary." },
+    },
+    .positionals = &.{
+        .{ .name = "save", .description = "The save to render." },
+        .{ .name = "runs", .optional = true, .description = "How many times to render it: 5 by default." },
+    },
+    .description = "Renders the save several times and prints the median time of each stage.",
+};
 
-const params = clap.parseParamsComptime(
-    \\-h, --help    Show this help.
-    \\    --json    Print the results as one line of JSON, for scripts, instead of the summary.
-    \\<save>        The save to render.
-    \\<runs>...     How many times to render it: 5 by default.
-    \\
-);
-
-/// Every value is read as given; the number of runs is checked here.
-const parsers = .{ .save = clap.parsers.string, .runs = clap.parsers.string };
-
-pub fn run(init: std.process.Init, args: []const []const u8) !void {
+pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const allocator = init.gpa;
     const io = init.io;
 
-    const parsed = cli.parse(&params, parsers, init.arena.allocator(), args, usage);
-    if (parsed.args.help != 0) return cli.printHelp(io, &params, usage);
-    const json = parsed.args.json != 0;
-    const dbPath = parsed.positionals[0] orelse fail(usage, .{});
-    const runs = if (cli.first(parsed.positionals[1])) |text| std.fmt.parseInt(usize, text, 10) catch 0 else 5;
-    if (runs == 0) fail("storymap: runs must be a whole number above 0\n\n" ++ usage, .{});
+    const json = parsed.flag("json");
+    const dbPath = parsed.positional("save").?;
+    const runs = if (parsed.positional("runs")) |text| std.fmt.parseInt(usize, text, 10) catch 0 else 5;
+    if (runs == 0) fail("storymap: [runs] must be a whole number above 0\n", .{});
 
     const open = try allocator.alloc(Io.Duration, runs);
     defer allocator.free(open);
@@ -253,8 +244,8 @@ fn median(times: []Io.Duration) Io.Duration {
     return times[times.len / 2];
 }
 
-fn fail(comptime format: []const u8, args: anytype) noreturn {
-    std.debug.print(format, args);
+fn fail(comptime format: []const u8, values: anytype) noreturn {
+    std.debug.print(format, values);
     console.exit(2);
 }
 

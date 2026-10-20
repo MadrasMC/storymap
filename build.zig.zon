@@ -3,7 +3,7 @@
     .fingerprint = 0x5fb12fbd82e2c8a3,
     .version = "0.1.0",
     .minimum_zig_version = "0.17.0",
-    .paths = .{ "src", "build.zig", "README.md", "LICENSE" },
+    .paths = .{ "src", "lib", "build.zig", "README.md", "LICENSE" },
     .dependencies = .{
         .zstd = .{
             .url = "https://github.com/facebook/zstd/archive/refs/tags/v1.5.5.zip",
@@ -16,10 +16,6 @@
         .stb = .{
             .url = "https://github.com/nothings/stb/archive/ae721c50eaf761660b4f90cc590453cdb0c2acd0.tar.gz",
             .hash = "N-V-__8AADb7TQBhnAapR8-szphSk_8WmU22BY8jadPC_8-d",
-        },
-        .clap = .{
-            .url = "https://github.com/Hejsil/zig-clap/archive/05faf3905e8548f5cc269a8836e154065e70128d.tar.gz",
-            .hash = "clap-0.12.0-oBajB4XpAQCF1WRKnD5KOKPsnwwT_NNdAJ7Ww3irYJac",
         },
     },
 }

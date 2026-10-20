@@ -11,8 +11,13 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
-    // Command-line parsing.
-    exe_mod.addImport("clap", b.dependency("clap", .{}).module("clap"));
+    // Command-line arguments: a library of its own in lib/, which knows nothing of Storymap.
+    const args_mod = b.createModule(.{
+        .root_source_file = b.path("lib/args.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe_mod.addImport("args", args_mod);
 
     // The version, from build.zig.zon, for `storymap --version` and `storymap bench`.
     const options = b.addOptions();
@@ -142,4 +147,5 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = args_mod })).step);
 }
