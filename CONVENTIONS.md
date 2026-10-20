@@ -8,7 +8,7 @@ Everything that knows Vintage Story, its save format, its assets and its block n
 
 ## Libraries
 
-`lib/` holds libraries that know nothing of Storymap, such as `lib/args.zig` for command lines. Each is a module of its own in `build.zig`, imported by name (`@import("args")`), so it can't import Storymap's code. Anything about Storymap itself, such as how its messages read or when it exits, stays in Storymap: a library returns what happened and leaves the rest to the program.
+`lib/` holds libraries that know nothing of Storymap, such as `lib/args/` for command lines. Each is a folder with its own README, and a module of its own in `build.zig`, imported by name (`@import("args")`), so it can't import Storymap's code. Anything about Storymap itself, such as how its messages read or when it exits, stays in Storymap: a library returns what happened and leaves the rest to the program.
 
 ## Zig conventions
 

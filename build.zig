@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
 
     // Command-line arguments: a library of its own in lib/, which knows nothing of Storymap.
     const args_mod = b.createModule(.{
-        .root_source_file = b.path("lib/args.zig"),
+        .root_source_file = b.path("lib/args/args.zig"),
         .target = target,
         .optimize = optimize,
     });
