@@ -196,7 +196,7 @@ Stages:
 
 ## Performance
 
-*(Measured 2026-10-17 on a 14-thread Windows machine with `zig build bench -Doptimize=ReleaseFast -- <save> 7`: the median of 7 renders after one untimed one. The PNGs are encoded but not written to disk. Chunks/s counts all the save's chunks, so the stages compare.)*
+*(Measured 2026-10-17 on a 14-thread Windows machine with `zig build bench -Doptimize=ReleaseFast -- <save-file> 7`: the median of 7 renders after one untimed one. The PNGs are encoded but not written to disk. Chunks/s counts all the save's chunks, so the stages compare.)*
 
 Where a render's time goes, in the larger 1.22.7 test world (29,192 chunks in 3,649 chunk columns, 2,729 of them fully generated):
 

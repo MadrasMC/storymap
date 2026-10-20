@@ -9,19 +9,19 @@ Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a r
 | module | imports |
 | --- | --- |
 | `tiles` | – |
-| `columns` | `tiles` |
+| `world` | `tiles` |
 | `theme` | – |
-| `viewer` | `tiles`, `theme` |
+| `viewer` | `tiles`, `theme`, `world` |
 | `console` | – |
-| `renderer` | `columns`, `tiles` |
-| `vs` | `columns`, `tiles`, `viewer`, `console`, `sqlite`, `protobuf` |
+| `renderer` | `world`, `tiles` |
+| `vs` | `world`, `tiles`, `sqlite`, `protobuf` |
 | `cli` | `vs`, `renderer`, `viewer`, `theme`, `console`, `sqlite`, `args` |
 
 `main.zig` only imports `cli`, `console` and `args`.
 
 ## Keeping the game apart
 
-Everything that knows Vintage Story, its save format, its assets and its block names, lives in `vs`. The renderers, the tile pipeline, the viewer and `columns` don't import it: a game's reader tells the renderers what's on top of each block column (`columns`), and they draw from that alone, so another game could be read the same way. Only the commands in `cli`, which put the program together, import both.
+Everything that knows Vintage Story, its save format, its assets and its block names, lives in `vs`. The renderers, the tile pipeline, the viewer and `world` don't import it: a game's reader tells them what they need to know about its world (`world`): what's on top of each block column, how each block appears on a map, and the world's name and heights. They draw from that alone, so another game could be read the same way. Only the commands in `cli`, which put the program together, import both.
 
 ## Libraries
 

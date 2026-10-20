@@ -26,7 +26,7 @@ const Prepared = @This();
 const std = @import("std");
 const Io = std.Io;
 const Dir = Io.Dir;
-const columns = @import("columns");
+const world = @import("world");
 const Assets = @import("Assets.zig");
 const BlockTypes = @import("BlockTypes.zig");
 const TextureColours = @import("TextureColours.zig");
@@ -48,8 +48,8 @@ pub const Block = struct {
     colorCode: []const u8,
     /// Its texture's average colour, and its grain, from the textures the game's
     /// colour-accurate map uses (`BlockTypes.Textures`), where they could be read.
-    colour: ?columns.Rgb = null,
-    grain: []const columns.Rgb = &.{},
+    colour: ?world.Rgb = null,
+    grain: []const world.Rgb = &.{},
     /// The colour maps that tint it by climate and by season, where it has them and they
     /// could be read.
     climateColourMap: ?*const Tint.ColourMap = null,
@@ -296,9 +296,9 @@ fn loadColourMap(arena: std.mem.Allocator, io: Io, folder: Dir, code: []const u8
     return map;
 }
 
-fn parseRgb(word: ?[]const u8) !columns.Rgb {
+fn parseRgb(word: ?[]const u8) !world.Rgb {
     const hex = word orelse return error.NotPreparedBlocks;
-    var rgb: columns.Rgb = undefined;
+    var rgb: world.Rgb = undefined;
     if (hex.len != 6) return error.NotPreparedBlocks;
     _ = std.fmt.hexToBytes(&rgb, hex) catch return error.NotPreparedBlocks;
     return rgb;
@@ -407,7 +407,7 @@ test "prepare, load and compare with a save" {
     try std.testing.expectEqualStrings("Stone", prepared.blocks.get("rock-granite").?.material);
     try std.testing.expectEqualStrings("land", prepared.blocks.get("rock-granite").?.colorCode);
     // The transparent pixel counts for nothing.
-    try std.testing.expectEqual(columns.Rgb{ 200, 40, 20 }, prepared.blocks.get("rock-granite").?.colour.?);
+    try std.testing.expectEqual(world.Rgb{ 200, 40, 20 }, prepared.blocks.get("rock-granite").?.colour.?);
     try std.testing.expectEqual(TextureColours.samples, prepared.blocks.get("rock-granite").?.grain.len);
     // The colour map's image, 2 × 1; the other one has none, so it isn't there.
     const climate = prepared.blocks.get("rock-granite").?.climateColourMap.?;

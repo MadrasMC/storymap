@@ -1,18 +1,18 @@
 //! The top-down map: one pixel per block column, coloured by what's on top, in tiles of
 //! 512 × 512 blocks (see tiles.zig). It draws from what a game's reader tells it about each
-//! column (see columns.zig), so it knows nothing of any game's save format.
+//! column (see the `world` module), so it knows nothing of any game's save format.
 //!
 //! A source is a game's save, opened for reading, with:
 //! - `tileList: []const tiles.Tile`, the tiles that may have something to draw;
-//! - `heights() columns.Heights`;
-//! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `look(id: i32) columns.Look`,
+//! - `heights() world.Heights`;
+//! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `appearance(id: i32) world.Appearance`,
 //!   for the game's block IDs;
 //! - `Reader`, one per thread, with `init(source: *const Source, allocator) !Reader`,
-//!   `deinit(*Reader, allocator)`, `read(*Reader, tile: tiles.Tile, surface: *columns.Surface) !void`
+//!   `deinit(*Reader, allocator)`, `read(*Reader, tile: tiles.Tile, surface: *world.Surface) !void`
 //!   and a `chunksRead: usize` count.
 const std = @import("std");
 const Io = std.Io;
-const columns = @import("columns");
+const world = @import("world");
 const tiles = @import("tiles");
 const Style = @import("Style.zig");
 const Rgb = Style.Rgb;
@@ -116,7 +116,7 @@ fn View(comptime Source: type) type {
         pub const Worker = struct {
             view: *const Self,
             reader: Source.Reader,
-            surface: columns.Surface,
+            surface: world.Surface,
             /// The shaded style's shading, a byte per pixel as the game keeps it, and a copy of
             /// it before blurring.
             shade: []u8,
@@ -130,7 +130,7 @@ fn View(comptime Source: type) type {
             pub fn init(view: *const Self, allocator: std.mem.Allocator) !Worker {
                 var reader: Source.Reader = try .init(view.source, allocator);
                 errdefer reader.deinit(allocator);
-                var surface: columns.Surface = try .init(allocator, .{ .tints = view.style.kind == .coloured });
+                var surface: world.Surface = try .init(allocator, .{ .tints = view.style.kind == .coloured });
                 errdefer surface.deinit(allocator);
                 const shade = try allocator.alloc(u8, tiles.size * tiles.size);
                 errdefer allocator.free(shade);
@@ -175,7 +175,7 @@ fn View(comptime Source: type) type {
             fn paintRelief(self: *Worker, pixels: *tiles.Pixels) bool {
                 const surface = &self.surface;
                 const view = self.view;
-                const side = columns.Surface.side;
+                const side = world.Surface.side;
                 var any = false;
                 for (0..tiles.size) |py| for (0..tiles.size) |px| {
                     const i = (py + 1) * side + px + 1;
@@ -195,7 +195,7 @@ fn View(comptime Source: type) type {
                     self.count(i, block);
 
                     const style = &view.style;
-                    const mapType = view.source.look(block).mapType;
+                    const mapType = view.source.appearance(block).mapType;
                     if (here == .liquid) {
                         // Where water meets land, its edge, as an old map inks its coastlines.
                         const shore = west == .land or north == .land or east == .land or south == .land;
@@ -225,7 +225,7 @@ fn View(comptime Source: type) type {
                 const surface = &self.surface;
                 const view = self.view;
                 const style = &view.style;
-                const side = columns.Surface.side;
+                const side = world.Surface.side;
                 var any = false;
                 for (0..tiles.size) |py| for (0..tiles.size) |px| {
                     const i = (py + 1) * side + px + 1;
@@ -239,14 +239,14 @@ fn View(comptime Source: type) type {
                     any = true;
                     const top = if (here == .liquid) surface.liquidBlock[i] else surface.topBlock[i];
                     self.count(i, top);
-                    var look = view.source.look(top);
+                    var appearance = view.source.appearance(top);
                     // Under a cover such as snow, what's beneath shows, one block lower.
                     var at = y;
-                    if (here == .land and look.cover and surface.underBlock[i] != 0) {
-                        look = view.source.look(surface.underBlock[i]);
+                    if (here == .land and appearance.cover and surface.underBlock[i] != 0) {
+                        appearance = view.source.appearance(surface.underBlock[i]);
                         at = y - 1;
                     }
-                    if (look.lake or (here == .liquid and !look.mapType.isLiquid())) {
+                    if (appearance.lake or (here == .liquid and !appearance.mapType.isLiquid())) {
                         // An edge where any neighbour isn't lake at the same height. Next to a
                         // column that isn't drawn, the game draws water, as it can't tell.
                         const neighbours = [_]usize{ i - 1, i + 1, i - side, i + side };
@@ -258,11 +258,11 @@ fn View(comptime Source: type) type {
                             }
                             if (!self.lakeAt(j, at)) surrounded = false;
                         }
-                        const lakeType = if (look.mapType.isLiquid() or look.lake) look.mapType else .lake;
+                        const lakeType = if (appearance.mapType.isLiquid() or appearance.lake) appearance.mapType else .lake;
                         pixels[p] = rgb(if (surrounded) style.colours.get(lakeType) else style.wateredge);
                         continue;
                     }
-                    pixels[p] = rgb(style.colours.get(look.mapType));
+                    pixels[p] = rgb(style.colours.get(appearance.mapType));
                     self.shade[p] = hillShade(surface, i, y);
                 };
                 if (!any) return false;
@@ -278,7 +278,7 @@ fn View(comptime Source: type) type {
             fn paintColoured(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) bool {
                 const surface = &self.surface;
                 const view = self.view;
-                const side = columns.Surface.side;
+                const side = world.Surface.side;
                 var any = false;
                 for (0..tiles.size) |py| for (0..tiles.size) |px| {
                     const i = (py + 1) * side + px + 1;
@@ -292,11 +292,11 @@ fn View(comptime Source: type) type {
                     any = true;
                     const top = if (here == .liquid) surface.liquidBlock[i] else surface.topBlock[i];
                     self.count(i, top);
-                    const look = view.source.look(top);
+                    const appearance = view.source.appearance(top);
                     const x = tile.x * tiles.size + @as(i32, @intCast(px));
                     const z = tile.y * tiles.size + @as(i32, @intCast(py));
                     const tint = if (here == .liquid) surface.liquidTint[i] else surface.topTint[i];
-                    pixels[p] = rgb(textureColour(look, view.style.colours.get(look.mapType), tint, x, y, z));
+                    pixels[p] = rgb(textureColour(appearance, view.style.colours.get(appearance.mapType), tint, x, y, z));
                     self.shade[p] = hillShade(surface, i, y);
                 };
                 if (!any) return false;
@@ -330,9 +330,9 @@ fn View(comptime Source: type) type {
                     // Liquid reaches down to `y` unless the solid block is in the way: below
                     // it is the ground it stands on, above it something over it, like leaves.
                     const solid = surface.top[i];
-                    if (liquid >= y and (solid == null or solid.? < y or solid.? > liquid)) return source.look(surface.liquidBlock[i]).lake;
+                    if (liquid >= y and (solid == null or solid.? < y or solid.? > liquid)) return source.appearance(surface.liquidBlock[i]).lake;
                 }
-                if (surface.top[i]) |solid| if (solid == y) return source.look(surface.topBlock[i]).lake;
+                if (surface.top[i]) |solid| if (solid == y) return source.appearance(surface.topBlock[i]).lake;
                 return false;
             }
         };
@@ -345,7 +345,7 @@ fn signOf(value: i32) i32 {
 }
 
 /// How much higher a column at height `y` is than column `i`, or 0 if `i` isn't drawn.
-fn rise(y: u16, surface: *const columns.Surface, i: usize) i32 {
+fn rise(y: u16, surface: *const world.Surface, i: usize) i32 {
     const other = ColumnTop.of(surface.top[i], surface.liquidTop[i]).height() orelse return 0;
     return @as(i32, y) - other;
 }
@@ -353,8 +353,8 @@ fn rise(y: u16, surface: *const columns.Surface, i: usize) i32 {
 /// The game map's hill shading for column `i` at height `y`, as a byte where 128 is level: a
 /// column higher than its north-west, west and north neighbours, as a whole, is lit, and one
 /// lower shaded, more for steeper slopes.
-fn hillShade(surface: *const columns.Surface, i: usize, y: u16) u8 {
-    const side = columns.Surface.side;
+fn hillShade(surface: *const world.Surface, i: usize, y: u16) u8 {
+    const side = world.Surface.side;
     const nw = rise(y, surface, i - side - 1);
     const w = rise(y, surface, i - 1);
     const n = rise(y, surface, i - side);
@@ -373,13 +373,13 @@ fn hillShade(surface: *const columns.Surface, i: usize, y: u16) u8 {
 /// world setting `colorRandomizationWeight` has it by default.
 const grainWeight: f32 = 0.6;
 
-/// The colour of block `look` at (`x`, `y`, `z`) on a colour-accurate map: its texture's
+/// The colour of block `appearance` at (`x`, `y`, `z`) on a colour-accurate map: its texture's
 /// average colour with one of its grain colours mixed in, picked by position with the game's
 /// hash, so it stays put, each tinted by `tint`; or `fallback` without a texture.
-fn textureColour(look: columns.Look, fallback: Rgb, tint: Rgb, x: i32, y: u16, z: i32) Rgb {
-    const average = tinted(look.colour orelse return fallback, tint);
-    if (look.grain.len == 0) return average;
-    const sample = tinted(look.grain[grainIndex(x, y, z, look.grain.len)], tint);
+fn textureColour(appearance: world.Appearance, fallback: Rgb, tint: Rgb, x: i32, y: u16, z: i32) Rgb {
+    const average = tinted(appearance.colour orelse return fallback, tint);
+    if (appearance.grain.len == 0) return average;
+    const sample = tinted(appearance.grain[grainIndex(x, y, z, appearance.grain.len)], tint);
     var out: Rgb = undefined;
     // As `ColorUtil.ColorOverlay`, rounding down.
     for (&out, average, sample) |*channel, a, s| channel.* = @intFromFloat(@as(f32, @floatFromInt(a)) * (1 - grainWeight) + grainWeight * @as(f32, @floatFromInt(s)));
@@ -396,13 +396,13 @@ fn tinted(colour: Rgb, tint: Rgb) Rgb {
 
 test textureColour {
     const grain = [_]Rgb{ .{ 0, 0, 0 }, .{ 200, 100, 50 } };
-    const look: columns.Look = .{ .mapType = .land, .colour = .{ 100, 100, 100 }, .grain = &grain };
-    const colour = textureColour(look, .{ 1, 2, 3 }, columns.white, 409, 111, -304);
+    const appearance: world.Appearance = .{ .mapType = .land, .colour = .{ 100, 100, 100 }, .grain = &grain };
+    const colour = textureColour(appearance, .{ 1, 2, 3 }, world.white, 409, 111, -304);
     try std.testing.expect(std.meta.eql(colour, Rgb{ 40, 40, 40 }) or std.meta.eql(colour, Rgb{ 160, 100, 70 }));
-    try std.testing.expectEqual(colour, textureColour(look, .{ 1, 2, 3 }, columns.white, 409, 111, -304));
+    try std.testing.expectEqual(colour, textureColour(appearance, .{ 1, 2, 3 }, world.white, 409, 111, -304));
     try std.testing.expectEqual(Rgb{ 1, 2, 3 }, textureColour(.{ .mapType = .land }, .{ 1, 2, 3 }, .{ 0, 0, 0 }, 0, 0, 0));
     // Half green: the average and the grain are both tinted.
-    const half = textureColour(look, .{ 1, 2, 3 }, .{ 0, 128, 0 }, 409, 111, -304);
+    const half = textureColour(appearance, .{ 1, 2, 3 }, .{ 0, 128, 0 }, 409, 111, -304);
     try std.testing.expect(std.meta.eql(half, Rgb{ 0, 20, 0 }) or std.meta.eql(half, Rgb{ 0, 50, 0 }));
 }
 
@@ -602,9 +602,9 @@ const Heights = struct {
     /// For a world: in a default 256-block world, 70, 110 (sea level) and 174. The test worlds'
     /// surfaces have a median of 112. The ends are fractions of the world height, on the guess
     /// that taller worlds have taller terrain too.
-    fn of(world: columns.Heights) Heights {
-        const height: u32 = world.world;
-        const sea: u32 = world.sea;
+    fn of(heights: world.Heights) Heights {
+        const height: u32 = heights.world;
+        const sea: u32 = heights.sea;
         return .{
             .low = @intCast(sea -| height * 40 / 256),
             .ground = @intCast(sea),

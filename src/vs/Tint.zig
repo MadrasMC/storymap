@@ -4,10 +4,10 @@
 //! in closed code; this follows its shader, `shaderincludes/colormap.vsh` and `.fsh`, which
 //! does the same for the world it draws.
 const std = @import("std");
-const columns = @import("columns");
+const world = @import("world");
 const stb = @import("stb_image");
 
-const Rgb = columns.Rgb;
+const Rgb = world.Rgb;
 
 /// One of the game's colour maps (`config/colormaps.json`): an image a block's colour is
 /// multiplied by.

@@ -1,6 +1,7 @@
-//! What a game tells the renderers about its world, the same for every game: for a tile's
-//! block columns, what's on top of each one. A game's reader (src/vs/ for Vintage Story) fills
-//! these in from its saves; the renderers draw from them and know nothing of any save format.
+//! What a game tells the renderers and the viewer about its world, the same for every game:
+//! for a tile's block columns, what's on top of each one, how each block appears on a map, and
+//! what the world is called. A game's reader (`vs` for Vintage Story) fills these in from its
+//! save files; the renderers and the viewer know nothing of any save format.
 const std = @import("std");
 const tiles = @import("tiles");
 
@@ -27,7 +28,7 @@ pub const MapType = enum {
 };
 
 /// What the map needs to know about a block.
-pub const Look = struct {
+pub const Appearance = struct {
     mapType: MapType,
     /// Drawn as water by a shaded map: unshaded, with an edge where it meets anything else. In
     /// Vintage Story, water and ice other than glacier ice.
@@ -51,6 +52,23 @@ pub const Palette = struct {
     colours: std.EnumArray(MapType, Rgb),
     ink: Rgb,
     wateredge: Rgb,
+};
+
+/// The game a world is from, e.g. "Vintage Story", and the version that last saved the world,
+/// e.g. "1.22.7".
+pub const Game = struct {
+    name: []const u8,
+    version: []const u8,
+};
+
+/// What a map of a world shows it as: its game, its name, and where its positions are counted
+/// from.
+pub const Description = struct {
+    game: Game,
+    name: []const u8,
+    /// The block the game shows as position 0, 0, so a map can show positions as the game
+    /// does: x east, z south.
+    origin: struct { x: i64, z: i64 },
 };
 
 /// The heights a map is coloured by: they depend only on the world, so every part of a map,
@@ -79,7 +97,7 @@ pub const Surface = struct {
     liquidTop: []?u16,
     liquidBlock: []i32,
     /// The block right under the highest solid one, liquid or solid, or 0 where it isn't
-    /// known: what a shaded map shows under a cover such as snow (`Look.cover`).
+    /// known: what a shaded map shows under a cover such as snow (`Appearance.cover`).
     underBlock: []i32,
     /// What the game tints the highest solid block's colour and the highest liquid's by where
     /// they are, such as grass and leaves by climate and season, or white: multiplied into

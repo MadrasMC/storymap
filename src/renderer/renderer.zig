@@ -1,4 +1,4 @@
-//! The views of a map, drawn from what's on top of each block column (`columns`) alone.
+//! The views of a map, drawn from what's on top of each block column (`world`) alone.
 const std = @import("std");
 
 pub const Style = @import("Style.zig");

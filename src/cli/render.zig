@@ -1,7 +1,7 @@
-//! `storymap <save>`, the default command: renders a top-down map of a save as tiles, with
+//! `storymap <save-file>`, the default command: renders a top-down map of a save as tiles, with
 //! index.html beside them to view it.
 const std = @import("std");
-const Save = @import("vs").Save;
+const SaveFile = @import("vs").SaveFile;
 const Prepared = @import("vs").Prepared;
 const topdown = @import("renderer").topdown;
 const Style = @import("renderer").Style;
@@ -22,7 +22,7 @@ pub const spec: args.Spec = .{
         prepare.dataOption,
     },
     .positionals = &.{
-        .{ .name = "save", .description = "The save to render." },
+        .{ .name = "save-file", .description = "The world's save file (.vcdbs)." },
         .{ .name = "folder", .optional = true, .description = "The output folder: out by default." },
     },
     .description =
@@ -36,11 +36,11 @@ pub const spec: args.Spec = .{
 
 pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const allocator = init.gpa;
-    const dbPath = parsed.positional("save").?;
+    const savePath = parsed.positional("save-file").?;
     const outPath = parsed.positional("folder") orelse "out";
     const themeName = parsed.value("theme") orelse "printed";
-    const season: ?Save.Season = if (parsed.value("season")) |name|
-        std.meta.stringToEnum(Save.Season, name) orelse console.fail("there's no season {s}: it's spring, summer, fall or winter\n", .{name})
+    const season: ?SaveFile.Season = if (parsed.value("season")) |name|
+        std.meta.stringToEnum(SaveFile.Season, name) orelse console.fail("there's no season {s}: it's spring, summer, fall or winter\n", .{name})
     else
         null;
     const folders: prepare.Folders = .{
@@ -66,7 +66,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err|
         console.fail("can't create {s} ({s})\n", .{ outPath, @errorName(err) });
     defer out.close(init.io);
-    var save = try Save.open(allocator, init.io, dbPath);
+    var save = try openSaveFile(allocator, init.io, savePath);
     defer save.close(allocator);
     if (season) |chosen| save.seasonProgress = chosen.progress();
     var prepared = prepare.blocks(init, folders, force);
@@ -75,19 +75,36 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         try warnUnknownBlocks(allocator, blocks, &save);
         save.useBlocks(blocks);
     }
-    const style = styleFile.complete(Save.palette);
-    const written = try topdown.render(Save, allocator, init.io, &save, .{ .folder = out }, .{ .style = style });
+    const style = styleFile.complete(SaveFile.palette);
+    const written = try topdown.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .style = style });
     defer allocator.free(written);
 
     // The viewer page goes next to the tiles. With more views, it'll list them all.
     const views = [_]viewer.View{.{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .written = written }};
     const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
-    try viewer.write(allocator, init.io, out, save.game(), save.world(), now, &views, theme);
+    try viewer.write(allocator, init.io, out, save.describe(), now, &views, theme);
+}
+
+/// The save file at `path`, opened for rendering. One that can't be read stops the program
+/// with a message saying why.
+pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !SaveFile {
+    var problem: SaveFile.Problem = .{};
+    const save = SaveFile.open(allocator, io, path, &problem) catch |err| switch (err) {
+        error.InvalidSaveFile => switch (problem.kind) {
+            .unopenable => console.fail("can't open {s} ({s})\n", .{ path, @errorName(problem.cause.?) }),
+            .notASave => console.fail("{s} isn't a Vintage Story save ({s})\n", .{ path, @errorName(problem.cause.?) }),
+            .noChunks => console.fail("{s} has no chunks, so there's nothing to draw\n", .{path}),
+            .unreadableBlockList => console.fail("can't read the block list in {s} ({s})\n", .{ path, @errorName(problem.cause.?) }),
+        },
+        else => return err,
+    };
+    if (save.unsaved) std.debug.print("storymap: {s} has unsaved changes (is the game running?); they won't be on the map\n", .{path});
+    return save;
 }
 
 /// Warns about the save's blocks that the prepared ones don't have: those of mods that
 /// aren't installed, and any others.
-fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, save: *const Save) !void {
+fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, save: *const SaveFile) !void {
     const unknown = try prepared.unknown(allocator, save.gameData.blockCodes);
     defer allocator.free(unknown.mods);
     for (unknown.mods) |mod| std.debug.print("storymap: the world uses the mod {s}, which isn't installed\n", .{mod});
@@ -105,8 +122,8 @@ test "the built-in themes' styles" {
 
 test "the plain theme's colours are the game's" {
     const style = comptime Style.parsed(Theme.plain.topdown);
-    try std.testing.expectEqual(Save.palette.colours, style.colours);
-    try std.testing.expectEqual(Save.palette.wateredge, style.wateredge);
+    try std.testing.expectEqual(SaveFile.palette.colours, style.colours);
+    try std.testing.expectEqual(SaveFile.palette.wateredge, style.wateredge);
     var problem: Style.Problem = .{};
-    try std.testing.expectEqual(style, (try Style.parse("style shaded\n", &problem)).complete(Save.palette));
+    try std.testing.expectEqual(style, (try Style.parse("style shaded\n", &problem)).complete(SaveFile.palette));
 }

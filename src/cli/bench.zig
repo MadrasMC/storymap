@@ -12,12 +12,13 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const DB = @import("sqlite");
 const Chunk = @import("vs").Chunk;
-const Save = @import("vs").Save;
+const SaveFile = @import("vs").SaveFile;
 const topdown = @import("renderer").topdown;
 const Style = @import("renderer").Style;
 const Theme = @import("theme");
 const build_options = @import("build_options");
 const console = @import("console");
+const render = @import("render.zig");
 const args = @import("args");
 
 /// What `storymap bench` takes.
@@ -26,7 +27,7 @@ pub const spec: args.Spec = .{
         .{ .name = "json", .description = "Print the results as one line of JSON, for scripts, instead of the summary." },
     },
     .positionals = &.{
-        .{ .name = "save", .description = "The save to render." },
+        .{ .name = "save-file", .description = "The world's save file (.vcdbs)." },
         .{ .name = "runs", .optional = true, .description = "How many times to render it: 5 by default." },
     },
     .description = "Renders the save several times and prints the median time of each stage.",
@@ -37,7 +38,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const io = init.io;
 
     const json = parsed.flag("json");
-    const dbPath = parsed.positional("save").?;
+    const dbPath = parsed.positional("save-file").?;
     const runs = if (parsed.positional("runs")) |text| std.fmt.parseInt(usize, text, 10) catch 0 else 5;
     if (runs == 0) fail("storymap: [runs] must be a whole number above 0\n", .{});
 
@@ -163,10 +164,10 @@ const style = Style.parsed(Theme.printed.topdown);
 /// writing anything, and closed. Returns how long opening took.
 fn renderOnce(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *topdown.Stats) !Io.Duration {
     const start: Io.Timestamp = .now(io, .awake);
-    const save = try Save.open(allocator, io, dbPath);
+    const save = try render.openSaveFile(allocator, io, dbPath);
     defer save.close(allocator);
     const opened = start.untilNow(io, .awake);
-    allocator.free(try topdown.render(Save, allocator, io, &save, .discard, .{ .style = style, .stats = stats }));
+    allocator.free(try topdown.render(SaveFile, allocator, io, &save, .discard, .{ .style = style, .stats = stats }));
     return opened;
 }
 

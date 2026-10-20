@@ -134,8 +134,8 @@ pub fn build(b: *std.Build) void {
     tiles_mod.addCSourceFile(.{ .file = stb_image_write_impl });
     tiles_mod.addIncludePath(stb.path("."));
 
-    const columns_mod = b.createModule(.{
-        .root_source_file = b.path("src/columns/columns.zig"),
+    const world_mod = b.createModule(.{
+        .root_source_file = b.path("src/world/world.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "tiles", .module = tiles_mod }},
@@ -154,6 +154,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "tiles", .module = tiles_mod },
             .{ .name = "theme", .module = theme_mod },
+            .{ .name = "world", .module = world_mod },
         },
     });
 
@@ -168,7 +169,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "columns", .module = columns_mod },
+            .{ .name = "world", .module = world_mod },
             .{ .name = "tiles", .module = tiles_mod },
         },
     });
@@ -179,10 +180,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
         .imports = &.{
-            .{ .name = "columns", .module = columns_mod },
+            .{ .name = "world", .module = world_mod },
             .{ .name = "tiles", .module = tiles_mod },
-            .{ .name = "viewer", .module = viewer_mod },
-            .{ .name = "console", .module = console_mod },
             .{ .name = "sqlite", .module = sqlite_mod },
             .{ .name = "protobuf", .module = protobuf_mod },
             .{ .name = "zstd", .module = zstd_translate_c.createModule() },
@@ -248,7 +247,7 @@ pub fn build(b: *std.Build) void {
     // Every module's tests.
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
-        args_mod,    sqlite_mod,   protobuf_mod, tiles_mod, columns_mod, theme_mod, viewer_mod,
+        args_mod,    sqlite_mod,   protobuf_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
         console_mod, renderer_mod, vs_mod,       cli_mod,
     };
     for (tested) |module| {

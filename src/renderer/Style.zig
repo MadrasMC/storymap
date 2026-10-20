@@ -11,7 +11,7 @@
 const Style = @This();
 
 const std = @import("std");
-const columns = @import("columns");
+const world = @import("world");
 
 /// How the colours are used.
 pub const Kind = enum {
@@ -29,26 +29,26 @@ pub const Kind = enum {
 
 kind: Kind,
 /// Each map type's colour.
-colours: std.EnumArray(columns.MapType, Rgb),
+colours: std.EnumArray(world.MapType, Rgb),
 /// What low ground darkens towards.
 ink: Rgb,
 /// Where water meets land.
 wateredge: Rgb,
 
-pub const Rgb = columns.Rgb;
+pub const Rgb = world.Rgb;
 
 /// A style file as written: the colours it leaves out are null, until `complete` fills them
 /// with the game's.
 pub const File = struct {
     kind: Kind,
-    colours: std.EnumArray(columns.MapType, ?Rgb) = .initFill(null),
+    colours: std.EnumArray(world.MapType, ?Rgb) = .initFill(null),
     ink: ?Rgb = null,
     wateredge: ?Rgb = null,
 
     /// The style, with what the file leaves out taken from the game's own palette.
-    pub fn complete(self: File, game: columns.Palette) Style {
+    pub fn complete(self: File, game: world.Palette) Style {
         var style: Style = .{ .kind = self.kind, .colours = undefined, .ink = self.ink orelse game.ink, .wateredge = self.wateredge orelse game.wateredge };
-        for (std.enums.values(columns.MapType)) |mapType| style.colours.set(mapType, self.colours.get(mapType) orelse game.colours.get(mapType));
+        for (std.enums.values(world.MapType)) |mapType| style.colours.set(mapType, self.colours.get(mapType) orelse game.colours.get(mapType));
         return style;
     }
 };
@@ -60,12 +60,12 @@ pub fn parsed(comptime text: []const u8) Style {
         @setEvalBranchQuota(100_000);
         var problem: Problem = .{};
         const file = parse(text, &problem) catch @compileError(problem.message);
-        var palette: columns.Palette = .{
+        var palette: world.Palette = .{
             .colours = undefined,
             .ink = file.ink orelse @compileError("a built-in style has no colour for ink"),
             .wateredge = file.wateredge orelse @compileError("a built-in style has no colour for wateredge"),
         };
-        for (std.enums.values(columns.MapType)) |mapType| palette.colours.set(mapType, file.colours.get(mapType) orelse
+        for (std.enums.values(world.MapType)) |mapType| palette.colours.set(mapType, file.colours.get(mapType) orelse
             @compileError("a built-in style has no colour for " ++ @tagName(mapType)));
         return file.complete(palette);
     }
@@ -103,7 +103,7 @@ pub fn parse(text: []const u8, problem: *Problem) error{InvalidStyle}!File {
             continue;
         }
         const colour = parseColour(value) orelse return fail(problem, number, "has a colour that isn't #RRGGBB", name);
-        const slot: *?Rgb = if (std.meta.stringToEnum(columns.MapType, name)) |mapType|
+        const slot: *?Rgb = if (std.meta.stringToEnum(world.MapType, name)) |mapType|
             file.colours.getPtr(mapType)
         else if (std.mem.eql(u8, name, "ink"))
             &file.ink

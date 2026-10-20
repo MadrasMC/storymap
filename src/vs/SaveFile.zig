@@ -1,13 +1,12 @@
-//! A Vintage Story save, read for the renderers (see columns.zig): which tiles have something
-//! in them, what the world is, and the top of every block column in a tile. Each thread reads
-//! through a `Reader` of its own.
-const Save = @This();
+//! A Vintage Story save file, read for the renderers (see the `world` module): which tiles have
+//! something in them, what the world is, and the top of every block column in a tile. Each
+//! thread reads through a `Reader` of its own.
+const SaveFile = @This();
 
 const std = @import("std");
 const DB = @import("sqlite");
 const tiles = @import("tiles");
-const columns = @import("columns");
-const viewer = @import("viewer");
+const world = @import("world");
 const Chunk = @import("Chunk.zig");
 const Compression = @import("Compression.zig");
 const MapChunk = @import("MapChunk.zig");
@@ -15,16 +14,18 @@ const GameData = @import("GameData.zig");
 const Prepared = @import("Prepared.zig");
 const Tint = @import("Tint.zig");
 const ProtoBuf = @import("protobuf");
-const console = @import("console");
 
 path: []const u8,
+/// Whether the save's -wal file holds changes the game hasn't written into the save yet,
+/// because it's still running or it crashed. The map won't show them.
+unsaved: bool,
 db: DB,
 gameData: GameData,
 /// The tiles that may have something to draw.
 tileList: []tiles.Tile,
 /// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else from
 /// what its code says.
-looks: []columns.Look,
+appearances: []world.Appearance,
 /// How many chunk levels the world has: chunks have y 0 to `levels` − 1.
 levels: usize,
 /// The colour maps that tint each block ID, from the prepared blocks (`useBlocks`); none
@@ -34,96 +35,104 @@ tints: []BlockTint,
 /// save's date, unless a season is chosen.
 seasonProgress: f32,
 
-/// Opens the save at `path` for reading, never writing next to it, since it may be in the
-/// game's own Saves folder. A file that can't be read as a save stops the program with a
-/// message saying why.
-pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Save {
+/// Why a file can't be read as a save, for a message.
+pub const Problem = struct {
+    kind: Kind = .unopenable,
+    /// The error behind it, if any.
+    cause: ?anyerror = null,
+
+    pub const Kind = enum {
+        unopenable,
+        /// Not an SQLite database, or one without a save's tables.
+        notASave,
+        /// No chunks at all, so nothing to draw.
+        noChunks,
+        /// The block list in `gamedata` can't be read.
+        unreadableBlockList,
+    };
+};
+
+/// Opens the save file at `path` for reading, never writing next to it, since it may be in
+/// the game's own Saves folder. If it can't be read as a save, returns error.InvalidSaveFile
+/// and `problem` says why.
+pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem: *Problem) !SaveFile {
     // The immutable open ignores the save's -wal file. A non-empty one holds changes the
     // game hasn't written into the save yet, because it's still running or it crashed.
     const walPath = try std.mem.concat(allocator, u8, &.{ path, "-wal" });
     defer allocator.free(walPath);
-    if (std.Io.Dir.cwd().statFile(io, walPath, .{})) |wal| {
-        if (wal.size > 0) std.debug.print("storymap: {s} has unsaved changes (is the game running?); they won't be on the map\n", .{path});
-    } else |_| {}
+    const unsaved = if (std.Io.Dir.cwd().statFile(io, walPath, .{})) |wal| wal.size > 0 else |_| false;
 
-    const db = DB.initImmutable(allocator, path) catch |err| {
-        std.debug.print("storymap: can't open {s} ({s})\n", .{ path, @errorName(err) });
-        console.exit(1);
-    };
+    const db = DB.initImmutable(allocator, path) catch |err| return fail(problem, .unopenable, err);
     errdefer db.deinit();
 
-    const list = readTileList(allocator, db) catch |err| {
-        // SQLite opens any file lazily, so this first query is where a wrong file shows up.
-        std.debug.print("storymap: {s} isn't a Vintage Story save ({s})\n", .{ path, @errorName(err) });
-        console.exit(1);
-    };
+    // SQLite opens any file lazily, so this first query is where a wrong file shows up.
+    const list = readTileList(allocator, db) catch |err| return fail(problem, .notASave, err);
     errdefer allocator.free(list);
-    if (list.len == 0) return error.NoChunks;
+    if (list.len == 0) return fail(problem, .noChunks, null);
 
     // Which block code each numeric block ID stands for, in this save.
-    const gameData = GameData.read(allocator, db) catch |err| {
-        std.debug.print("storymap: can't read the block list in {s} ({s})\n", .{ path, @errorName(err) });
-        console.exit(1);
-    };
+    const gameData = GameData.read(allocator, db) catch |err| return fail(problem, .unreadableBlockList, err);
     errdefer gameData.deinit();
-    const looks = try looksByCode(allocator, gameData);
-    errdefer allocator.free(looks);
+    const appearances = try appearancesByCode(allocator, gameData);
+    errdefer allocator.free(appearances);
     const tints = try allocator.alloc(BlockTint, gameData.blockCodes.len);
     @memset(tints, .{});
 
     return .{
         .tints = tints,
         .seasonProgress = gameData.yearProgress(),
+        .unsaved = unsaved,
         .path = path,
         .db = db,
         .gameData = gameData,
         .tileList = list,
-        .looks = looks,
+        .appearances = appearances,
         // Chunk levels in the world: 8 for the default height of 256.
         .levels = std.math.divCeil(usize, gameData.worldHeight, 32) catch unreachable,
     };
 }
 
-pub fn close(self: Save, allocator: std.mem.Allocator) void {
+fn fail(problem: *Problem, kind: Problem.Kind, cause: ?anyerror) error{InvalidSaveFile} {
+    problem.* = .{ .kind = kind, .cause = cause };
+    return error.InvalidSaveFile;
+}
+
+pub fn close(self: SaveFile, allocator: std.mem.Allocator) void {
     allocator.free(self.tints);
-    allocator.free(self.looks);
+    allocator.free(self.appearances);
     self.gameData.deinit();
     allocator.free(self.tileList);
     self.db.deinit();
 }
 
-/// The game, and the version that last saved the world.
-pub fn game(self: *const Save) viewer.Game {
-    return .{ .name = "Vintage Story", .version = self.gameData.gameVersion };
-}
-
-/// The world, as the viewer describes it. The game shows positions relative to the world's
-/// centre (docs/save-format/README.md#2-positions).
-pub fn world(self: *const Save) viewer.World {
+/// The world, for a map of it. The game shows positions relative to the world's centre
+/// (docs/save-format/README.md#2-positions).
+pub fn describe(self: *const SaveFile) world.Description {
     return .{
+        .game = .{ .name = "Vintage Story", .version = self.gameData.gameVersion },
         .name = self.gameData.name,
         .origin = .{ .x = @intCast(self.gameData.worldWidth / 2), .z = @intCast(self.gameData.worldLength / 2) },
     };
 }
 
 /// The world's height and sea level.
-pub fn heights(self: *const Save) columns.Heights {
+pub fn heights(self: *const SaveFile) world.Heights {
     return .{ .world = @intCast(self.gameData.worldHeight), .sea = @intCast(self.gameData.seaLevel()) };
 }
 
 /// How many block IDs the save has; IDs run from 0 below it.
-pub fn blockCount(self: *const Save) usize {
+pub fn blockCount(self: *const SaveFile) usize {
     return self.gameData.blockCodes.len;
 }
 
 /// The block code for a block ID, e.g. "rock-granite".
-pub fn blockName(self: *const Save, id: i32) ?[]const u8 {
+pub fn blockName(self: *const SaveFile, id: i32) ?[]const u8 {
     return self.gameData.blockCode(id);
 }
 
 /// The game's own map colours (vsessentialsmod `ChunkMapLayer`), for what a theme's style
 /// leaves out. Its edges are in the same ink as the rest of its lines.
-pub const palette: columns.Palette = .{
+pub const palette: world.Palette = .{
     .colours = .init(.{
         .land = .{ 0xAC, 0x88, 0x58 },
         .desert = .{ 0xC4, 0xA4, 0x68 },
@@ -147,7 +156,7 @@ pub const BlockTint = struct {
     season: ?*const Tint.ColourMap = null,
 };
 
-fn blockTint(self: *const Save, id: i32) BlockTint {
+fn blockTint(self: *const SaveFile, id: i32) BlockTint {
     return if (id >= 0 and id < self.tints.len) self.tints[@intCast(id)] else .{};
 }
 
@@ -171,23 +180,23 @@ pub const Season = enum {
     }
 };
 
-/// What a block ID looks like on the map. Anything unknown is land.
-pub fn look(self: *const Save, id: i32) columns.Look {
-    return if (id >= 0 and id < self.looks.len) self.looks[@intCast(id)] else .{ .mapType = .land };
+/// How a block ID appears on the map. Anything unknown is land.
+pub fn appearance(self: *const SaveFile, id: i32) world.Appearance {
+    return if (id >= 0 and id < self.appearances.len) self.appearances[@intCast(id)] else .{ .mapType = .land };
 }
 
-/// Takes each block's look from the prepared blocks: its map type is its map colour code
+/// Takes each block's appearance from the prepared blocks: its map type is its map colour code
 /// (docs/rendering.md#block-colours), and it's drawn as a lake if it's water, or ice other
 /// than glacier ice, and looked under if it's snow, as the game's map has it; its colour and
-/// grain are its texture's. Blocks they don't have keep what their code says. The looks
+/// grain are its texture's. Blocks they don't have keep what their code says. The appearances
 /// point into `prepared`, which must outlast rendering.
-pub fn useBlocks(self: *Save, prepared: *const Prepared) void {
-    for (self.looks, self.gameData.blockCodes) |*blockLook, maybeCode| {
+pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
+    for (self.appearances, self.gameData.blockCodes) |*blockAppearance, maybeCode| {
         const code = maybeCode orelse continue;
         const block = prepared.blocks.get(code) orelse continue;
         const ice = std.mem.eql(u8, block.material, "Ice");
-        blockLook.* = .{
-            .mapType = std.meta.stringToEnum(columns.MapType, block.colorCode) orelse .land,
+        blockAppearance.* = .{
+            .mapType = std.meta.stringToEnum(world.MapType, block.colorCode) orelse .land,
             .lake = std.mem.eql(u8, block.material, "Water") or (ice and !std.mem.eql(u8, code, "glacierice")),
             .cover = std.mem.eql(u8, block.material, "Snow"),
             .colour = block.colour,
@@ -223,15 +232,15 @@ fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
     return allocator.dupe(tiles.Tile, set.keys());
 }
 
-/// Each block ID's look from its code alone, for when there are no prepared blocks:
+/// Each block ID's appearance from its code alone, for when there are no prepared blocks:
 /// saltwater is `ocean` and lava `lava` (docs/rendering.md#how-the-game-draws-its-own-world-map),
 /// other water `lake`, snow layers `glacier` and looked under, and everything else `land`. A liquid surface that isn't one of those
 /// is drawn as a lake.
-fn looksByCode(allocator: std.mem.Allocator, gameData: GameData) ![]columns.Look {
-    const looks = try allocator.alloc(columns.Look, gameData.blockCodes.len);
-    for (looks, gameData.blockCodes) |*blockLook, code| {
+fn appearancesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]world.Appearance {
+    const appearances = try allocator.alloc(world.Appearance, gameData.blockCodes.len);
+    for (appearances, gameData.blockCodes) |*blockAppearance, code| {
         const name = code orelse "";
-        blockLook.* = if (std.mem.startsWith(u8, name, "saltwater-"))
+        blockAppearance.* = if (std.mem.startsWith(u8, name, "saltwater-"))
             .{ .mapType = .ocean, .lake = true }
         else if (std.mem.startsWith(u8, name, "lava-"))
             .{ .mapType = .lava }
@@ -242,15 +251,15 @@ fn looksByCode(allocator: std.mem.Allocator, gameData: GameData) ![]columns.Look
         else
             .{ .mapType = .land };
     }
-    return looks;
+    return appearances;
 }
 
-test looksByCode {
+test appearancesByCode {
     const codes = [_]?[]const u8{ "air", "water-still-7", "saltwater-n-3", "lava-still-7", "boilingwater-still-7", "snowlayer-1", null };
     const gameData: GameData = .{ .arena = undefined, .blockCodes = &codes, .itemCodes = &.{}, .worldHeight = 256 };
-    const looks = try looksByCode(std.testing.allocator, gameData);
-    defer std.testing.allocator.free(looks);
-    const expected = [_]columns.Look{
+    const appearances = try appearancesByCode(std.testing.allocator, gameData);
+    defer std.testing.allocator.free(appearances);
+    const expected = [_]world.Appearance{
         .{ .mapType = .land },
         .{ .mapType = .lake, .lake = true },
         .{ .mapType = .ocean, .lake = true },
@@ -259,12 +268,12 @@ test looksByCode {
         .{ .mapType = .glacier, .cover = true },
         .{ .mapType = .land },
     };
-    try std.testing.expectEqualSlices(columns.Look, &expected, looks);
+    try std.testing.expectEqualSlices(world.Appearance, &expected, appearances);
 }
 
 /// One thread's connection, decoder and buffers, reused for every tile it reads.
 pub const Reader = struct {
-    save: *const Save,
+    save: *const SaveFile,
     db: DB,
     mapChunkRow: DB.Stmt,
     chunkRow: DB.Stmt,
@@ -277,7 +286,7 @@ pub const Reader = struct {
     /// Chunks read: those holding a surface block, in each tile and the ring around it.
     chunksRead: usize = 0,
 
-    pub fn init(save: *const Save, allocator: std.mem.Allocator) !Reader {
+    pub fn init(save: *const SaveFile, allocator: std.mem.Allocator) !Reader {
         const db = try DB.initImmutable(allocator, save.path);
         errdefer db.deinit();
         const mapChunkRow = try db.prepare("SELECT data FROM mapchunk WHERE position = ?1;");
@@ -319,7 +328,7 @@ pub const Reader = struct {
     }
 
     /// Fills `surface` with the tile's block columns and the ring around them, from the save.
-    pub fn read(self: *Reader, tile: tiles.Tile, surface: *columns.Surface) !void {
+    pub fn read(self: *Reader, tile: tiles.Tile, surface: *world.Surface) !void {
         surface.clear();
         // The surface's north-west corner, in blocks, and the chunk column holding it.
         const x0 = @as(i64, tile.x) * tiles.size - 1;
@@ -338,7 +347,7 @@ pub const Reader = struct {
     /// Tints the top solid block and the top liquid of each of the tile's own columns by
     /// the climate there, from the tile's map region (the same area), and the season. A tile
     /// without a climate map stays untinted.
-    fn readTints(self: *Reader, tile: tiles.Tile, surface: columns.Surface) !void {
+    fn readTints(self: *Reader, tile: tiles.Tile, surface: world.Surface) !void {
         const save = self.save;
         if (tile.x < 0 or tile.y < 0) return;
         const region: Chunk.Position = .{ .x = @intCast(tile.x), .z = @intCast(tile.y) };
@@ -352,7 +361,7 @@ pub const Reader = struct {
         if (!found) return;
 
         const sea: i32 = @intCast(save.gameData.seaLevel());
-        const side = columns.Surface.side;
+        const side = world.Surface.side;
         for (0..tiles.size) |pz| for (0..tiles.size) |px| {
             const i = (pz + 1) * side + px + 1;
             const top = if (surface.top[i] != null) save.blockTint(surface.topBlock[i]) else BlockTint{};
@@ -367,7 +376,7 @@ pub const Reader = struct {
     /// Records one chunk column's block columns that fall in the tile or its ring: from their
     /// stored heights where they have them, reading only the chunks those point into, and by
     /// scanning down where they don't.
-    fn readColumn(self: *Reader, surface: columns.Surface, cx: u64, cz: u64, x0: i64, z0: i64) !void {
+    fn readColumn(self: *Reader, surface: world.Surface, cx: u64, cz: u64, x0: i64, z0: i64) !void {
         // Keys in the world itself, dimension 0.
         const base: Chunk.Position = .{ .x = @intCast(cx), .z = @intCast(cz) };
         // Only fully generated chunk columns are drawn: the partly generated ones around
@@ -395,9 +404,9 @@ pub const Reader = struct {
             .chunkX = cx,
             .chunkZ = cz,
             .x0 = @intCast(std.math.clamp(x0 - @as(i64, @intCast(cx * 32)), 0, 32)),
-            .x1 = @intCast(std.math.clamp(x0 + columns.Surface.side - @as(i64, @intCast(cx * 32)), 0, 32)),
+            .x1 = @intCast(std.math.clamp(x0 + world.Surface.side - @as(i64, @intCast(cx * 32)), 0, 32)),
             .z0 = @intCast(std.math.clamp(z0 - @as(i64, @intCast(cz * 32)), 0, 32)),
-            .z1 = @intCast(std.math.clamp(z0 + columns.Surface.side - @as(i64, @intCast(cz * 32)), 0, 32)),
+            .z1 = @intCast(std.math.clamp(z0 + world.Surface.side - @as(i64, @intCast(cz * 32)), 0, 32)),
             .areaX = x0,
             .areaZ = z0,
         };
@@ -440,7 +449,7 @@ pub const Reader = struct {
 /// Records the block columns of `span` in one chunk: from their stored heights where they
 /// have them, by scanning down where they don't. Returns whether a stored height turned out
 /// stale, in which case its column needs the chunks below scanned too.
-fn recordChunk(surface: columns.Surface, chunk: *const Chunk, stored: *MapChunk, span: Span) bool {
+fn recordChunk(surface: world.Surface, chunk: *const Chunk, stored: *MapChunk, span: Span) bool {
     var stale = false;
     for (span.z0..span.z1) |z| for (span.x0..span.x1) |x| {
         const index = span.index(x, z);
@@ -477,7 +486,7 @@ fn blockBelow(chunk: *const Chunk, x: usize, y: usize, z: usize) i32 {
 /// Records a column from its stored heights: the block at the rain height, in the chunk that
 /// holds it. Rain stops at water, so a liquid there is the water surface, and the terrain
 /// height is its bed. Returns false, recording nothing, if there's no block there.
-fn recordStored(surface: columns.Surface, chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, index: usize) bool {
+fn recordStored(surface: world.Surface, chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, index: usize) bool {
     const block = (y * 32 + z) * 32 + x;
     const liquidId = if (chunk.liquids.bits == 0) 0 else chunk.liquids.get(block);
     const solid = if (chunk.blocks.bits == 0) 0 else chunk.blocks.get(block);
@@ -532,7 +541,7 @@ const Span = struct {
     fn index(self: Span, x: usize, z: usize) usize {
         const ax: usize = @intCast(@as(i64, @intCast(self.chunkX * 32 + x)) - self.areaX);
         const az: usize = @intCast(@as(i64, @intCast(self.chunkZ * 32 + z)) - self.areaZ);
-        return az * columns.Surface.side + ax;
+        return az * world.Surface.side + ax;
     }
 };
 

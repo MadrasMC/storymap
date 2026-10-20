@@ -5,10 +5,10 @@
 const TextureColours = @This();
 
 const std = @import("std");
-const columns = @import("columns");
+const world = @import("world");
 const stb = @import("stb_image");
 
-const Rgb = columns.Rgb;
+const Rgb = world.Rgb;
 
 /// How many pixels are picked, as the game's atlas keeps (vsapi `TextureAtlasPosition.RndColorsLength`).
 pub const samples = 30;
