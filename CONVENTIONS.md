@@ -17,10 +17,14 @@ Context first, then the real arguments:
 3. `io`
 4. the function's own arguments
 5. an options struct, if any
+6. an out-parameter reporting on the call, if any: a `*Problem` saying what went wrong, or `*Stats`
 
 ```zig
 fn copyAssets(gpa: std.mem.Allocator, io: Io, assetsDir: Dir, outAssets: Dir) !usize
+pub fn parse(text: []const u8, problem: *Problem) error{InvalidStyle}!File
 ```
+
+A buffer the result is written into isn't one of these: like std's `bufPrint(buffer, ...)`, it comes first, as what the function acts on.
 
 This matches the standard library, which mostly puts the allocator before `io` and both before the arguments (`dir.openDir(io, path, options)`), so our calls and std's read the same way.
 
