@@ -7,6 +7,7 @@ const topdown = @import("renderer/topdown.zig");
 const Style = @import("renderer/Style.zig");
 const viewer = @import("viewer.zig");
 const build_options = @import("build_options");
+const console = @import("console.zig");
 
 const usage =
     \\usage: storymap <save.vcdbs> [output folder] [--theme <theme>] [--season <season>] [--prepare] [--blocks <folder>] [--game <folder>] [--data <folder>]
@@ -57,6 +58,8 @@ const Folders = struct {
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
+    console.useUtf8();
+    defer console.restore();
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) {
@@ -117,7 +120,7 @@ pub fn main(init: std.process.Init) !void {
             error.ThemeScriptEndsItsElement => std.debug.print("storymap: {s}/theme.js can't contain </script: it would end the theme's script in the page early\n", .{themeName}),
             else => std.debug.print("storymap: there's no theme {s}: it isn't printed or plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(err) }),
         }
-        std.process.exit(1);
+        console.exit(1);
     };
     var problem: Style.Problem = .{};
     const styleFile = Style.parse(theme.topdown, &problem) catch {
@@ -129,7 +132,7 @@ pub fn main(init: std.process.Init) !void {
 
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err| {
         std.debug.print("storymap: can't create {s} ({s})\n", .{ outPath, @errorName(err) });
-        std.process.exit(1);
+        console.exit(1);
     };
     defer out.close(init.io);
     var save = try Save.open(allocator, init.io, dbPath);
@@ -223,12 +226,12 @@ fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, sa
 
 fn exitWith(comptime format: []const u8, args: anytype) noreturn {
     std.debug.print("storymap: " ++ format, args);
-    std.process.exit(1);
+    console.exit(1);
 }
 
 fn exitWithUsage() noreturn {
     std.debug.print(usage, .{});
-    std.process.exit(2);
+    console.exit(2);
 }
 
 // Every file with tests, so `zig build test` runs them all.
@@ -253,6 +256,7 @@ test {
     _ = @import("renderer/topdown.zig");
     _ = @import("renderer/Style.zig");
     _ = @import("columns.zig");
+    _ = @import("console.zig");
     _ = @import("tiles.zig");
     _ = @import("viewer.zig");
 }

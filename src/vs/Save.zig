@@ -15,6 +15,7 @@ const GameData = @import("GameData.zig");
 const Prepared = @import("Prepared.zig");
 const Tint = @import("Tint.zig");
 const ProtoBuf = @import("../ProtoBuf.zig");
+const console = @import("../console.zig");
 
 path: []const u8,
 db: DB,
@@ -47,14 +48,14 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Save {
 
     const db = DB.initImmutable(allocator, path) catch |err| {
         std.debug.print("storymap: can't open {s} ({s})\n", .{ path, @errorName(err) });
-        std.process.exit(1);
+        console.exit(1);
     };
     errdefer db.deinit();
 
     const list = readTileList(allocator, db) catch |err| {
         // SQLite opens any file lazily, so this first query is where a wrong file shows up.
         std.debug.print("storymap: {s} isn't a Vintage Story save ({s})\n", .{ path, @errorName(err) });
-        std.process.exit(1);
+        console.exit(1);
     };
     errdefer allocator.free(list);
     if (list.len == 0) return error.NoChunks;
@@ -62,7 +63,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Save {
     // Which block code each numeric block ID stands for, in this save.
     const gameData = GameData.read(allocator, db) catch |err| {
         std.debug.print("storymap: can't read the block list in {s} ({s})\n", .{ path, @errorName(err) });
-        std.process.exit(1);
+        console.exit(1);
     };
     errdefer gameData.deinit();
     const looks = try looksByCode(allocator, gameData);

@@ -15,6 +15,7 @@ const Chunk = @import("vs/Chunk.zig");
 const Save = @import("vs/Save.zig");
 const topdown = @import("renderer/topdown.zig");
 const build_options = @import("build_options");
+const console = @import("console.zig");
 
 pub const usage =
     \\usage: storymap bench <save.vcdbs> [runs]
@@ -228,7 +229,7 @@ fn median(times: []Io.Duration) Io.Duration {
 
 fn fail(comptime format: []const u8, args: anytype) noreturn {
     std.debug.print(format, args);
-    std.process.exit(2);
+    console.exit(2);
 }
 
 test median {
