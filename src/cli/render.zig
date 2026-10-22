@@ -11,7 +11,6 @@ const console = @import("console");
 const prepare = @import("prepare.zig");
 const args = @import("args");
 
-/// What a render takes.
 pub const spec: args.Spec = .{
     .options = &.{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
@@ -88,25 +87,21 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const written = try topdown.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .style = theme.topdown });
     defer allocator.free(written);
 
-    // The viewer page goes next to the tiles. With more views, it'll list them all.
+    // With more views, the page lists them all.
     const views = [_]viewer.View{.{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .written = written }};
     const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
     try viewer.write(allocator, init.io, out, save.describe(), now, &views, theme);
 }
 
-/// The game's own styles, for a message: "game:shaded, game:coloured".
 const gameStyles = names: {
     var text: []const u8 = "";
     for (std.meta.fieldNames(SaveFile.MapStyle)) |name| text = text ++ (if (text.len > 0) ", " else "") ++ "game:" ++ name;
     break :names text;
 };
 
-/// Every style a map can be drawn in, for help and messages: "relief, game, game:shaded,
-/// game:coloured".
 const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
 
-/// The save file at `path`, opened for rendering. One that can't be read stops the program
-/// with a message saying why.
+/// A save that can't be read stops the program with a message saying why.
 pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !SaveFile {
     var problem: SaveFile.Problem = .{};
     const save = SaveFile.open(allocator, io, path, &problem) catch |err| switch (err) {
@@ -122,8 +117,7 @@ pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) 
     return save;
 }
 
-/// Warns about the save's blocks that the prepared ones don't have: those of mods that
-/// aren't installed, and any others.
+/// Also names the mods that aren't installed.
 fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, save: *const SaveFile) !void {
     const unknown = try prepared.unknown(allocator, save.gameData.blockCodes);
     defer allocator.free(unknown.mods);

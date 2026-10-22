@@ -1,6 +1,5 @@
-//! A Vintage Story save file, read for the renderers (see the `world` module): which tiles have
-//! something in them, what the world is, and the top of every block column in a tile. Each
-//! thread reads through a `Reader` of its own.
+//! A Vintage Story save file: which tiles have something in them, what the world is, and the top
+//! of every block column in a tile. Each thread reads through its own `Reader`.
 const SaveFile = @This();
 
 const std = @import("std");
@@ -16,48 +15,41 @@ const Tint = @import("Tint.zig");
 const ProtoBuf = @import("protobuf");
 
 path: []const u8,
-/// Whether the save's -wal file holds changes the game hasn't written into the save yet,
-/// because it's still running or it crashed. The map won't show them.
+/// Whether the save's -wal file holds changes not yet written into the save, because the game
+/// is still running or crashed. The map won't show them.
 unsaved: bool,
 db: DB,
 gameData: GameData,
 /// The tiles that may have something to draw.
 tileList: []tiles.Tile,
-/// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else from
-/// what its code says.
+/// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else its code.
 appearances: []Appearance,
-/// How many chunk levels the world has: chunks have y 0 to `levels` − 1.
+/// Chunks have y 0 to `levels` − 1.
 levels: usize,
-/// The colour maps that tint each block ID, from the prepared blocks (`useBlocks`); none
-/// without them.
+/// The colour maps that tint each block ID, from `useBlocks`; none without prepared blocks.
 tints: []BlockTint,
-/// How far through the year the seasons are drawn, from 0 at the start of January: the
-/// save's date, unless a season is chosen.
+/// How far through the year the seasons are drawn, from 0 at the start of January. Defaults
+/// to the save's date.
 seasonProgress: f32,
 
-/// Why a file can't be read as a save, for a message.
 pub const Problem = struct {
     kind: Kind = .unopenable,
-    /// The error behind it, if any.
     cause: ?anyerror = null,
 
     pub const Kind = enum {
         unopenable,
         /// Not an SQLite database, or one without a save's tables.
         notASave,
-        /// No chunks at all, so nothing to draw.
         noChunks,
         /// The block list in `gamedata` can't be read.
         unreadableBlockList,
     };
 };
 
-/// Opens the save file at `path` for reading, never writing next to it, since it may be in
-/// the game's own Saves folder. If it can't be read as a save, returns error.InvalidSaveFile
-/// and `problem` says why.
+/// Opens a save read-only, never writing next to it: it may be in the game's own Saves folder.
+/// If it isn't a readable save, returns error.InvalidSaveFile and `problem` says why.
 pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem: *Problem) !SaveFile {
-    // The immutable open ignores the save's -wal file. A non-empty one holds changes the
-    // game hasn't written into the save yet, because it's still running or it crashed.
+    // The immutable open ignores the -wal file (see `unsaved`).
     const walPath = try std.mem.concat(allocator, u8, &.{ path, "-wal" });
     defer allocator.free(walPath);
     const unsaved = if (std.Io.Dir.cwd().statFile(io, walPath, .{})) |wal| wal.size > 0 else |_| false;
@@ -70,7 +62,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem:
     errdefer allocator.free(list);
     if (list.len == 0) return fail(problem, .noChunks, null);
 
-    // Which block code each numeric block ID stands for, in this save.
+    // Block IDs are per save; this maps them to block codes.
     const gameData = GameData.read(allocator, db) catch |err| return fail(problem, .unreadableBlockList, err);
     errdefer gameData.deinit();
     const appearances = try appearancesByCode(allocator, gameData);
@@ -87,7 +79,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem:
         .gameData = gameData,
         .tileList = list,
         .appearances = appearances,
-        // Chunk levels in the world: 8 for the default height of 256.
+        // 8 for the default height of 256.
         .levels = std.math.divCeil(usize, gameData.worldHeight, 32) catch unreachable,
     };
 }
@@ -105,7 +97,7 @@ pub fn close(self: SaveFile, allocator: std.mem.Allocator) void {
     self.db.deinit();
 }
 
-/// The world, for a map of it. The game shows positions relative to the world's centre
+/// The game shows positions relative to the world's centre, the origin here
 /// (docs/save-format/README.md#2-positions).
 pub fn describe(self: *const SaveFile) world.Description {
     return .{
@@ -115,7 +107,6 @@ pub fn describe(self: *const SaveFile) world.Description {
     };
 }
 
-/// The world's height and sea level.
 pub fn heights(self: *const SaveFile) world.Heights {
     return .{ .world = @intCast(self.gameData.worldHeight), .sea = @intCast(self.gameData.seaLevel()) };
 }
@@ -130,8 +121,7 @@ pub fn blockName(self: *const SaveFile, id: i32) ?[]const u8 {
     return self.gameData.blockCode(id);
 }
 
-/// The game's own map colours (vsessentialsmod `ChunkMapLayer`), which its own styles are drawn
-/// in. Its edges are in the same ink as the rest of its lines.
+/// The game's own map colours (vsessentialsmod `ChunkMapLayer`). Water edges share the ink.
 pub const palette: world.Palette = .{
     .colours = .init(.{
         .land = .{ 0xAC, 0x88, 0x58 },
@@ -160,15 +150,15 @@ fn blockTint(self: *const SaveFile, id: i32) BlockTint {
     return if (id >= 0 and id < self.tints.len) self.tints[@intCast(id)] else .{};
 }
 
-/// The game's seasons (vsapi `EnumSeason`), to draw a map in rather than at the save's date.
+/// The game's seasons (vsapi `EnumSeason`).
 pub const Season = enum {
     spring,
     summer,
     fall,
     winter,
 
-    /// The middle of the season, through the year from the start of January, taking spring
-    /// to be March to May, as in the northern hemisphere.
+    /// The middle of the season as a fraction of the year, with spring as March to May
+    /// (northern hemisphere).
     pub fn progress(self: Season) f32 {
         const month: f32 = switch (self) {
             .winter => 0.5,
@@ -183,39 +173,34 @@ pub const Season = enum {
 /// What a block is on the game's own maps.
 pub const Appearance = struct {
     mapType: world.MapType,
-    /// Drawn as water by the shaded map: unshaded, with an edge where it meets anything else.
-    /// Water, and ice other than glacier ice.
+    /// Water, and ice other than glacier ice: the shaded map draws it unshaded, with an edge
+    /// where it meets anything else.
     lake: bool = false,
-    /// A thin layer the shaded map looks under, showing the block beneath it instead, as with
-    /// snow.
+    /// A thin layer, such as snow, that the shaded map looks under to show the block beneath.
     cover: bool = false,
-    /// The average colour of its texture, for the colour-accurate map, or null if it isn't
-    /// known.
+    /// Its texture's average colour, or null if unknown.
     colour: ?world.Rgb = null,
-    /// Colours from across its texture, for grain: each column shows one of them, mixed in.
+    /// Colours sampled across its texture: each column mixes in one of them.
     grain: []const world.Rgb = &.{},
 };
 
-/// How a block ID appears on the game's own maps. Anything unknown is land.
+/// An unknown ID is land.
 pub fn appearance(self: *const SaveFile, id: i32) Appearance {
     return if (id >= 0 and id < self.appearances.len) self.appearances[@intCast(id)] else .{ .mapType = .land };
 }
 
-/// What a block ID is on a map. Anything unknown is land.
 pub fn mapType(self: *const SaveFile, id: i32) world.MapType {
     return self.appearance(id).mapType;
 }
 
 /// The game's own map styles, which a theme names as `game:<name>`, or `game` for the default.
 pub const MapStyle = MapPainter.MapStyle;
-/// Paints the map in one of them, from what a `Reader` made for it reads.
+/// Paints the map in one of them from what a `Reader` reads.
 pub const MapPainter = @import("MapPainter.zig");
 
-/// Takes each block's appearance from the prepared blocks: its map type is its map colour code
-/// (docs/rendering.md#block-colours), and it's drawn as a lake if it's water, or ice other
-/// than glacier ice, and looked under if it's snow, as the game's map has it; its colour and
-/// grain are its texture's. Blocks they don't have keep what their code says. The appearances
-/// point into `prepared`, which must outlast rendering.
+/// Takes each block's appearance and tints from the prepared blocks; its map type is its map
+/// colour code (docs/rendering.md#block-colours). Blocks they don't have keep what their code
+/// says. Points into `prepared`, which must outlast rendering.
 pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
     for (self.appearances, self.gameData.blockCodes) |*blockAppearance, maybeCode| {
         const code = maybeCode orelse continue;
@@ -238,13 +223,11 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
 /// A tile is 16 × 16 chunk columns, the same area as a map region.
 const chunksPerTile = tiles.size / 32;
 
-/// The tiles that may have something to draw: those holding a chunk column with a map chunk.
-/// Every chunk column has one in the saves seen (docs/save-format/README.md#2-positions), and
-/// the table has a row per column where `chunk` has one per chunk, so it's much quicker to go
-/// through. Only fully generated columns are drawn, though (see Reader.readColumn), so a tile
-/// holding only partly generated ones comes out empty and isn't written; telling them apart
-/// here would mean reading every map chunk before starting. Columns in other dimensions than
-/// the world itself, such as the time-switched alternate world, aren't part of the map.
+/// The tiles holding a chunk column with a map chunk, in dimension 0. Every chunk column has one
+/// in the saves seen (docs/save-format/README.md#2-positions), and `mapchunk` has a row per
+/// column where `chunk` has one per chunk, so it's much quicker to scan. Partly generated
+/// columns aren't drawn (see `Reader.readColumn`), so a tile of only those comes out empty;
+/// filtering them here would mean reading every map chunk first.
 fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
     var set: std.AutoArrayHashMapUnmanaged(tiles.Tile, void) = .empty;
     defer set.deinit(allocator);
@@ -258,10 +241,8 @@ fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
     return allocator.dupe(tiles.Tile, set.keys());
 }
 
-/// Each block ID's appearance from its code alone, for when there are no prepared blocks:
-/// saltwater is `ocean` and lava `lava` (docs/rendering.md#how-the-game-draws-its-own-world-map),
-/// other water `lake`, snow layers `glacier` and looked under, and everything else `land`. A liquid surface that isn't one of those
-/// is drawn as a lake.
+/// Each block ID's appearance from its code alone, without prepared blocks
+/// (docs/rendering.md#how-the-game-draws-its-own-world-map).
 fn appearancesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]Appearance {
     const appearances = try allocator.alloc(Appearance, gameData.blockCodes.len);
     for (appearances, gameData.blockCodes) |*blockAppearance, code| {
@@ -307,22 +288,22 @@ pub const Reader = struct {
     decoder: Chunk.Decoder,
     chunk: *Chunk,
     mapChunk: *MapChunk,
-    /// The climate map of the tile's map region, for tints.
+    /// The climate map of the tile's map region.
     climate: Tint.ClimateMap,
-    /// For the shaded map: the block right under each column's highest solid one, liquid or
-    /// solid, or 0 where it isn't known, which the map shows under a cover such as snow
-    /// (`Appearance.cover`). Indexed as the surface is; empty for other maps.
+    /// The block right under each column's highest solid one, liquid first, or 0 if unknown:
+    /// what the shaded map shows under a cover (`Appearance.cover`). Indexed like the surface;
+    /// empty for other styles.
     under: []i32,
-    /// For the coloured map: what the game tints each column's highest solid block and highest
-    /// liquid by where they are, such as grass and leaves by climate and season, or white:
-    /// multiplied into their colour. Only for the tile's own columns; empty for other maps.
+    /// The climate and season tint of each column's highest solid block and highest liquid,
+    /// multiplied into their colour; white if untinted. Only the tile's own columns; empty
+    /// except for the coloured map.
     topTint: []world.Rgb,
     liquidTint: []world.Rgb,
-    /// Chunks read: those holding a surface block, in each tile and the ring around it.
+    /// Chunks read: those holding a surface block, in each tile and its ring.
     chunksRead: usize = 0,
 
-    /// A reader for drawing the map in `style`, one of the game's own, or in another style
-    /// without one: it reads what that style needs beyond the surface.
+    /// `style` is one of the game's own, or null for another: it decides what's read beyond
+    /// the surface.
     pub fn init(save: *const SaveFile, allocator: std.mem.Allocator, style: ?MapStyle) !Reader {
         const db = try DB.initImmutable(allocator, save.path);
         errdefer db.deinit();
@@ -377,7 +358,7 @@ pub const Reader = struct {
         self.db.deinit();
     }
 
-    /// Fills `surface` with the tile's block columns and the ring around them, from the save.
+    /// Fills `surface` with the tile's block columns and the ring around them.
     pub fn read(self: *Reader, tile: tiles.Tile, surface: *world.Surface) !void {
         surface.clear();
         @memset(self.under, 0);
@@ -397,8 +378,7 @@ pub const Reader = struct {
         if (self.topTint.len > 0) try self.readTints(tile, surface.*);
     }
 
-    /// Tints the top solid block and the top liquid of each of the tile's own columns by
-    /// the climate there, from the tile's map region (the same area), and the season. A tile
+    /// Tints the tile's own columns by the climate in its map region and the season. A tile
     /// without a climate map stays untinted.
     fn readTints(self: *Reader, tile: tiles.Tile, surface: world.Surface) !void {
         const save = self.save;
@@ -427,15 +407,14 @@ pub const Reader = struct {
     }
 
     /// Records one chunk column's block columns that fall in the tile or its ring: from their
-    /// stored heights where they have them, reading only the chunks those point into, and by
-    /// scanning down where they don't.
+    /// stored heights, reading only the chunks those point into, else by scanning down.
     fn readColumn(self: *Reader, surface: world.Surface, cx: u64, cz: u64, x0: i64, z0: i64) !void {
-        // Keys in the world itself, dimension 0.
+        // Dimension 0: the world itself.
         const base: Chunk.Position = .{ .x = @intCast(cx), .z = @intCast(cz) };
-        // Only fully generated chunk columns are drawn: the partly generated ones around
-        // them lack trees and plants, and the game's own map leaves them out too
-        // (docs/rendering.md#how-the-game-draws-its-own-world-map). Others stay
-        // transparent, and in the ring around a tile they count as no blocks.
+        // Only fully generated chunk columns are drawn: partly generated ones lack trees and
+        // plants, and the game's own map leaves them out too
+        // (docs/rendering.md#how-the-game-draws-its-own-world-map). Others stay transparent,
+        // and in a tile's ring count as no blocks.
         self.mapChunkRow.bind(1, base.position64());
         defer self.mapChunkRow.reset();
         if (!self.mapChunkRow.step()) return;
@@ -452,7 +431,6 @@ pub const Reader = struct {
         };
         if (stored.stage != .done) return;
 
-        // The block columns, within the chunk column, that fall in the tile or its ring.
         const span: Span = .{
             .chunkX = cx,
             .chunkZ = cz,
@@ -464,9 +442,9 @@ pub const Reader = struct {
             .areaZ = z0,
         };
 
-        // The levels the surface heights point into. Chunks at or below `scanFrom` are all
-        // read: for columns without a stored height, or whose stored height is stale.
-        // Levels with no chunk saved are just a key that isn't found.
+        // `needed`: the levels the stored heights point into. Every chunk at or below
+        // `scanFrom` is read, for columns without a usable stored height. A level with no
+        // chunk saved is just a missing key.
         const levels = self.save.levels;
         var needed: std.StaticBitSet(Chunk.Position.levels) = .empty;
         var scanFrom: ?usize = null;
@@ -499,9 +477,8 @@ pub const Reader = struct {
     }
 };
 
-/// Records the block columns of `span` in one chunk: from their stored heights where they
-/// have them, by scanning down where they don't. Returns whether a stored height turned out
-/// stale, in which case its column needs the chunks below scanned too.
+/// Records `span`'s block columns in one chunk. Returns whether a stored height turned out
+/// stale, so its column needs the chunks below scanned too.
 fn recordChunk(surface: world.Surface, under: []i32, chunk: *const Chunk, stored: *MapChunk, span: Span) bool {
     var stale = false;
     for (span.z0..span.z1) |z| for (span.x0..span.x1) |x| {
@@ -536,9 +513,8 @@ fn blockBelow(chunk: *const Chunk, x: usize, y: usize, z: usize) i32 {
     return if (chunk.blocks.bits == 0) 0 else chunk.blocks.get(at);
 }
 
-/// Records a column from its stored heights: the block at the rain height, in the chunk that
-/// holds it. Rain stops at water, so a liquid there is the water surface, and the terrain
-/// height is its bed. Returns false, recording nothing, if there's no block there.
+/// Records a column from its stored heights (see `MapChunk.rainHeight`); `chunk` holds the rain
+/// height. Returns false, recording nothing, if there's no block there.
 fn recordStored(surface: world.Surface, under: []i32, chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, index: usize) bool {
     const block = (y * 32 + z) * 32 + x;
     const liquidId = if (chunk.liquids.bits == 0) 0 else chunk.liquids.get(block);
@@ -554,11 +530,9 @@ fn recordStored(surface: world.Surface, under: []i32, chunk: *const Chunk, x: us
         surface.top[index] = rain;
         surface.topBlock[index] = solid;
         if (under.len > 0) under[index] = blockBelow(chunk, x, y, z);
-        // Liquid under the top block, such as a lake under a tree's leaves: the highest
-        // liquid in the column, though the solid block above it is what shows. It can only
-        // be above the terrain height, the ground before trees and plants grew, which for
-        // most columns is the top itself, so only the blocks between are looked at, within
-        // the chunk.
+        // Liquid under the top block, such as a lake under leaves, is recorded though the
+        // solid block shows. It can only lie above the terrain height, which for most columns
+        // is the top itself, so only the blocks between are checked, within this chunk.
         if (chunk.liquids.bits != 0 and terrain != MapChunk.unset and terrain < rain) {
             // The chunk's lowest height, and the terrain's within it.
             const base: usize = rain - y;
@@ -598,8 +572,6 @@ const Span = struct {
     }
 };
 
-/// Decodes a chunk; one that can't be decoded is skipped with a warning, so it doesn't stop
-/// the whole map.
 fn decodeOrWarn(decoder: *Chunk.Decoder, chunk: *Chunk, position: u64, data: []const u8) !void {
     decoder.decode(chunk, position, data) catch |err| {
         const pos = chunk.position;
@@ -608,8 +580,7 @@ fn decodeOrWarn(decoder: *Chunk.Decoder, chunk: *Chunk, position: u64, data: []c
     };
 }
 
-/// Forgets the stored heights that point into chunk level `level`, so their columns are
-/// scanned instead. Returns whether there were any.
+/// Returns whether any stored heights pointed into chunk level `level`.
 fn forgetHeightsAt(stored: *MapChunk, level: usize) bool {
     var any = false;
     for (&stored.rainHeight) |*rain| if (rain.* != MapChunk.unset and rain.* / 32 == level) {
@@ -624,7 +595,6 @@ fn forgetHeightsAt(stored: *MapChunk, level: usize) bool {
 fn recordTop(layer: *const Compression.Layer, hiddenBy: ?*const Compression.Layer, chunkY: usize, x: usize, z: usize, top: *?u16, block: *i32) void {
     if (layer.bits == 0) return; // all air
     const mask = if (hiddenBy) |other| if (other.bits == 0) null else other else null;
-    // Walk down from the top of the chunk and stop at the first block.
     for (0..32) |i| {
         const y = 31 - i;
         const index = (y * 32 + z) * 32 + x;

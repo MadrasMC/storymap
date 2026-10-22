@@ -4,15 +4,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // zstd
-
     const zstd = b.dependency("zstd", .{});
 
     const zstd_lib = b.addLibrary(.{
         .name = "zstd",
         .root_module = b.createModule(.{
             .target = target,
-            .optimize = .ReleaseFast, // UB gets hit inside the lib in Debug / Safe, let's just ignore that
+            .optimize = .ReleaseFast, // the lib trips UB checks in Debug and ReleaseSafe
             .link_libc = true,
         }),
     });
@@ -39,8 +37,6 @@ pub fn build(b: *std.Build) void {
     });
     zstd_translate_c.defineCMacroRaw("ZSTD_STATIC_LINKING_ONLY");
 
-    // sqlite3
-
     const sqlite3 = b.dependency("sqlite3", .{});
 
     const sqlite3_lib = b.addLibrary(.{
@@ -62,9 +58,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // stb_image_write, for the tiles, and stb_image, for the PNG textures read when preparing
-    // blocks: each built into the module that uses it.
-
+    // Each stb implementation is built into the module that uses it.
     const stb = b.dependency("stb", .{});
     const stb_impl = b.addWriteFiles();
     const stb_image_write_impl = stb_impl.add("stb_image_write.c",
@@ -93,8 +87,6 @@ pub fn build(b: *std.Build) void {
     });
     stb_image_translate_c.defineCMacroRaw("STBI_NO_STDIO");
 
-    // Libraries in lib/, which know nothing of Storymap.
-
     const args_mod = b.createModule(.{
         .root_source_file = b.path("lib/args/args.zig"),
         .target = target,
@@ -116,7 +108,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // The version, from build.zig.zon, for `storymap --version` and `storymap bench`.
     const options = b.addOptions();
     options.addOption([]const u8, "version", @import("build.zig.zon").version);
     const options_mod = options.createModule();
@@ -210,8 +201,6 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // storymap
-
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -246,7 +235,6 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Time each stage of a render (use -Doptimize=ReleaseFast)");
     bench_step.dependOn(&bench_cmd.step);
 
-    // Every module's tests.
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
         args_mod,    sqlite_mod,   protobuf_mod, tiles_mod, world_mod, theme_mod, viewer_mod,

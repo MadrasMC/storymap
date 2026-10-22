@@ -1,3 +1,4 @@
+//! A `chunk` row, decoded: the blocks, liquids and block entities of 32 × 32 × 32 blocks.
 const Chunk = @This();
 
 const std = @import("std");
@@ -59,17 +60,12 @@ liquids: Compression.Layer = .{},
 /// Points into the `Decoder`'s block entity buffer: valid until its next `decode`.
 blockEntities: []BlockEntity = &.{},
 
-/// Returns the block id at chunk-local (x, y, z). 0 is air.
-///
-/// Blocks are numbered x first, then z, then y. Each block's palette index is split
-/// into bits, and bit `b` of every block is stored together in a bit plane: see
-/// `Compression.Layer`.
+/// The block ID at chunk-local (x, y, z); 0 is air. Layout: `Compression.Layer`.
 pub fn getBlock(self: *const Chunk, x: u5, y: u5, z: u5) i32 {
     return self.blocks.get((@as(usize, y) * 32 + z) * 32 + x);
 }
 
-/// Everything decoding a chunk needs, allocated once (per worker) and reused for every chunk,
-/// so decoding itself never allocates.
+/// Buffers for decoding chunks, allocated once and reused, so decoding never allocates.
 pub const Decoder = struct {
     decompressor: Compression.Decompressor,
     blockEntityBuffer: []u8,

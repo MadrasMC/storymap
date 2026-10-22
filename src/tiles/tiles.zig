@@ -1,31 +1,28 @@
-//! The tile pipeline every view shares: workers on every core draw tiles and build the
-//! zoomed-out levels above them, and each tile becomes a PNG at
-//! `<output>/<view>/<level>/<x>/<y>.png`. A view only draws full-detail tiles;
-//! docs/rendering.md#output-tiles-and-levels-of-detail has the plan.
+//! The tile pipeline every view shares: draws full-detail tiles on every core, builds the
+//! zoomed-out levels above them, and writes each tile to `<output>/<view>/<level>/<x>/<y>.png`
+//! (docs/rendering.md#output-tiles-and-levels-of-detail).
 //!
 //! A view is a type with:
 //! - `name`, its folder in the output, e.g. "topdown";
 //! - `Worker`, one per thread, with `init(view: *const View, allocator) !Worker`,
-//!   `deinit(*Worker, allocator)` and `draw(*Worker, tile: Tile, pixels: *Pixels) !bool`, which
-//!   returns false for a tile with nothing on it;
-//! - `collect(view: *View, worker: *const Worker)`, which adds a finished worker's counts to the
+//!   `deinit(*Worker, allocator)` and `draw(*Worker, tile: Tile, pixels: *Pixels) !bool`, false
+//!   for a tile with nothing on it;
+//! - `collect(view: *View, worker: *const Worker)`, adding a finished worker's counts to the
 //!   view's.
 //!
-//! Level 0 is full detail; each level above halves the resolution, so a tile at level n covers
-//! 2 × 2 tiles at level n − 1, and the top level is a single tile. Levels are built bottom up:
-//! each tile is its four children, shrunk to half size, so nothing is read back from disk.
+//! A tile at level n covers 2 × 2 tiles at level n − 1, up to a single tile at the top. Each is
+//! built from its four children shrunk to half size, so nothing is read back from disk.
 const std = @import("std");
 const Io = std.Io;
 const stb = @import("stb_image_write");
 
-/// Every tile is this many pixels square, in every view and level.
+/// A tile's side in pixels, in every view and level.
 pub const size = 512;
 /// A tile's pixels, row by row, as `rgba` makes them.
 pub const Pixels = [size * size]u32;
-/// A tile shrunk to half size, ready to become a quarter of its parent.
 const half = size / 2;
 
-/// A tile's place in its level's grid of tiles.
+/// A tile's place in its level's grid.
 pub const Tile = struct {
     x: i32,
     y: i32,
@@ -48,20 +45,17 @@ pub const Output = union(enum) {
     discard,
 };
 
-/// What rendering the tiles took. Times are added up over all workers, so they can exceed
-/// the time the render took.
+/// Times are summed over all workers, so they can exceed the render's wall time.
 pub const Stats = struct {
-    /// Tiles written at every level; tiles with nothing on them aren't.
+    /// Tiles written, at every level; empty tiles aren't.
     tiles: usize = 0,
-    /// How many levels: the top one is `levels` − 1.
     levels: usize = 0,
-    /// Drawing full-detail tiles: reading the save and colouring the pixels.
+    /// Drawing full-detail tiles (`Worker.draw`).
     draw: Io.Duration = .zero,
     /// Encoding and writing the PNGs, and shrinking tiles for the level above.
     encode: Io.Duration = .zero,
 };
 
-/// A tile that was written, and its level.
 pub const Written = struct {
     level: u8,
     tile: Tile,
@@ -78,18 +72,17 @@ pub fn rgba(r: u8, g: u8, b: u8, a: u8) u32 {
     return std.mem.nativeToLittle(u32, @as(u32, a) << 24 | @as(u32, b) << 16 | @as(u32, g) << 8 | r);
 }
 
-/// Where nothing is drawn.
 pub const transparent = rgba(0, 0, 0, 0);
 
-/// Draws the full-detail tiles in `list` and builds every level above them, on every core.
-/// Adds the tiles it writes to a folder to `written`, ordered by level, then x, then y.
+/// Draws the tiles in `list` and builds every level above them. Appends the tiles written to a
+/// folder to `written`, sorted by level, then x, then y.
 pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, list: []const Tile, output: Output, written: *std.ArrayList(Written)) !Stats {
     var pyramid: Pyramid = try .init(allocator, list);
     defer pyramid.deinit(allocator);
 
-    // Workers take whole subtrees: the tiles of level `split` and everything under them. It's
-    // the highest level with enough tiles to keep every core busy; the few levels above are
-    // built from the subtrees' results at the end.
+    // Workers take whole subtrees: a tile at level `split` and everything under it. `split` is
+    // the highest level with enough tiles to keep every core busy; the levels above are built
+    // from the subtrees' halves afterwards.
     const cores = std.Thread.getCpuCount() catch 1;
     var split: usize = 0;
     for (pyramid.levels, 0..) |level, n| {
@@ -101,11 +94,9 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     defer allocator.free(halves);
     const drawn = try allocator.alloc(bool, items.len);
     defer allocator.free(drawn);
-    // The levels above the subtrees are built one at a time, each from the halves of the one
-    // below, so only two levels' halves are needed at once. They take turns with the cut level's
-    // halves and one more block, sized for the level above the cut: no level has more tiles than
-    // the one below it, so each block fits every level that uses it. All of it is set aside
-    // here, before any work.
+    // The levels above are built one at a time from the halves of the level below, so two blocks
+    // of halves take turns: the cut level's, and one sized for the level above it. No level has
+    // more tiles than the one below, so each block fits every level that uses it.
     const cutBlock: Built = .{ .halves = halves, .drawn = drawn };
     const otherBlock: Built = try .init(allocator, if (split + 1 < pyramid.levels.len) pyramid.levels[split + 1].count() else 0);
     defer otherBlock.deinit(allocator);
@@ -125,10 +116,8 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     defer allocator.free(threads);
     try runAll(View, jobs, threads, Job(View).run);
 
-    // The levels above the subtrees, one at a time: each tile is the halves of the four below.
-    // A level overwrites the halves of the level two below it, which the level in between has
-    // already used: the first level above the cut fills the other block, the next refills the
-    // cut level's, and so on.
+    // Each level overwrites the halves of the level two below, which the level in between has
+    // already used.
     var below = cutBlock;
     for (split + 1..pyramid.levels.len, 0..) |level, turn| {
         const tiles = pyramid.levels[level].keys();
@@ -154,7 +143,6 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     return stats;
 }
 
-/// Runs `phase` on every job, each on its own thread, and waits for them all.
 fn runAll(comptime View: type, jobs: []Job(View), threads: []?std.Thread, comptime phase: fn (*Job(View)) void) !void {
     for (jobs, threads) |*job, *thread| {
         // If a thread can't be started, that share of the work runs here instead.
@@ -165,8 +153,7 @@ fn runAll(comptime View: type, jobs: []Job(View), threads: []?std.Thread, compti
     for (jobs) |*job| if (job.err) |err| return err;
 }
 
-/// A level's tiles at half size, ready to become quarters of the level above, and whether
-/// each has anything on it.
+/// A level's tiles at half size, and whether each has anything on it.
 const Built = struct {
     halves: []u32,
     drawn: []bool,
@@ -183,8 +170,7 @@ const Built = struct {
     }
 };
 
-/// Building one level above the subtrees: every worker takes tiles of `tiles` until they're
-/// all done.
+/// One level above the subtrees, built by all workers together.
 const Above = struct {
     level: usize,
     tiles: []const Tile,
@@ -222,10 +208,9 @@ const Pyramid = struct {
     }
 };
 
-/// Shrinks `pixels` to half size into a `half` × `half` block of `into`, whose rows are
-/// `stride` pixels apart. Each pixel is the average of four, with their colours weighted by
-/// how opaque they are, so transparent pixels don't darken the edges: they make the result
-/// partly transparent instead.
+/// Shrinks `pixels` to half size into `into`, whose rows are `stride` pixels apart. Each pixel
+/// averages four, colours weighted by alpha, so transparent pixels make edges partly
+/// transparent rather than darker.
 fn shrink(pixels: *const Pixels, into: []u32, stride: usize) void {
     for (0..half) |y| for (0..half) |x| {
         var sum: [4]u32 = .{ 0, 0, 0, 0 };
@@ -244,8 +229,7 @@ fn shrink(pixels: *const Pixels, into: []u32, stride: usize) void {
     };
 }
 
-/// One worker: its view's worker state and buffers, reused for every tile it takes. It takes
-/// subtrees: a tile at level `split`, and every tile under it.
+/// One thread's view worker and buffers, reused for every subtree it takes.
 fn Job(comptime View: type) type {
     return struct {
         const Self = @This();
@@ -254,8 +238,7 @@ fn Job(comptime View: type) type {
         io: Io,
         pyramid: *const Pyramid,
         split: usize,
-        /// The tiles at the cut level, one per subtree, shared by all workers, and where their
-        /// halves go.
+        /// The cut level's tiles, one per subtree, and their halves; shared by all workers.
         items: []const Tile,
         halves: []u32,
         drawn: []bool,
@@ -266,12 +249,10 @@ fn Job(comptime View: type) type {
         /// One tile's pixels per level of a subtree: level 0's are drawn, the others built.
         pixels: []Pixels,
         png: std.ArrayList(u8) = .empty,
-        /// The tiles this worker wrote to the folder.
         written: std.ArrayList(Written) = .empty,
         pngFailed: bool = false,
         stats: Stats = .{},
         err: ?anyerror = null,
-        /// The level being built above the subtrees, once they're done.
         above: ?*const Above = null,
 
         fn init(view: *const View, allocator: std.mem.Allocator, io: Io, pyramid: *const Pyramid, split: usize, items: []const Tile, halves: []u32, drawn: []bool, next: *std.atomic.Value(usize), output: Output) !Self {
@@ -347,8 +328,8 @@ fn Job(comptime View: type) type {
             };
         }
 
-        /// Builds tiles of the level in `above` until there are none left: each from the
-        /// halves of the four tiles below it.
+        /// Builds tiles of `above`'s level until none are left, each from the halves of the
+        /// four below.
         fn runAboveOrFail(self: *Self) !void {
             const task = self.above.?;
             const pixels = &self.pixels[0];

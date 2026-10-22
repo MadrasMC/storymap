@@ -1,7 +1,6 @@
-//! The console's output code page on Windows. Windows consoles read what programs print in
-//! their output code page, by default an old DOS one, so UTF-8 such as "km²", a path or a world
-//! name comes out garbled. Storymap switches the console to UTF-8 while it runs and puts the
-//! old code page back as it exits. Elsewhere this does nothing.
+//! Switches the Windows console to UTF-8 while Storymap runs, and back as it exits. Its default
+//! code page is an old DOS one, which garbles UTF-8 such as "km²" or a world name. Elsewhere
+//! this does nothing.
 const std = @import("std");
 const builtin = @import("builtin");
 
@@ -13,7 +12,6 @@ var previous: ?c_uint = null;
 extern "kernel32" fn GetConsoleOutputCP() callconv(.winapi) c_uint;
 extern "kernel32" fn SetConsoleOutputCP(codePage: c_uint) callconv(.winapi) c_int;
 
-/// Switches the console to UTF-8, if there is one and it isn't already.
 pub fn useUtf8() void {
     if (builtin.os.tag == .windows) {
         // 0 when the program has no console.
@@ -23,7 +21,6 @@ pub fn useUtf8() void {
     }
 }
 
-/// Puts back the code page `useUtf8` replaced.
 pub fn restore() void {
     if (builtin.os.tag == .windows) {
         if (previous) |codePage| _ = SetConsoleOutputCP(codePage);
@@ -31,13 +28,12 @@ pub fn restore() void {
     }
 }
 
-/// Exits with `status`, restoring the console first. Use this rather than `std.process.exit`.
+/// Use this rather than `std.process.exit`, so the console is restored.
 pub fn exit(status: u8) noreturn {
     restore();
     std.process.exit(status);
 }
 
-/// Prints what went wrong after "storymap: " on stderr, and exits with 1.
 pub fn fail(comptime format: []const u8, values: anytype) noreturn {
     std.debug.print("storymap: " ++ format, values);
     exit(1);

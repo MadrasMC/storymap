@@ -1,19 +1,13 @@
-//! Command-line arguments. A program has commands (`Command`), picked by its first argument,
-//! and `dispatch` runs the one given. Each command declares what it takes (`Spec`): options,
-//! given as `--name`, `--name value`, `--name=value` or a one-letter `-n`, in any order among
-//! its positionals, and its positionals in order. `--` ends the options, so what follows is
-//! positional even if it starts with a dash. Every command takes `-h, --help`, which prints
-//! what it takes instead of running it. A program can also have actions (`Action`), options
-//! given on their own such as `--version`.
+//! Command-line arguments. A program has commands (`Command`), picked by its first argument and
+//! run by `dispatch`, and actions (`Action`), options given on their own such as `--version`.
+//! Options are `--name`, `--name value`, `--name=value` or `-n`, in any order among the
+//! positionals; `--` ends them. Every command takes `-h, --help`.
 //!
-//! It only reads arguments and writes help: what to do about a problem, such as printing it and
-//! exiting, is up to the program.
+//! It only reads arguments and writes help: what to do about a problem is up to the program.
 const std = @import("std");
 
-/// The option every command takes.
 const helpOption: Option = .{ .name = "help", .short = 'h', .description = "Show this help." };
 
-/// A command's options: `--help`, then its own.
 fn optionsOf(comptime spec: Spec) []const Option {
     for (spec.options) |option| {
         if (std.mem.eql(u8, option.name, "help")) @compileError("every command takes --help already");
@@ -22,9 +16,8 @@ fn optionsOf(comptime spec: Spec) []const Option {
     return &all;
 }
 
-/// One of a program's commands, for `dispatch`: its name, given as the program's first argument,
-/// or null for the program's default command; what it takes; and `run(context, parsed)`, which
-/// runs it with the program's context and its `Parsed(spec)` arguments.
+/// A command for `dispatch`, named by the program's first argument, or the default command if
+/// `commandName` is null. It runs as `commandRun(context, parsed)`, with `Parsed(commandSpec)`.
 pub fn Command(comptime commandName: ?[]const u8, comptime commandSpec: Spec, comptime commandRun: anytype) type {
     return struct {
         pub const name = commandName;
@@ -33,9 +26,8 @@ pub fn Command(comptime commandName: ?[]const u8, comptime commandSpec: Spec, co
     };
 }
 
-/// One of a program's actions, for `dispatch`: an option that takes no value, given as the only
-/// argument, and `run(context)`, which runs it with the program's context. The default
-/// command's help lists it among its options.
+/// An action for `dispatch`: an option that takes no value, given as the only argument. It runs
+/// as `actionRun(context)`. The default command's help lists it among its options.
 pub fn Action(comptime actionOption: Option, comptime actionRun: anytype) type {
     if (actionOption.value != null) @compileError("an action's option --" ++ actionOption.name ++ " can't take a value");
     if (std.mem.eql(u8, actionOption.name, "help")) @compileError("every command takes --help already");
@@ -49,7 +41,6 @@ fn isAction(comptime entry: type) bool {
     return @hasDecl(entry, "option");
 }
 
-/// The options of `commands`' actions.
 fn actionOptions(comptime commands: anytype) []const Option {
     comptime {
         var options: []const Option = &.{};
@@ -60,14 +51,12 @@ fn actionOptions(comptime commands: anytype) []const Option {
     }
 }
 
-/// Whether `arg` is `option`, by its name or its one-letter name.
 fn isOption(comptime option: Option, arg: []const u8) bool {
     if (std.mem.eql(u8, arg, "--" ++ option.name)) return true;
     const short = option.short orelse return false;
     return arg.len == 2 and arg[0] == '-' and arg[1] == short;
 }
 
-/// A program, for `dispatch`.
 pub const Program = struct {
     /// What it's run as, for the usage lines.
     name: []const u8,
@@ -75,11 +64,10 @@ pub const Program = struct {
     header: []const u8 = "",
 };
 
-/// Runs one of `program`'s `commands`, a tuple of `Command`s and `Action`s, for `args` without
-/// the program's name: the command the first argument names, with the rest; or else an action
-/// given on its own; or else the default command with them all. With `--help`, it prints the
-/// command's help on stdout instead. Arguments that don't fit return error.InvalidArguments, and
-/// `problem` says what's wrong.
+/// Runs the command the first of `args` names, with the rest; else an action given on its own;
+/// else the default command with all of `args`. `commands` is a tuple of `Command`s and
+/// `Action`s; `args` leaves out the program's name. With `--help`, prints the command's help on
+/// stdout instead. On error.InvalidArguments, `problem` says what's wrong.
 pub fn dispatch(comptime program: Program, comptime commands: anytype, io: std.Io, context: anytype, args: []const []const u8, problem: *Problem) !void {
     comptime {
         var defaults = 0;
@@ -142,8 +130,7 @@ fn runCommand(comptime program: Program, comptime commands: anytype, comptime co
     return command.run(context, parsed);
 }
 
-/// The usage of `command`: the default command's is the whole program's, as it's run by the
-/// program's name alone.
+/// The default command's usage is the whole program's, as it's run by the program's name alone.
 fn usageOf(comptime program: Program, comptime commands: anytype, comptime command: type) []const u8 {
     return if (command.name == null) usage(program, commands) else usage(program, .{command});
 }
@@ -166,12 +153,11 @@ fn usage(comptime program: Program, comptime commands: anytype) []const u8 {
     }
 }
 
-/// A positional as help shows it: `<name>` if it's required, `[name]` if it's optional.
 fn positionalName(comptime p: Positional) []const u8 {
     return if (p.optional) "[" ++ p.name ++ "]" else "<" ++ p.name ++ ">";
 }
 
-/// The program's arguments, without its name. Allocates with `arena` and frees nothing.
+/// The program's arguments, without its name.
 pub fn ofProcess(arena: std.mem.Allocator, process: std.process.Args) ![]const []const u8 {
     const all = try process.toSlice(arena);
     if (all.len == 0) return &.{};
@@ -183,7 +169,6 @@ pub fn ofProcess(arena: std.mem.Allocator, process: std.process.Args) ![]const [
 pub const Option = struct {
     /// Its name without the dashes: "verbose" for `--verbose`.
     name: []const u8,
-    /// A one-letter name, for `-h`.
     short: ?u8 = null,
     /// What its value is, shown in help as `<value>`; null for an option that takes none.
     value: ?[]const u8 = null,
@@ -202,7 +187,7 @@ pub const Positional = struct {
 pub const Spec = struct {
     options: []const Option = &.{},
     positionals: []const Positional = &.{},
-    /// What the command does, for its help: paragraphs, separated by a blank line.
+    /// What the command does, for its help: paragraphs separated by a blank line.
     description: []const u8 = "",
 };
 
@@ -231,14 +216,12 @@ pub fn Parsed(comptime spec: Spec) type {
             return self.options[i] != null;
         }
 
-        /// An option's value, or null if it wasn't given.
         pub fn value(self: Self, comptime name: []const u8) ?[]const u8 {
             const i = comptime optionIndex(name);
             if (options[i].value == null) @compileError("--" ++ name ++ " takes no value");
             return self.options[i];
         }
 
-        /// A positional, or null if it wasn't given.
         pub fn positional(self: Self, comptime name: []const u8) ?[]const u8 {
             inline for (spec.positionals, 0..) |p, i| {
                 if (comptime std.mem.eql(u8, p.name, name)) return self.positionals[i];
@@ -255,7 +238,6 @@ pub fn Parsed(comptime spec: Spec) type {
     };
 }
 
-/// What's wrong with a command line, for a message.
 pub const Problem = struct {
     kind: Kind = .unknownOption,
     /// The argument or name it's about.
@@ -288,8 +270,7 @@ pub const Problem = struct {
     }
 };
 
-/// Reads `args`, without the program's name, for a command taking `spec`. On an error,
-/// `problem` says what's wrong.
+/// `args` leaves out the program's name.
 pub fn parse(comptime spec: Spec, args: []const []const u8, problem: *Problem) error{InvalidArguments}!Parsed(spec) {
     const options = comptime optionsOf(spec);
     var parsed: Parsed(spec) = .{};
@@ -309,7 +290,6 @@ pub fn parse(comptime spec: Spec, args: []const []const u8, problem: *Problem) e
             continue;
         }
 
-        // `--name`, `--name=value` or `-n`.
         var given: ?[]const u8 = null;
         const index = if (std.mem.startsWith(u8, arg, "--")) index: {
             var name = arg[2..];
@@ -354,8 +334,6 @@ fn fail(problem: *Problem, kind: Problem.Kind, argument: []const u8) error{Inval
     return error.InvalidArguments;
 }
 
-/// Writes the program's header, a command's usage lines, what it does, then what each option
-/// and positional is: required positionals as `<name>`, optional ones as `[name]`.
 fn writeHelp(writer: *std.Io.Writer, comptime header: []const u8, comptime lines: []const u8, comptime spec: Spec) !void {
     const options = comptime optionsOf(spec);
     const names = comptime names: {
@@ -393,11 +371,9 @@ fn writeHelp(writer: *std.Io.Writer, comptime header: []const u8, comptime lines
     }
 }
 
-/// The widest help line.
 const helpWidth = 100;
 
-/// Writes `text` from column `indent`, its words wrapped to lines `width` wide; its own line
-/// breaks are spaces.
+/// Line breaks in `text` count as spaces.
 fn writeWrapped(writer: *std.Io.Writer, text: []const u8, indent: usize, width: usize) !void {
     var at = indent;
     var words = std.mem.tokenizeAny(u8, text, " \n");
@@ -418,7 +394,6 @@ fn writeWrapped(writer: *std.Io.Writer, text: []const u8, indent: usize, width: 
     try writer.writeByte('\n');
 }
 
-/// `writeHelp` on stdout.
 fn printHelp(io: std.Io, comptime header: []const u8, comptime lines: []const u8, comptime spec: Spec) !void {
     var buffer: [1024]u8 = undefined;
     var stdout = std.Io.File.stdout().writerStreaming(io, &buffer);
@@ -426,13 +401,10 @@ fn printHelp(io: std.Io, comptime header: []const u8, comptime lines: []const u8
     try stdout.interface.flush();
 }
 
-/// An example program, with `testSpec` as its command.
 const testProgram: Program = .{ .name = "copy", .header = "copy 1.0" };
 
-/// An example action's option.
 const versionOption: Option = .{ .name = "version", .description = "Show the version." };
 
-/// An example command: `copy <source> [target]`.
 const testSpec: Spec = .{
     .options = &.{
         .{ .name = "mode", .value = "mode", .description = "How to copy: fast (the default), or careful, which checks every file against its source afterwards." },

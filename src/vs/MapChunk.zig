@@ -27,13 +27,12 @@ pub const Stage = enum(u8) {
     neighbourSunLightFlood = 4,
     /// Waiting for creatures; neighbours may still add things.
     preDone = 5,
-    /// Fully generated.
     done = 6,
     _,
 };
 
 /// A height the game hasn't set. A few columns hold other values far above the world (down to
-/// 65,531), which readers should treat the same.
+/// 65,531); treat those the same.
 pub const unset = std.math.maxInt(u16);
 
 /// Per block column, at index z * 32 + x: the highest block that rain can't fall through
@@ -43,10 +42,10 @@ rainHeight: [1024]u16 = undefined,
 /// Per block column: the terrain height when the world was generated, before plants
 /// (field 7). For seas and lakes it's their bed.
 terrainHeight: [1024]u16 = undefined,
-/// The column's world-generation stage (field 4).
+/// Field 4.
 stage: Stage = .none,
 
-/// Reads the stage and the height maps from a row's data. Each map is 1,024 repeated varints.
+/// Each height map is 1,024 repeated varints.
 pub fn decode(self: *MapChunk, data: []const u8) Error!void {
     var rain: usize = 0;
     var terrain: usize = 0;

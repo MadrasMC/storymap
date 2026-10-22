@@ -1,8 +1,8 @@
-//! The game's assets and the user's mods, read in place: the files rendering needs from the
-//! install's `assets/`, and from each mod in the data folder's `Mods`, a zip or a folder with
-//! an `assets/<domain>/…` of its own. The install's `creative`, `game` and `survival` folders
-//! are all the `game` domain. A file is read by its domain and path, ignoring case as the
-//! game does, and a mod's file replaces the game's (docs/rendering.md#reading-them).
+//! The needed files from the install's `assets/` and from each mod in `Mods/` (a zip or a
+//! folder with its own `assets/<domain>/…`), read in place. The install's `creative`, `game`
+//! and `survival` folders are all the `game` domain. Files are looked up by domain and path,
+//! ignoring case as the game does; a mod's file replaces the game's
+//! (docs/rendering.md#reading-them).
 //!
 //! The game and data folders are only ever read.
 const Assets = @This();
@@ -15,7 +15,6 @@ const Dir = Io.Dir;
 arena: std.heap.ArenaAllocator,
 /// The game, then the mods in name order, so a later one's files replace an earlier one's.
 sources: std.ArrayList(Source) = .empty,
-/// The domains the sources have files in: "game", and the mods'.
 domains: std.StringArrayHashMapUnmanaged(void) = .empty,
 /// The game version, from assets/version-<version>.txt.
 version: ?[]const u8 = null,
@@ -24,30 +23,27 @@ pub const Source = struct {
     /// "Vintage Story", or a mod's zip or folder name in Mods.
     name: []const u8,
     kind: union(enum) {
-        /// The folders in the source's `assets` folder, read by path, in name order.
+        /// The source's `assets` subfolders, in name order.
         folders: []const Folder,
         zip: Zip,
     },
 };
 
-/// A folder in an `assets` folder, and the domain its files are in.
 pub const Folder = struct {
     domain: []const u8,
     dir: Dir,
 };
 
-/// The domain the install's own folders are in.
 pub const gameDomain = "game";
 
-/// A zip has no lookup by name, so the entries rendering needs are mapped once, when it's
-/// opened, by lowercased "domain/path" below its `assets` folder.
+/// A zip has no lookup by name, so the needed entries are mapped on opening, by lowercased
+/// "domain/path" below `assets/`.
 const Zip = struct {
     file: Io.File,
     entries: std.StringHashMapUnmanaged(std.zip.Iterator.Entry),
 };
 
-/// A file in `list`: its domain and its path within it, e.g. "survival" and
-/// "blocktypes/stone/rock.json", both lowercase.
+/// E.g. "game" and "blocktypes/stone/rock.json", both lowercase.
 pub const Name = struct {
     domain: []const u8,
     path: []const u8,
@@ -56,8 +52,8 @@ pub const Name = struct {
 /// The largest asset file read; the biggest in 1.22.7 is a few MB.
 const maxFileBytes = 64 << 20;
 
-/// Opens the assets in `game`, an install, and the mods in `data`'s `Mods`. A mod that can't
-/// be read is skipped with a warning.
+/// `game` is the install folder, `data` the data folder. A mod that can't be read is skipped
+/// with a warning.
 pub fn open(allocator: std.mem.Allocator, io: Io, game: Dir, data: ?Dir) !Assets {
     var self: Assets = .{ .arena = .init(allocator) };
     errdefer self.close(io);
@@ -98,8 +94,7 @@ fn lessThan(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
 
-/// Adds the mod `name` in `mods`, a zip or a folder. One without an `assets` folder has
-/// nothing to draw, such as a mod that only adds code, and is left out.
+/// A mod folder without `assets/`, such as a code-only mod, is left out.
 fn addMod(self: *Assets, io: Io, mods: Dir, name: []const u8) !void {
     const arena = self.arena.allocator();
     if (std.ascii.endsWithIgnoreCase(name, ".zip")) {
@@ -118,8 +113,8 @@ fn addMod(self: *Assets, io: Io, mods: Dir, name: []const u8) !void {
     }
 }
 
-/// Adds a source of the folders in `assets`: all in `domain`, or each its own domain, named
-/// as the folder.
+/// Adds the folders in `assets` as one source, all in `domain`, or each in the domain its
+/// name gives.
 fn addFolders(self: *Assets, io: Io, name: []const u8, assets: Dir, domain: ?[]const u8) !void {
     const arena = self.arena.allocator();
     var names: std.ArrayList([]const u8) = .empty;
@@ -145,7 +140,6 @@ fn domainOf(key: []const u8) []const u8 {
     return key[0 .. std.mem.indexOfScalar(u8, key, '/') orelse key.len];
 }
 
-/// The entries in a zip's `assets` folder that rendering needs, by lowercased "domain/path".
 fn mapZip(arena: std.mem.Allocator, io: Io, file: Io.File) !std.StringHashMapUnmanaged(std.zip.Iterator.Entry) {
     var buffer: [4096]u8 = undefined;
     var reader = file.reader(io, &buffer);
@@ -163,9 +157,8 @@ fn mapZip(arena: std.mem.Allocator, io: Io, file: Io.File) !std.StringHashMapUnm
     return entries;
 }
 
-/// Whether rendering needs the file at `path` below an `assets` folder, e.g.
-/// "survival/blocktypes/stone/rock.json", by `actionFor`: every folder on the way is
-/// entered, and the file is taken.
+/// Whether `path` below `assets/`, e.g. "survival/blocktypes/stone/rock.json", is needed:
+/// `actionFor` enters every folder on the way and takes the file.
 fn needed(path: []const u8) bool {
     var parts: [maxDepth][]const u8 = undefined;
     var count: usize = 0;
@@ -190,8 +183,8 @@ test needed {
     try std.testing.expect(needed("survival/config/colormaps.json"));
 }
 
-/// The file at `domain` and `path`, e.g. "survival" and "blocktypes/stone/rock.json", read
-/// with `allocator`, or null if no source has it. Case doesn't matter.
+/// Reads `path` in `domain`, e.g. "game" and "blocktypes/stone/rock.json", ignoring case.
+/// Null if no source has it.
 pub fn read(self: *const Assets, allocator: std.mem.Allocator, io: Io, domain: []const u8, path: []const u8) !?[]u8 {
     var buffer: [Dir.max_path_bytes]u8 = undefined;
     const key = std.fmt.bufPrint(&buffer, "{s}/{s}", .{ domain, path }) catch return null;
@@ -228,10 +221,9 @@ fn readZip(allocator: std.mem.Allocator, io: Io, file: Io.File, entry: std.zip.I
     return bytes;
 }
 
-/// The file at the lowercase `path` below a domain folder, or null without one. The game
-/// names nearly all its assets in lowercase, but not all (`shapes/block/clutter/pipes/h-EW.json`),
-/// so where the file system minds case, a file that isn't found by its lowercase path is
-/// looked for by its own name.
+/// `path` is lowercase. The game names nearly all its assets in lowercase, but not all
+/// (`shapes/block/clutter/pipes/h-EW.json`), so on a case-sensitive file system a file not
+/// found by its lowercase path is searched for ignoring case.
 fn readFolder(allocator: std.mem.Allocator, io: Io, folder: Dir, path: []const u8) !?[]u8 {
     return folder.readFileAlloc(io, path, allocator, .limited(maxFileBytes)) catch |err| switch (err) {
         error.FileNotFound => {
@@ -243,8 +235,8 @@ fn readFolder(allocator: std.mem.Allocator, io: Io, folder: Dir, path: []const u
     };
 }
 
-/// `path` below `dir` with each part as it's named on disk, ignoring case, written into
-/// `out`, or null if there's no such file. `dir` must be open for iterating.
+/// `path` with each part as named on disk, written into `out`. `dir` must be open for
+/// iterating.
 fn findIgnoringCase(io: Io, dir: Dir, path: []const u8, out: []u8) !?[]const u8 {
     var current = dir;
     var opened: ?Dir = null;
@@ -273,9 +265,7 @@ fn findIgnoringCase(io: Io, dir: Dir, path: []const u8, out: []u8) !?[]const u8 
     return out[0..len];
 }
 
-/// Every file rendering needs in `folder` of each domain, e.g. "blocktypes", each once (a
-/// mod's replacing the game's of the same name), in name order. Allocates with `arena` and
-/// frees nothing.
+/// Every needed file in `folder` (e.g. "blocktypes") of each domain, once each, in name order.
 pub fn list(self: *const Assets, arena: std.mem.Allocator, io: Io, folder: []const u8) ![]const Name {
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
     for (self.sources.items) |source| switch (source.kind) {
@@ -299,7 +289,6 @@ pub fn list(self: *const Assets, arena: std.mem.Allocator, io: Io, folder: []con
     return names;
 }
 
-/// Adds the files rendering needs in `folder` of a domain folder to `keys`.
 fn listFolder(arena: std.mem.Allocator, io: Io, domainFolder: Folder, folder: []const u8, keys: *std.StringArrayHashMapUnmanaged(void)) !void {
     var dir = domainFolder.dir.openDir(io, folder, .{ .iterate = true }) catch return;
     defer dir.close(io);
@@ -400,13 +389,13 @@ test findIgnoringCase {
     try std.testing.expectEqual(null, try findIgnoringCase(io, tmp.dir, "shapes/other/h-ew.json", &buffer));
 }
 
-/// What to do with a path below `assets/`, given as its components (domain, category, ...).
 const Action = enum { take, enter, skip };
 
 const wholeCategories = [_][]const u8{ "blocktypes", "itemtypes", "shapes", "textures", "worldproperties", "patches" };
 const skippedTextures = [_][]const u8{ "gui", "icons" };
 
-/// Which assets rendering needs: why each is, in docs/rendering.md#what-the-renderer-needs-from-them.
+/// `parts` is a path below `assets/` split into its components (domain, category, …).
+/// docs/rendering.md#what-the-renderer-needs-from-them says why these assets are needed.
 fn actionFor(parts: []const []const u8, isDir: bool) Action {
     const eql = std.mem.eql;
     switch (parts.len) {
@@ -447,7 +436,6 @@ test actionFor {
     inline for (cases) |case| try std.testing.expectEqual(case[2], actionFor(case[0], case[1]));
 }
 
-/// The game version, from the name of assets/version-<version>.txt, or null without one.
 fn findVersion(allocator: std.mem.Allocator, io: Io, assetsDir: Dir) !?[]const u8 {
     var it = assetsDir.iterate();
     while (try it.next(io)) |entry| {

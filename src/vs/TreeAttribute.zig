@@ -1,5 +1,5 @@
-//! Vintage Story's binary "tree attribute" format, used for block entity data.
-//! Layout and sources: docs/save-format/README.md §5.
+//! Vintage Story's binary "tree attribute" format. Layout and sources:
+//! docs/save-format/README.md §5.
 const TreeAttribute = @This();
 
 const std = @import("std");
@@ -62,12 +62,10 @@ pub fn getIntArray(self: TreeAttribute, key: []const u8) ?[]const i32 {
     return if (value == .intArray) value.intArray else null;
 }
 
-/// Reads one tree from the start of `reader`'s remaining bytes. Everything is copied into
-/// `arena`, so the result outlives the input (SQLite reuses a row's buffer on the next step).
+/// Everything is copied into `arena`, so the result outlives the input.
 pub fn parse(arena: std.mem.Allocator, reader: *Reader) Error!TreeAttribute {
-    // Entries are collected on the stack and copied into the arena once, at the exact size:
-    // a list grown inside an arena leaves every outgrown copy behind. Only a tree with more
-    // entries than the stack holds grows in the arena.
+    // Collected on the stack and copied once at the exact size: a list grown in an arena
+    // leaves every outgrown copy behind.
     var stack: [32]Entry = undefined;
     var count: usize = 0;
     var spill: std.ArrayList(Entry) = .empty;

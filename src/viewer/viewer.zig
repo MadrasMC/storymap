@@ -1,7 +1,6 @@
 //! The map viewer: `index.html` and `map.json`, written next to the tiles. The page is
-//! `viewer.html`, the map itself, with a theme drawing everything around it, and with the
-//! theme and the map's description inlined, because a browser opening it straight from the
-//! disk won't let it fetch files beside it. `map.json` is for other tools.
+//! `viewer.html` with the theme and the map's description inlined, as a browser opening it from
+//! disk can't fetch files beside it. `map.json` is for other tools.
 const std = @import("std");
 const Io = std.Io;
 const tiles = @import("tiles");
@@ -12,7 +11,6 @@ const template = @embedFile("viewer.html");
 /// Where the page expects the map's description. The template leaves it null, which the page
 /// shows as a missing map.
 const marker = "<script id=\"map-data\" type=\"application/json\">null</script>";
-/// Where the page expects its theme's stylesheet and script.
 const styleMarker = "<style id=\"theme-style\"></style>";
 const scriptMarker = "<script id=\"theme-script\"></script>";
 
@@ -21,15 +19,13 @@ pub const View = struct {
     /// Its folder, e.g. "topdown".
     name: []const u8,
     title: []const u8,
-    /// How the viewer turns a level-0 pixel into a block position: "topdown" is one pixel per
-    /// block, pixel x and y being block x and z.
+    /// How the viewer turns a level-0 pixel into a block position, e.g. "topdown".
     projection: []const u8,
     written: []const tiles.Written,
 };
 
-/// Writes `map.json` and `index.html` into `folder`, the page drawn with `theme`'s stylesheet
-/// and script. `rendered` is
-/// when, in seconds since 1970 (UTC).
+/// Writes `map.json` and `index.html` into `folder`. `rendered` is the render's Unix time, in
+/// seconds.
 pub fn write(allocator: std.mem.Allocator, io: Io, folder: Io.Dir, description: world.Description, rendered: i64, views: []const View, theme: Theme) !void {
     var buffer: [24]u8 = undefined;
     const json = try describe(allocator, description, utc(&buffer, rendered), views);
@@ -77,7 +73,6 @@ fn utc(buffer: *[24]u8, seconds: i64) []const u8 {
 test utc {
     var buffer: [24]u8 = undefined;
     try std.testing.expectEqualStrings("1970-01-01T00:00:00Z", utc(&buffer, 0));
-    // 2026-10-17 09:05:07 UTC.
     try std.testing.expectEqualStrings("2026-10-17T09:05:07Z", utc(&buffer, 1792227907));
 }
 

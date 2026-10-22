@@ -1,7 +1,6 @@
-//! Paints the game's map for a tile in one of the game's own styles (`MapStyle`), from what a
-//! reader read for it, as vsessentialsmod's `ChunkMapLayer.GenerateChunkImage` draws it, in the
-//! game's own colours (docs/rendering.md#how-the-game-draws-its-own-world-map). Each thread
-//! drawing the map keeps one, with its shading.
+//! Paints a tile in one of the game's own map styles, as vsessentialsmod's
+//! `ChunkMapLayer.GenerateChunkImage` does
+//! (docs/rendering.md#how-the-game-draws-its-own-world-map). One per thread.
 const MapPainter = @This();
 
 const std = @import("std");
@@ -14,11 +13,11 @@ const Rgb = world.Rgb;
 
 style: MapStyle,
 save: *const SaveFile,
-/// The shading, a byte per pixel as the game keeps it, and a copy of it before blurring.
+/// The shading, a byte per pixel as the game keeps it, and a copy before blurring.
 shade: []u8,
 unblurred: []u8,
 
-/// The game's own map styles, by the names a theme gives them after `game:`.
+/// The game's own map styles, as a theme names them after `game:`.
 pub const MapStyle = enum {
     /// The world map: each column in its map type's colour, hill-shaded; lakes unshaded and
     /// edged in `wateredge`, and snow looked under.
@@ -28,11 +27,10 @@ pub const MapStyle = enum {
     /// hill-shaded.
     coloured,
 
-    /// What `game` alone means: the world map as players see it by default.
+    /// `game` alone: the world map as players see it by default.
     pub const default: MapStyle = .shaded;
 };
 
-/// For drawing `save`'s world in `style`.
 pub fn init(save: *const SaveFile, allocator: std.mem.Allocator, style: MapStyle) !MapPainter {
     const shade = try allocator.alloc(u8, tiles.size * tiles.size);
     errdefer allocator.free(shade);
@@ -45,8 +43,8 @@ pub fn deinit(self: MapPainter, allocator: std.mem.Allocator) void {
     allocator.free(self.shade);
 }
 
-/// Paints the map of the tile `reader` just read, `surface`, into `pixels`. The reader must have
-/// been made for this style. Columns without blocks are transparent.
+/// Paints the tile `reader` just read into `pixels`. The reader must have been made for this
+/// style. Columns without blocks are transparent.
 pub fn paint(self: *MapPainter, reader: *const SaveFile.Reader, tile: tiles.Tile, surface: *const world.Surface, pixels: *tiles.Pixels) void {
     const palette = &SaveFile.palette;
     switch (self.style) {
@@ -56,9 +54,7 @@ pub fn paint(self: *MapPainter, reader: *const SaveFile.Reader, tile: tiles.Tile
     self.applyShading(pixels);
 }
 
-/// The world map: each column takes its type's colour; a column higher than its north-west,
-/// west and north neighbours, as a whole, is lit, and one lower shaded, more for steeper slopes;
-/// the shading is blurred within each chunk and multiplied in (`applyShading`). Lakes aren't
+/// Each column in its type's colour, hill-shaded (`hillShade`, `applyShading`). Lakes aren't
 /// shaded, and are edged in `wateredge` where they meet anything else.
 fn paintShaded(self: *MapPainter, reader: *const SaveFile.Reader, surface: *const world.Surface, palette: *const world.Palette, pixels: *tiles.Pixels) void {
     const save = self.save;
@@ -100,9 +96,8 @@ fn paintShaded(self: *MapPainter, reader: *const SaveFile.Reader, surface: *cons
     };
 }
 
-/// The colour-accurate world map: each column takes its top block's texture colour, with
-/// grain, tinted as the reader read it, or its type's colour without a texture; every column
-/// is shaded, lakes too, and nothing is looked under.
+/// As `paintShaded`, but in texture colours (`textureColour`); lakes are shaded too, and
+/// nothing is looked under.
 fn paintColoured(self: *MapPainter, reader: *const SaveFile.Reader, tile: tiles.Tile, surface: *const world.Surface, palette: *const world.Palette, pixels: *tiles.Pixels) void {
     const save = self.save;
     const side = world.Surface.side;
@@ -124,8 +119,8 @@ fn paintColoured(self: *MapPainter, reader: *const SaveFile.Reader, tile: tiles.
     };
 }
 
-/// Blurs the tile's shading within each chunk and multiplies it into the pixels that are
-/// drawn, as the game does: the blurred shading in fifths, and the unblurred one's remainder.
+/// Blurs the shading within each chunk and multiplies it into the drawn pixels, as the game
+/// does: the blurred shading in fifths, plus the unblurred one's remainder.
 fn applyShading(self: *MapPainter, pixels: *tiles.Pixels) void {
     @memcpy(self.unblurred, self.shade);
     var y: usize = 0;
@@ -153,7 +148,6 @@ fn lakeAt(save: *const SaveFile, surface: *const world.Surface, i: usize, y: u16
     return false;
 }
 
-/// -1, 0 or 1.
 fn signOf(value: i32) i32 {
     return @as(i32, @intFromBool(value > 0)) - @intFromBool(value < 0);
 }
@@ -187,9 +181,8 @@ fn hillShade(surface: *const world.Surface, i: usize, y: u16) u8 {
 /// setting `colorRandomizationWeight` has it by default.
 const grainWeight: f32 = 0.6;
 
-/// The colour of block `appearance` at (`x`, `y`, `z`) on the colour-accurate map: its texture's
-/// average colour with one of its grain colours mixed in, picked by position with the game's
-/// hash, so it stays put, each tinted by `tint`; or `fallback` without a texture.
+/// The texture's average colour mixed with a grain colour picked by position (`grainIndex`),
+/// both tinted by `tint`; `fallback` without a texture.
 fn textureColour(appearance: SaveFile.Appearance, fallback: Rgb, tint: Rgb, x: i32, y: u16, z: i32) Rgb {
     const average = tinted(appearance.colour orelse return fallback, tint);
     if (appearance.grain.len == 0) return average;
@@ -309,7 +302,6 @@ test blurLine {
     try std.testing.expectEqual(128, line[1]);
 }
 
-/// An opaque pixel.
 fn rgb(colour: Rgb) u32 {
     return tiles.rgba(colour[0], colour[1], colour[2], 0xFF);
 }

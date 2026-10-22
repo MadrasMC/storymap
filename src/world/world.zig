@@ -1,14 +1,12 @@
-//! What a game tells the renderers and the viewer about its world, the same for every game:
-//! for a tile's block columns, what's on top of each one, what each block is on a map, and
-//! what the world is called. A game's reader (`vs` for Vintage Story) fills these in from its
-//! save files; the renderers and the viewer know nothing of any save format.
+//! What a game's reader (`vs` for Vintage Story) tells the renderers and the viewer about a
+//! world, the same for every game: what's on top of each block column, what each block is on a
+//! map, and the world's name and heights.
 const std = @import("std");
 const tiles = @import("tiles");
 
-/// What a block is on Storymap's maps, which picks its colour from a theme's style
-/// (docs/themes.md#map-style). Each game's reader sorts its blocks into these. The names are
-/// borrowed from Vintage Story's map colour codes, but the types are Storymap's. Seas are
-/// `ocean`; lakes, rivers and springs `lake`.
+/// What a block is on a map, which picks its colour (docs/themes.md#map-style). Storymap's types,
+/// which each game's reader sorts its blocks into; named after Vintage Story's map colour codes.
+/// Seas are `ocean`; lakes, rivers and springs `lake`.
 pub const MapType = enum {
     land,
     desert,
@@ -22,17 +20,15 @@ pub const MapType = enum {
     ocean,
     lava,
 
-    /// Whether blocks of this type are liquids, shown by depth rather than by height.
+    /// Liquids are shown by depth rather than by height.
     pub fn isLiquid(self: MapType) bool {
         return self == .lake or self == .ocean or self == .lava;
     }
 };
 
-/// A colour, red, green and blue.
 pub const Rgb = [3]u8;
 
-/// A colour for each map type, and the inks for water's edges and low ground: a theme's colours
-/// for Storymap's styles, or a game's own for its maps.
+/// A colour for each map type, and the inks for low ground and water's edges.
 pub const Palette = struct {
     colours: std.EnumArray(MapType, Rgb),
     ink: Rgb,
@@ -46,8 +42,6 @@ pub const Game = struct {
     version: []const u8,
 };
 
-/// What a map of a world shows it as: its game, its name, and where its positions are counted
-/// from.
 pub const Description = struct {
     game: Game,
     name: []const u8,
@@ -56,8 +50,7 @@ pub const Description = struct {
     origin: struct { x: i64, z: i64 },
 };
 
-/// The heights a map is coloured by: they depend only on the world, so every part of a map,
-/// and every world, is coloured the same way.
+/// The heights a map is coloured by.
 pub const Heights = struct {
     /// How many blocks high the world is.
     world: u16,
@@ -76,9 +69,9 @@ pub const Surface = struct {
     top: []?u16,
     /// The game's ID of that block, or 0 where it isn't known, such as under liquid.
     topBlock: []i32,
-    /// The same for the highest liquid block. Plants growing in water, such as seaweed and
-    /// reeds, share their place with it, so from above the liquid shows. Liquid under a solid
-    /// block, such as a lake under a tree's leaves, is here too, though the solid block shows.
+    /// The same for the highest liquid block. Plants growing in water, such as seaweed, share
+    /// its block, so from above the liquid shows. Liquid under a solid block, such as a lake
+    /// under leaves, is here too, though the solid block shows.
     liquidTop: []?u16,
     liquidBlock: []i32,
 
@@ -107,7 +100,6 @@ pub const Surface = struct {
         @memset(self.liquidBlock, 0);
     }
 
-    /// What column `i` shows from above.
     pub fn columnTop(self: Surface, i: usize) ColumnTop {
         return .of(self.top[i], self.liquidTop[i]);
     }
@@ -123,8 +115,7 @@ pub const ColumnTop = union(enum) {
     /// No blocks at all, as far as the save goes.
     none,
     land: u16,
-    /// Liquid at or above the highest solid block. Plants growing in water share their
-    /// block with it, so the water still shows.
+    /// Liquid at or above the highest solid block.
     liquid: u16,
 
     pub fn of(top: ?u16, liquidTop: ?u16) ColumnTop {

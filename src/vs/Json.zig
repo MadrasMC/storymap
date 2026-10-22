@@ -1,6 +1,6 @@
 //! Vintage Story's asset JSON, which is lenient: keys may be unquoted, strings single-quoted,
 //! numbers written as `.5`, and there may be comments and trailing commas
-//! (docs/rendering.md#what-the-renderer-needs-from-them). Everything is allocated in an arena.
+//! (docs/rendering.md#what-the-renderer-needs-from-them).
 const std = @import("std");
 
 pub const Value = union(enum) {
@@ -14,8 +14,7 @@ pub const Value = union(enum) {
     /// as `get` does.
     object: []const Field,
 
-    /// The property `key` of an object, ignoring case, or null. A key written twice counts
-    /// as its last value.
+    /// Ignores case. A key written twice counts as its last value.
     pub fn get(self: Value, key: []const u8) ?Value {
         if (self != .object) return null;
         var i = self.object.len;
@@ -34,7 +33,7 @@ pub const Value = union(enum) {
         return if (self == .array) self.array else &.{};
     }
 
-    /// The array property `key`, ignoring case, or none.
+    /// Ignores case; empty if missing or not an array.
     pub fn getArray(self: Value, key: []const u8) []const Value {
         return (self.get(key) orelse return &.{}).asArray();
     }
@@ -56,8 +55,7 @@ pub const Field = struct {
 
 pub const Error = error{ InvalidJson, TooDeep, OutOfMemory };
 
-/// Parses `text`, allocating with `arena`; strings point into `text` where they have no
-/// escapes, so it must outlive the result.
+/// Strings without escapes point into `text`, so it must outlive the result.
 pub fn parse(arena: std.mem.Allocator, text: []const u8) Error!Value {
     var parser: Parser = .{ .arena = arena, .text = text };
     if (std.mem.startsWith(u8, text, "\xef\xbb\xbf")) parser.pos = 3;
@@ -164,9 +162,8 @@ const Parser = struct {
         return .{ .array = items.items };
     }
 
-    /// After a value: a comma, which may also come before the closing bracket, or the
-    /// closing bracket itself. Returns whether more may follow, and leaves the position on
-    /// the closing bracket otherwise.
+    /// After a value: a comma (trailing ones allowed) or the closing bracket. True if more may
+    /// follow; otherwise leaves the position on the bracket.
     fn separator(self: *Parser, close: u8) Error!bool {
         try self.skip();
         if (self.pos == self.text.len) return error.InvalidJson;

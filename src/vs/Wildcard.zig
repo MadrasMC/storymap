@@ -1,19 +1,17 @@
-//! The game's wildcard codes, as in `skipVariants: ["rock-*"]` or `texturesByType: { "rock-*": … }`:
-//! `*` stands for any run of characters and letters match in either case. A code starting
-//! with `@` is a regular expression instead, matching the whole code and minding case
-//! (vsapi `WildcardUtil.cs`). Only the parts of regular expressions the game's and mods'
-//! assets use are supported: literals, `.`, `*` and groups of alternatives, `(a|b)`; any
-//! other syntax is reported rather than misread (docs/rendering.md#block-codes).
+//! The game's wildcard codes (vsapi `WildcardUtil.cs`), as in `skipVariants: ["rock-*"]`: `*`
+//! is any run of characters, and case is ignored. A code starting with `@` is a regular
+//! expression matching the whole code, minding case. Only the regex syntax assets use is
+//! supported: literals, `.`, `*` and groups `(a|b)`; anything else is an error rather than
+//! misread (docs/rendering.md#block-codes).
 const std = @import("std");
 
 pub const Error = error{ RegexUnsupported, InvalidRegex };
 
-/// Whether `pattern` is a wildcard or a regular expression, rather than one exact code.
+/// Also true for a regular expression.
 pub fn isWildcard(pattern: []const u8) bool {
     return std.mem.indexOfScalar(u8, pattern, '*') != null or (pattern.len > 0 and pattern[0] == '@');
 }
 
-/// Whether `text` matches `pattern`.
 pub fn match(pattern: []const u8, text: []const u8) Error!bool {
     if (pattern.len == 0) return false;
     if (pattern[0] == '@') {
@@ -45,7 +43,6 @@ pub fn match(pattern: []const u8, text: []const u8) Error!bool {
     return p == pattern.len;
 }
 
-/// Checks a regular expression uses only what's supported, and is well formed.
 fn validate(regex: []const u8) Error!void {
     var depth: usize = 0;
     var canRepeat = false;

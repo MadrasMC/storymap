@@ -20,7 +20,7 @@ worldHeight: u32,
 /// defaults are the game's.
 worldWidth: u64 = 1024000,
 worldLength: u64 = 1024000,
-/// The world's name, as the player gave it (field 13).
+/// The world's name (field 13).
 name: []const u8 = "",
 /// The version of the game that last saved the world, e.g. "1.22.7" (field 21).
 gameVersion: []const u8 = "",
@@ -109,8 +109,7 @@ pub fn parse(allocator: std.mem.Allocator, data: []const u8) !GameData {
     };
 }
 
-/// `daysPerMonth` from the world config, a tree attribute whose values are strings, or null
-/// if it isn't there or can't be read.
+/// The world config is a tree attribute whose values are strings.
 fn worldDaysPerMonth(arena: std.mem.Allocator, bytes: []const u8) ?u32 {
     var reader: TreeAttribute.Reader = .{ .bytes = bytes };
     const config = TreeAttribute.parse(arena, &reader) catch return null;
@@ -125,9 +124,8 @@ pub fn yearProgress(self: GameData) f32 {
     return @floatCast(@mod(days, daysPerYear) / daysPerYear);
 }
 
-/// The height of the water surface of seas and lakes: water fills the blocks below it.
-/// The save doesn't store it; the game derives it from the world height
-/// (docs/save-format/README.md#sea-level).
+/// Water fills the blocks below this height. Not stored in the save; the game derives it from
+/// the world height (docs/save-format/README.md#sea-level).
 pub fn seaLevel(self: GameData) u32 {
     return self.worldHeight * 110 / 255;
 }

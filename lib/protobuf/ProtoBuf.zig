@@ -67,7 +67,6 @@ pub fn next(self: *ProtoBuf) Error!?Message {
         .field_number = field_number,
         .data = switch (tag & 0b111) {
             0 => .{ .VARINT = try self.parseVarInt() },
-            // Fixed-width values (double, float, fixed32/64).
             1 => .{ .I64 = std.mem.readInt(u64, (try self.take(8))[0..8], .little) },
             2 => blk: {
                 const len = try self.parseVarInt();
@@ -91,7 +90,7 @@ pub fn parseVarInt(self: *ProtoBuf) Error!u64 {
     return error.InvalidVarint;
 }
 
-/// The next `len` bytes, the only place that touches `buf` directly.
+/// The only place that touches `buf` directly.
 fn take(self: *ProtoBuf, len: usize) Error![]const u8 {
     if (self.buf.len - self.cur < len) return error.EndOfData;
     defer self.cur += len;

@@ -1,6 +1,5 @@
-//! Storymap's entry point: its commands, from `cli`, and what to do when the command line
-//! doesn't fit them. Each part of Storymap is a module of its own, its tests run by
-//! `zig build test` (build.zig).
+//! Storymap's entry point: runs the commands from `cli`, and reports a command line that
+//! doesn't fit them.
 const std = @import("std");
 const build_options = @import("build_options");
 const console = @import("console");
@@ -36,7 +35,6 @@ pub fn main(init: std.process.Init) !void {
     };
 }
 
-/// `storymap --version`.
 fn printVersion(init: std.process.Init) !void {
     var buffer: [64]u8 = undefined;
     var stdout = std.Io.File.stdout().writerStreaming(init.io, &buffer);

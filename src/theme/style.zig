@@ -22,7 +22,6 @@ pub const Style = union(enum) {
 
     pub const Rgb = world.Rgb;
 
-    /// The names Storymap's own styles are written as, for messages: "relief".
     pub const storymapNames = names: {
         var text: []const u8 = "";
         for (std.meta.fieldNames(Style)) |name| {
@@ -51,8 +50,6 @@ pub const Style = union(enum) {
             missingColour,
         };
 
-        /// The problem as a message, e.g. "unknown style shaded. expected: relief, game,
-        /// game:<name>", for `{f}`.
         pub fn format(self: Problem, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             switch (self.kind) {
                 .missingValue => try writer.print("{s} has no value", .{self.name}),
@@ -75,23 +72,20 @@ pub const Style = union(enum) {
         game: ?[]const u8 = null,
     };
 
-    /// The style named `text`, or null if it isn't a style's name.
     pub fn parseName(text: []const u8) ?Name {
         if (std.mem.eql(u8, text, "game")) return .{ .kind = .game };
         if (std.mem.startsWith(u8, text, "game:")) {
             if (text.len == "game:".len) return null;
             return .{ .kind = .game, .game = text["game:".len..] };
         }
-        // A bare `game` is handled above.
         return .{ .kind = std.meta.stringToEnum(std.meta.Tag(Style), text) orelse return null };
     }
 
-    /// Parses a style file. Colours it leaves out come from `defaults`; without them, it must give
-    /// every colour. `override` replaces the file's style.
+    /// Colours the file leaves out come from `defaults`; without them, it must give every colour.
+    /// `override` replaces the file's style.
     pub fn parse(text: []const u8, defaults: ?world.Palette, override: ?Name, problem: *Problem) error{InvalidStyle}!Style {
         // For the built-in themes' styles, parsed when compiling.
         @setEvalBranchQuota(100_000);
-        // What the file gives, null where it leaves something out.
         var named: ?Name = null;
         var colours: std.EnumArray(world.MapType, ?Rgb) = .initFill(null);
         var ink: ?Rgb = null;

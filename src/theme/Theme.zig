@@ -1,6 +1,5 @@
-//! A theme, as described in `docs/themes.md`: a folder holding the stylesheet and script that
-//! draw the viewer page around the map, which the viewer inlines into the page, and how the
-//! map itself is drawn, its `topdown/style.txt`, for the renderer.
+//! A theme (docs/themes.md): the stylesheet and script of the viewer page around the map, and
+//! the map's style, `topdown/style.txt`.
 const Theme = @This();
 
 const std = @import("std");
@@ -12,7 +11,7 @@ const world = @import("world");
 stylesheet: []const u8,
 /// `theme.js`.
 script: []const u8,
-/// `topdown/style.txt`, parsed: the map's colours.
+/// `topdown/style.txt`, parsed.
 topdown: Style,
 
 const printedStyle = @embedFile("printed/topdown/style.txt");
@@ -34,18 +33,16 @@ pub const plain: Theme = .{
     .topdown = builtInStyle("plain", plainStyle),
 };
 
-/// The themes built into Storymap, by the name `--theme` takes, with their style files.
 pub const builtIn = [_]struct { name: []const u8, theme: Theme, style: []const u8 }{
     .{ .name = "printed", .theme = printed, .style = printedStyle },
     .{ .name = "plain", .theme = plain, .style = plainStyle },
 };
 
-/// The colours Storymap's own styles use for those a theme's style leaves out: the Printed
-/// theme's, which gives every colour.
+/// The colours for those a theme's style leaves out: the Printed theme's, which gives every
+/// colour.
 pub const defaultColours: world.Palette = printed.topdown.relief;
 
-/// A built-in theme's style, parsed when compiling, without defaults: a built-in Storymap style
-/// gives every colour.
+/// Parsed when compiling, without defaults: a built-in style gives every colour.
 fn builtInStyle(comptime name: []const u8, comptime text: []const u8) Style {
     comptime {
         var problem: Style.Problem = .{};
@@ -54,7 +51,6 @@ fn builtInStyle(comptime name: []const u8, comptime text: []const u8) Style {
     }
 }
 
-/// Why a theme can't be loaded, for a message.
 pub const Problem = struct {
     kind: Kind = .unreadable,
     /// The error behind it, for `unreadable`.
@@ -73,12 +69,9 @@ pub const Problem = struct {
     };
 };
 
-/// The built-in theme called `name`, or else the theme in the folder at that path: its
-/// `theme.css`, `theme.js` and `topdown/style.txt`, read with `arena` and kept for the render.
-/// The colours its style leaves out are `defaultColours`, and a folder without
-/// `topdown/style.txt` draws the map as the Printed theme does. `style`, if given, replaces the
-/// style its file names. If it can't be loaded, returns error.InvalidTheme and `problem` says
-/// why.
+/// The built-in theme called `name`, or else the theme in the folder at that path. Colours its
+/// style leaves out are `defaultColours`; a folder without `topdown/style.txt` draws the map as
+/// Printed does. `style` replaces the style its file names.
 pub fn load(arena: std.mem.Allocator, io: Io, name: []const u8, style: ?Style.Name, problem: *Problem) error{InvalidTheme}!Theme {
     for (builtIn) |entry| {
         if (!std.mem.eql(u8, entry.name, name)) continue;
@@ -101,7 +94,6 @@ fn loadFolder(arena: std.mem.Allocator, io: Io, path: []const u8, style: ?Style.
     defer folder.close(io);
     const stylesheet = try folder.readFileAlloc(io, "theme.css", arena, .limited(16 << 20));
     const script = try folder.readFileAlloc(io, "theme.js", arena, .limited(16 << 20));
-    // Either closing tag would end its element early once the theme is inlined.
     if (std.mem.indexOf(u8, stylesheet, "</style") != null) return fail(problem, .stylesheetEndsItsElement);
     if (std.mem.indexOf(u8, script, "</script") != null) return fail(problem, .scriptEndsItsElement);
 
@@ -123,7 +115,6 @@ test {
 }
 
 test "the built-in themes can be inlined" {
-    // Either closing tag would end its element early.
     for (builtIn) |entry| {
         try std.testing.expect(std.mem.indexOf(u8, entry.theme.stylesheet, "</style") == null);
         try std.testing.expect(std.mem.indexOf(u8, entry.theme.script, "</script") == null);

@@ -8,10 +8,9 @@ const zstd = @import("zstd");
 
 pub const Error = error{InvalidData};
 
-/// 15 bit planes at most, so at most 2^15 palette slots.
 pub const maxPlanes = 15;
 pub const maxPalette = 1 << maxPlanes;
-/// One plane is 32,768 bits: 1,024 words.
+/// One bit for each of a chunk's 32,768 blocks: 1,024 words.
 pub const planeWords = 1024;
 
 pub const Layer = struct {
@@ -37,7 +36,7 @@ pub const Layer = struct {
         self.palette[0] = 0;
     }
 
-    /// Decodes `bytes` into this layer, replacing what was there. On error the layer is empty.
+    /// On error the layer is empty.
     pub fn decode(self: *Layer, decompressor: Decompressor, bytes: []const u8) Error!void {
         self.clear();
         errdefer self.clear();
@@ -73,7 +72,7 @@ pub const Layer = struct {
     }
 };
 
-/// A zstd decompression context built in a buffer allocated once, at startup.
+/// A zstd decompression context in a buffer allocated once.
 pub const Decompressor = struct {
     workspace: []align(8) u8,
     dctx: *zstd.ZSTD_DCtx,
@@ -89,7 +88,7 @@ pub const Decompressor = struct {
         allocator.free(self.workspace);
     }
 
-    /// Decompresses one frame into `out`, refusing a frame whose stated size doesn't fit.
+    /// Refuses a frame whose stated size doesn't fit in `out`.
     fn decompress(self: Decompressor, out: []u8, frame: []const u8) Error![]u8 {
         // Unknown and invalid sizes are reported as the two largest values, so the limit covers them.
         const size = zstd.ZSTD_getFrameContentSize(frame.ptr, frame.len);

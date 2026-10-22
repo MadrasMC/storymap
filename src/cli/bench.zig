@@ -3,10 +3,6 @@
 //!
 //! The PNGs are encoded but not written, so the disk isn't timed. One untimed render first
 //! warms the file cache.
-//!
-//! It prints a summary on stderr, or with `--json` the results on stdout as one line of JSON
-//! (`Result`), for scripts comparing versions: its keys keep their names and meaning, and
-//! later versions only add keys.
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
@@ -20,7 +16,6 @@ const console = @import("console");
 const render = @import("render.zig");
 const args = @import("args");
 
-/// What `storymap bench` takes.
 pub const spec: args.Spec = .{
     .options = &.{
         .{ .name = "json", .description = "Print the results as one line of JSON, for scripts, instead of the summary." },
@@ -55,16 +50,15 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     var stats: topdown.Stats = .{};
     // Every chunk in the save, which a render doesn't count: it reads only those it needs.
     var chunks: usize = 0;
-    _ = try renderOnce(allocator, io, dbPath, &stats);
+    _ = try openAndRender(allocator, io, dbPath, &stats);
     for (0..runs) |i| {
-        open[i] = try renderOnce(allocator, io, dbPath, &stats);
-        tiles[i] = stats.render;
-        total[i] = .{ .nanoseconds = open[i].nanoseconds + stats.render.nanoseconds };
+        open[i] = try openAndRender(allocator, io, dbPath, &stats);
+        tiles[i] = stats.duration;
+        total[i] = .{ .nanoseconds = open[i].nanoseconds + stats.duration.nanoseconds };
         const draw: f64 = @floatFromInt(stats.draw.nanoseconds);
         const encode: f64 = @floatFromInt(stats.encode.nanoseconds);
         encodeShare[i] = encode / (draw + encode);
 
-        // Decoding every chunk, without drawing anything, for comparison.
         const start: Io.Timestamp = .now(io, .awake);
         chunks = try decodeAll(allocator, dbPath);
         decode[i] = start.untilNow(io, .awake);
@@ -116,8 +110,8 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     try stdout.interface.flush();
 }
 
-/// A benchmark's results, printed as JSON for scripts. Keys keep their names and meaning from
-/// version to version; new ones may be added.
+/// The results `--json` prints, for scripts comparing versions. Keys keep their names and
+/// meaning from version to version; new ones may be added.
 const Result = struct {
     /// The version of Storymap measured, from build.zig.zon.
     version: []const u8,
@@ -125,7 +119,7 @@ const Result = struct {
     world: []const u8,
     /// The build mode, as Zig names it, e.g. "fast" for -Doptimize=ReleaseFast.
     build: []const u8,
-    /// The style drawn: always the default theme's, as there are no prepared blocks here.
+    /// The style drawn: the default theme's, as there are no prepared blocks here.
     style: []const u8 = switch (style) {
         .relief => "relief",
         .game => |name| if (name) |given| "game:" ++ given else "game",
@@ -159,12 +153,11 @@ const Result = struct {
     };
 };
 
-/// The style every render is drawn in: the default theme's.
 const style = Theme.printed.topdown;
 
-/// One render: the save opened, with its block list and which tiles it has, drawn without
-/// writing anything, and closed. Returns how long opening took.
-fn renderOnce(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *topdown.Stats) !Io.Duration {
+/// Renders the save without writing anything. Returns how long opening it took; `stats` gets the
+/// tiles' times.
+fn openAndRender(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *topdown.Stats) !Io.Duration {
     const start: Io.Timestamp = .now(io, .awake);
     const save = try render.openSaveFile(allocator, io, dbPath);
     defer save.close(allocator);
@@ -173,21 +166,17 @@ fn renderOnce(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *
     return opened;
 }
 
-/// The median of `times`, in seconds.
 fn medianSeconds(times: []Io.Duration) f64 {
     return @as(f64, @floatFromInt(median(times).nanoseconds)) / std.time.ns_per_s;
 }
 
-/// Prints a stage's time, and the chunks per second it makes if `chunks` is given.
 fn printStage(name: []const u8, seconds: f64, chunks: ?usize) void {
     std.debug.print("  {s:<22} {d:>7.3} s", .{ name, seconds });
     if (chunks) |n| std.debug.print("  {d:>9.0} chunks/s", .{@as(f64, @floatFromInt(n)) / seconds});
     std.debug.print("\n", .{});
 }
 
-/// Decodes every chunk in the save on every core, and returns how many there are. Each worker
-/// takes the chunk columns whose position (without its y bits) leaves its number when divided
-/// by the number of workers.
+/// Returns the number of chunks in the save.
 fn decodeAll(allocator: std.mem.Allocator, dbPath: []const u8) !usize {
     const workers = std.Thread.getCpuCount() catch 1;
     const jobs = try allocator.alloc(DecodeJob, workers);

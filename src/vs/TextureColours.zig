@@ -1,7 +1,5 @@
-//! A block texture's colours for the map, as the game's colour-accurate map takes them from
-//! its texture atlas: the texture's average colour, and a handful of its pixels picked at
-//! random, which the map mixes in for grain (docs/rendering.md#how-the-game-draws-its-own-world-map).
-//! Worked out when preparing blocks, so rendering never reads a texture.
+//! A texture's average colour and a few random pixels for grain, as the game's colour-accurate
+//! map takes them from its atlas (docs/rendering.md#how-the-game-draws-its-own-world-map).
 const TextureColours = @This();
 
 const std = @import("std");
@@ -10,14 +8,13 @@ const stb = @import("stb_image");
 
 const Rgb = world.Rgb;
 
-/// How many pixels are picked, as the game's atlas keeps (vsapi `TextureAtlasPosition.RndColorsLength`).
+/// As many as the game's atlas keeps (vsapi `TextureAtlasPosition.RndColorsLength`).
 pub const samples = 30;
 
 average: Rgb,
 grain: [samples]Rgb,
 
-/// The colours of the PNG image `png`, or null if it can't be decoded or is wholly
-/// transparent.
+/// Null if `png` can't be decoded or is wholly transparent.
 pub fn ofPng(png: []const u8) ?TextureColours {
     var width: c_int = 0;
     var height: c_int = 0;
@@ -29,8 +26,8 @@ pub fn ofPng(png: []const u8) ?TextureColours {
     return of(pixels);
 }
 
-/// The colours of an image's RGBA pixels: the average weighs each pixel by how opaque it is,
-/// and the grain is picked from pixels that aren't transparent, the same ones every time.
+/// The average weighs each pixel by its opacity; the grain is picked from non-transparent
+/// pixels, the same ones every time.
 pub fn of(pixels: []const [4]u8) ?TextureColours {
     var sums: [3]u64 = .{ 0, 0, 0 };
     var weight: u64 = 0;

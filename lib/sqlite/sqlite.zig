@@ -58,17 +58,16 @@ pub fn init(filename: [*:0]const u8, flags: OpenFlags) !DB {
     };
 }
 
-/// Opens a database without writing anything next to it. A plain read-only open of a
-/// database in write-ahead-log mode still creates `-shm` and
-/// `-wal` files beside it; `immutable=1` doesn't, but also ignores any `-wal` file that's
-/// already there.
+/// Opens a database without writing anything next to it. A read-only open of a database in WAL
+/// mode still creates `-shm` and `-wal` files; `immutable=1` doesn't, but also ignores an
+/// existing `-wal` file.
 pub fn initImmutable(allocator: std.mem.Allocator, path: []const u8) !DB {
     const uri = try immutableUri(allocator, path);
     defer allocator.free(uri);
     return init(uri, .{ .readonly = true, .uri = true });
 }
 
-/// `path` as an SQLite URI with `immutable=1`. See https://sqlite.org/uri.html.
+/// See https://sqlite.org/uri.html.
 fn immutableUri(allocator: std.mem.Allocator, path: []const u8) ![:0]u8 {
     var uri: std.ArrayList(u8) = .empty;
     errdefer uri.deinit(allocator);
@@ -134,7 +133,7 @@ pub const Stmt = struct {
         };
     }
 
-    /// Sets the statement's parameter `index` (from 1, as in `?1`).
+    /// `index` counts from 1, as in `?1`.
     pub fn bind(self: Stmt, index: c_int, value: u64) void {
         // Only fails for an index the statement doesn't have, or while it's running.
         std.debug.assert(c.sqlite3_bind_int64(self.stmt, index, @bitCast(value)) == c.SQLITE_OK);

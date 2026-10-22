@@ -1,14 +1,11 @@
-//! What rendering needs to know about the game's and mods' blocks, prepared once from their
-//! assets and kept, so a render never reads assets itself (docs/rendering.md#preparing-blocks).
-//! For each block: its code, its material, its colour on the game's map, the colours of its
-//! texture, and the colour maps that tint it.
+//! The game's and mods' blocks as rendering needs them, prepared once from their assets so a
+//! render never reads assets itself (docs/rendering.md#preparing-blocks).
 //!
-//! A prepared set is a folder `<blocks folder>/<key>/` holding `blocks.txt`, where the key
-//! depends on the game version and the mods, so each combination is prepared once. Textures
-//! come first, each with its average colour and its grain (`TextureColours`), then the game's
-//! colour maps with their padding and flags, each beside it as `colormaps/<code>.png`. Blocks
-//! name their two textures and their climate and season colour maps by number, counting from
-//! 0, or `-` for none:
+//! A prepared set is a folder `<blocks folder>/<key>/` (see `key`) holding `blocks.txt`.
+//! Textures come first, each with its average colour and grain (`TextureColours`), then the
+//! colour maps with their padding and flags, each image beside it as `colormaps/<code>.png`.
+//! Blocks name their two textures and their climate and season colour maps by number from 0,
+//! or `-` for none:
 //!
 //!     storymap blocks 4
 //!     game 1.22.7
@@ -46,12 +43,11 @@ pub const Block = struct {
     material: []const u8,
     /// Its colour on the game's map, e.g. "land" or "forest" (docs/rendering.md#block-colours).
     colorCode: []const u8,
-    /// Its texture's average colour, and its grain, from the textures the game's
-    /// colour-accurate map uses (`BlockTypes.Textures`), where they could be read.
+    /// Its texture's average colour and grain, from the textures the game's colour-accurate map
+    /// uses (`BlockTypes.Textures`), where readable.
     colour: ?world.Rgb = null,
     grain: []const world.Rgb = &.{},
-    /// The colour maps that tint it by climate and by season, where it has them and they
-    /// could be read.
+    /// The colour maps tinting it by climate and season, where it has them and they're readable.
     climateColourMap: ?*const Tint.ColourMap = null,
     seasonColourMap: ?*const Tint.ColourMap = null,
 };
@@ -69,8 +65,7 @@ pub fn deinit(self: *Prepared) void {
     self.arena.deinit();
 }
 
-/// Where prepared sets go when no folder is given: `blocks` in the current folder, beside a
-/// render's `out`.
+/// Where prepared sets go when no folder is given, relative to the current folder.
 pub const defaultFolder = "blocks";
 
 /// The folder name for the set prepared from `assets`: changes with the game version, the
@@ -96,8 +91,7 @@ pub fn key(buffer: *[16]u8, io: Io, assets: *const Assets) ![]const u8 {
     return std.fmt.bufPrint(buffer, "{x:0>16}", .{hasher.final()}) catch unreachable;
 }
 
-/// Prepares the blocks of `assets` into `folder`, replacing what was there. Returns how
-/// many blocks there are.
+/// Replaces what `folder` held. Returns the block count.
 pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: Dir) !usize {
     const blocks = try BlockTypes.expand(arena, io, assets);
     var textures: Textures = .{ .arena = arena, .io = io, .assets = assets };
@@ -133,7 +127,6 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
     return blocks.len;
 }
 
-/// One of the game's colour maps, as prepared: its image is `colormaps/<code>.png`.
 const PreparedColourMap = struct {
     code: []const u8,
     padding: usize,
@@ -141,8 +134,8 @@ const PreparedColourMap = struct {
     extraFlags: u32,
 };
 
-/// Copies the images of the colour maps the game's `config/colormaps.json` lists into
-/// `folder`'s `colormaps`, and returns those it could read, in the file's order.
+/// Copies the images of the colour maps in the game's `config/colormaps.json` into `folder`.
+/// Returns those it could read, in the file's order.
 fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: Dir) ![]const PreparedColourMap {
     const file = "config/colormaps.json";
     const bytes = try assets.read(arena, io, Assets.gameDomain, file) orelse return &.{};
@@ -177,7 +170,6 @@ fn integer(value: ?Json.Value) usize {
     return std.fmt.parseInt(usize, number.number, 10) catch 0;
 }
 
-/// The number of the colour map with `code` in `maps`, or null without one.
 fn colourMapNumber(maps: []const PreparedColourMap, code: ?[]const u8) ?usize {
     const wanted = code orelse return null;
     for (maps, 0..) |map, i| if (std.mem.eql(u8, map.code, wanted)) return i;
@@ -195,8 +187,7 @@ const Textures = struct {
     /// Every texture file, listed the first time a location ends in `*`.
     files: ?[]const Assets.Name = null,
 
-    /// The number of the texture at `location`, reading it the first time; null without one,
-    /// or if it can't be read.
+    /// Reads the texture the first time; null without a location or if it can't be read.
     fn number(self: *Textures, location: ?[]const u8) !?usize {
         const wanted = location orelse return null;
         const entry = try self.numbers.getOrPut(self.arena, wanted);
@@ -226,13 +217,11 @@ const Textures = struct {
     }
 };
 
-/// Whether `folder` holds a prepared set.
 pub fn exists(io: Io, folder: Dir) bool {
     folder.access(io, fileName, .{}) catch return false;
     return true;
 }
 
-/// Loads the set prepared in `folder`.
 pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
     var self: Prepared = .{ .arena = .init(allocator) };
     errdefer self.deinit();
@@ -283,7 +272,7 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
     return self;
 }
 
-/// The colour map `code` prepared in `folder`, or null if its image can't be read.
+/// Null if the colour map's image can't be read.
 fn loadColourMap(arena: std.mem.Allocator, io: Io, folder: Dir, code: []const u8, padding: usize, tropical: bool) !?*const Tint.ColourMap {
     var buffer: [Dir.max_path_bytes]u8 = undefined;
     const path = std.fmt.bufPrint(&buffer, "{s}/{s}.png", .{ colourMapFolder, code }) catch return null;
@@ -313,8 +302,8 @@ fn numbered(comptime T: type, items: []const T, word: ?[]const u8) !?T {
     return items[i];
 }
 
-/// The newest set prepared in the blocks folder `blocks`, by when it was prepared, for when
-/// the game isn't there to say which one fits: its folder's name, or null without any.
+/// The folder name of the most recently prepared set in `blocks`, or null without any. For
+/// when the game isn't there to give the key.
 pub fn newest(arena: std.mem.Allocator, io: Io, blocks: Dir) !?[]const u8 {
     var best: ?[]const u8 = null;
     var bestTime: i96 = std.math.minInt(i96);
@@ -332,7 +321,7 @@ pub fn newest(arena: std.mem.Allocator, io: Io, blocks: Dir) !?[]const u8 {
 }
 
 /// What a save's blocks have that the prepared set doesn't: the mods (domains) it lacks, and
-/// how many codes in its domains it doesn't know, with one of them.
+/// how many codes in known domains it lacks, with an example.
 pub const Unknown = struct {
     mods: []const []const u8,
     codes: usize,

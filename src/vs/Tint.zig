@@ -1,21 +1,20 @@
-//! How the game tints a block's colour where it is: grass, leaves and water take a colour from
-//! a climate map, by the temperature and rainfall there, mixed with one from a season map, by
-//! the time of year (docs/rendering.md#climate-and-season-tint). The game does this for its map
-//! in closed code; this follows its shader, `shaderincludes/colormap.vsh` and `.fsh`, which
-//! does the same for the world it draws.
+//! Climate and season tint: grass, leaves and water take a colour from a climate map by
+//! temperature and rainfall, mixed with one from a season map by the time of year
+//! (docs/rendering.md#climate-and-season-tint). Follows the game's world shader,
+//! `shaderincludes/colormap.vsh` and `.fsh`, as its map does this in closed code.
 const std = @import("std");
 const world = @import("world");
 const stb = @import("stb_image");
 
 const Rgb = world.Rgb;
 
-/// No tint: white, which leaves a colour as it is.
+/// White, which leaves a colour as it is.
 pub const none: Rgb = .{ 255, 255, 255 };
 
 /// One of the game's colour maps (`config/colormaps.json`): an image a block's colour is
 /// multiplied by.
 pub const ColourMap = struct {
-    /// Its code, e.g. "climatePlantTint".
+    /// E.g. "climatePlantTint".
     code: []const u8,
     width: usize,
     height: usize,
@@ -27,7 +26,7 @@ pub const ColourMap = struct {
     /// A tropical season map (`extraFlags` 1), weighted by rainfall rather than temperature.
     tropical: bool = false,
 
-    /// Decodes a colour map from its PNG image, or null if it can't be.
+    /// Null if the PNG can't be decoded or is all padding.
     pub fn decode(arena: std.mem.Allocator, code: []const u8, png: []const u8, padding: usize, tropical: bool) !?ColourMap {
         var width: c_int = 0;
         var height: c_int = 0;
@@ -74,7 +73,7 @@ pub const Climate = struct {
 /// a grid of packed values over the region, temperature in bits 16–23 and rainfall in
 /// bits 8–15, with padding from the regions around it.
 pub const ClimateMap = struct {
-    /// The values, `size` × `size`, row by row.
+    /// `size` × `size`, row by row.
     values: []i32,
     size: usize = 0,
     padding: usize = 0,
@@ -83,8 +82,8 @@ pub const ClimateMap = struct {
     /// The largest grid read; the game's is 20 × 20.
     pub const maxSize = 64;
 
-    /// Reads the grid from an `IntDataMap2D` message into `values`, which holds `maxSize` ×
-    /// `maxSize`. Returns false if it doesn't fit or isn't complete.
+    /// Reads an `IntDataMap2D` message into `values`, which holds `maxSize` × `maxSize`. False
+    /// if it doesn't fit or is incomplete.
     pub fn decode(self: *ClimateMap, message: []const u8) !bool {
         const ProtoBuf = @import("protobuf");
         var count: usize = 0;
@@ -125,9 +124,8 @@ pub const ClimateMap = struct {
         return true;
     }
 
-    /// The climate at a place `x` and `z` across the region, each from 0 to 1: interpolated
-    /// between the four values around it, each channel rounded down (vsapi
-    /// `IntDataMap2D.GetUnpaddedColorLerped`).
+    /// `x` and `z` run from 0 to 1 across the region. Interpolated between the four values
+    /// around, each channel rounded down (vsapi `IntDataMap2D.GetUnpaddedColorLerped`).
     pub fn at(self: ClimateMap, x: f32, z: f32) Climate {
         const fx = x * @as(f32, @floatFromInt(self.innerSize));
         const fz = z * @as(f32, @floatFromInt(self.innerSize));
@@ -149,11 +147,10 @@ pub const ClimateMap = struct {
     }
 };
 
-/// The tint of a block with colour maps `climate` and `season` at height `y`, where the
-/// climate at ground level is `here` and the sea is at `sea`, `progress` through the year;
-/// white without either map. As the game's shader: the temperature falls and the rainfall
-/// changes with height (vsapi `Climate.GetAdjustedTemperature` and `GetRainFall`); the climate
-/// map gives a colour by them, and the season map's colour is mixed in, more where it's cold.
+/// The tint at height `y`, where `here` is the climate at ground level and `progress` the time
+/// of year. As in the game's shader, temperature falls and rainfall changes with height (vsapi
+/// `Climate.GetAdjustedTemperature` and `GetRainFall`); the climate map gives a colour by them,
+/// and the season map's colour is mixed in, more where it's cold.
 pub fn tint(climate: ?*const ColourMap, season: ?*const ColourMap, here: Climate, y: i32, sea: i32, progress: f32) Rgb {
     const above: f32 = @floatFromInt(y - sea);
     const temperature = std.math.clamp(here.temperature - above / 1.5, 0, 255);

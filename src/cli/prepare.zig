@@ -9,7 +9,6 @@ const args = @import("args");
 pub const gameOption: args.Option = .{ .name = "game", .value = "folder", .description = "The game's install folder, if it isn't in the standard place." };
 pub const dataOption: args.Option = .{ .name = "data", .value = "folder", .description = "The game's data folder, if it isn't in the standard place." };
 
-/// What `storymap prepare` takes.
 pub const spec: args.Spec = .{
     .options = &.{ gameOption, dataOption },
     .positionals = &.{.{ .name = "folder", .optional = true, .description = "The blocks folder: blocks by default." }},
@@ -23,7 +22,6 @@ pub const Folders = struct {
     blocks: []const u8 = Prepared.defaultFolder,
 };
 
-/// Prepares the blocks, even if they were prepared before.
 pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const folders: Folders = .{
         .game = parsed.value("game"),
@@ -34,9 +32,9 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     prepared.deinit();
 }
 
-/// The prepared blocks for the installed game and mods, prepared now if they weren't yet or
-/// `force` is set. Without the game, the newest set prepared before, or else null; `force`
-/// then stops the program.
+/// The blocks for the installed game and mods, prepared now if they weren't yet or `force` is
+/// set. Without the game, the newest set prepared before, or else null; `force` then stops the
+/// program.
 pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Prepared {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -85,8 +83,8 @@ fn noBlocks() ?Prepared {
     return null;
 }
 
-/// The game's assets and mods, from the folders given or else the standard ones. A folder
-/// that can't be read stops the program.
+/// Without `dataPath`, the data folder is looked for in the standard place. A folder that can't
+/// be read stops the program.
 fn openAssets(init: std.process.Init, game: []const u8, dataPath: ?[]const u8) Assets {
     const io = init.io;
     const data = dataPath orelse Assets.findFolder(init.arena.allocator(), io, init.environ_map, .data);
