@@ -14,7 +14,8 @@ const args = @import("args");
 /// What a render takes.
 pub const spec: args.Spec = .{
     .options = &.{
-        .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and colours it: printed (the default), plain, or a theme's folder (docs/themes.md)." },
+        .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
+        .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
         .{ .name = "blocks", .value = "folder", .description = "The blocks folder: blocks by default." },
@@ -49,9 +50,13 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .blocks = parsed.value("blocks") orelse Prepared.defaultFolder,
     };
     const force = parsed.flag("prepare");
+    const style: ?Style.Name = if (parsed.value("style")) |text|
+        Style.parseName(text) orelse console.fail("--style: unknown style {s}. expected: {s}\n", .{ text, styleNames })
+    else
+        null;
 
     var problem: Theme.Problem = .{};
-    const theme = Theme.load(init.arena.allocator(), init.io, themeName, SaveFile.palette, &problem) catch switch (problem.kind) {
+    const theme = Theme.load(init.arena.allocator(), init.io, themeName, SaveFile.palette, style, &problem) catch switch (problem.kind) {
         .unreadable => console.fail("unknown theme {s}: not printed, plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(problem.cause.?) }),
         .stylesheetEndsItsElement => console.fail("{s}/theme.css: contains </style, which would end it early\n", .{themeName}),
         .scriptEndsItsElement => console.fail("{s}/theme.js: contains </script, which would end it early\n", .{themeName}),
@@ -61,8 +66,10 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
             console.fail("{s}/topdown/style.txt:{}: {f}\n", .{ themeName, problem.style.line, problem.style }),
     };
     switch (theme.topdown) {
-        .game => |gameStyle| if (gameStyle) |name| if (std.meta.stringToEnum(SaveFile.MapStyle, name) == null)
-            console.fail("{s}/topdown/style.txt: unknown style game:{s}. expected: {s}\n", .{ themeName, name, gameStyles }),
+        .game => |gameStyle| if (gameStyle) |name| if (std.meta.stringToEnum(SaveFile.MapStyle, name) == null) {
+            if (style != null) console.fail("--style: unknown style game:{s}. expected: {s}\n", .{ name, gameStyles });
+            console.fail("{s}/topdown/style.txt: unknown style game:{s}. expected: {s}\n", .{ themeName, name, gameStyles });
+        },
         else => {},
     }
 
@@ -93,6 +100,10 @@ const gameStyles = names: {
     for (std.meta.fieldNames(SaveFile.MapStyle)) |name| text = text ++ (if (text.len > 0) ", " else "") ++ "game:" ++ name;
     break :names text;
 };
+
+/// Every style a map can be drawn in, for help and messages: "relief, game, game:shaded,
+/// game:coloured".
+const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
 
 /// The save file at `path`, opened for rendering. One that can't be read stops the program
 /// with a message saying why.

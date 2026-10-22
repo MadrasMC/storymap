@@ -72,16 +72,33 @@ pub const Style = union(enum) {
         }
     };
 
+    /// A style's name as written: `relief`, `game` or `game:<name>`.
+    pub const Name = struct {
+        kind: std.meta.Tag(Style),
+        /// For a game style, the name after `game:`, or null for the game's default.
+        game: ?[]const u8 = null,
+    };
+
+    /// The style named `text`, or null if it isn't a style's name.
+    pub fn parseName(text: []const u8) ?Name {
+        if (std.mem.eql(u8, text, "game")) return .{ .kind = .game };
+        if (std.mem.startsWith(u8, text, "game:")) {
+            if (text.len == "game:".len) return null;
+            return .{ .kind = .game, .game = text["game:".len..] };
+        }
+        // A bare `game` is handled above.
+        return .{ .kind = std.meta.stringToEnum(std.meta.Tag(Style), text) orelse return null };
+    }
+
     /// Parses a style file, a Storymap style taking the colours it leaves out from `defaults`,
     /// such as the game's own palette. Without defaults, it must give every colour. The style
-    /// must be named, and each colour may be given once. On an error, `problem` says what's
-    /// wrong.
-    pub fn parse(text: []const u8, defaults: ?world.Palette, problem: *Problem) error{InvalidStyle}!Style {
+    /// must be named, unless `override` names it instead of the file, and each colour may be
+    /// given once. On an error, `problem` says what's wrong.
+    pub fn parse(text: []const u8, defaults: ?world.Palette, override: ?Name, problem: *Problem) error{InvalidStyle}!Style {
         // For the built-in themes' styles, parsed when compiling.
         @setEvalBranchQuota(100_000);
         // What the file gives, null where it leaves something out.
-        var kind: ?std.meta.Tag(Style) = null;
-        var gameName: ?[]const u8 = null;
+        var named: ?Name = null;
         var colours: std.EnumArray(world.MapType, ?Rgb) = .initFill(null);
         var ink: ?Rgb = null;
         var wateredge: ?Rgb = null;
@@ -98,17 +115,8 @@ pub const Style = union(enum) {
             if (words.next() != null) return fail(problem, number, .extraValue, name);
 
             if (std.mem.eql(u8, name, "style")) {
-                if (kind != null) return fail(problem, number, .repeatedStyle, name);
-                if (std.mem.eql(u8, value, "game")) {
-                    kind = .game;
-                } else if (std.mem.startsWith(u8, value, "game:") and value.len > "game:".len) {
-                    kind = .game;
-                    gameName = value["game:".len..];
-                } else {
-                    // A bare `game` is handled above.
-                    kind = std.meta.stringToEnum(std.meta.Tag(Style), value) orelse
-                        return fail(problem, number, .unknownStyle, value);
-                }
+                if (named != null) return fail(problem, number, .repeatedStyle, name);
+                named = parseName(value) orelse return fail(problem, number, .unknownStyle, value);
                 continue;
             }
             const colour = parseColour(value) orelse return fail(problem, number, .invalidColour, name);
@@ -124,8 +132,9 @@ pub const Style = union(enum) {
             slot.* = colour;
         }
 
-        switch (kind orelse return fail(problem, 0, .missingStyle, "")) {
-            .game => return .{ .game = gameName },
+        const style = override orelse named orelse return fail(problem, 0, .missingStyle, "");
+        switch (style.kind) {
+            .game => return .{ .game = style.game },
             .relief => {
                 var palette: world.Palette = .{
                     .colours = undefined,
@@ -157,43 +166,61 @@ pub const Style = union(enum) {
         const defaults: world.Palette = .{ .colours = .initFill(.{ 9, 9, 9 }), .ink = .{ 7, 7, 7 }, .wateredge = .{ 8, 8, 8 } };
         var problem: Problem = .{};
         // What the file leaves out comes from the defaults.
-        const palette = (try parse("# A comment\nstyle relief\nland #010203\nwateredge #FFFFFF\n", defaults, &problem)).relief;
+        const palette = (try parse("# A comment\nstyle relief\nland #010203\nwateredge #FFFFFF\n", defaults, null, &problem)).relief;
         try std.testing.expectEqual(Rgb{ 1, 2, 3 }, palette.colours.get(.land));
         try std.testing.expectEqual(Rgb{ 9, 9, 9 }, palette.colours.get(.desert));
         try std.testing.expectEqual(Rgb{ 7, 7, 7 }, palette.ink);
         try std.testing.expectEqual(Rgb{ 255, 255, 255 }, palette.wateredge);
 
         // The game's own styles, by default or by name; they ignore colours.
-        try std.testing.expectEqual(null, (try parse("style game\n", null, &problem)).game);
-        try std.testing.expectEqualStrings("coloured", (try parse("style game:coloured\n", null, &problem)).game.?);
-        try std.testing.expectEqual(null, (try parse("land #010203\nstyle game\n", null, &problem)).game);
+        try std.testing.expectEqual(null, (try parse("style game\n", null, null, &problem)).game);
+        try std.testing.expectEqualStrings("coloured", (try parse("style game:coloured\n", null, null, &problem)).game.?);
+        try std.testing.expectEqual(null, (try parse("land #010203\nstyle game\n", null, null, &problem)).game);
 
         // Without defaults, every colour must be given.
-        try std.testing.expectError(error.InvalidStyle, parse("style relief\nland #010203\n", null, &problem));
+        try std.testing.expectError(error.InvalidStyle, parse("style relief\nland #010203\n", null, null, &problem));
         try std.testing.expectEqual(0, problem.line);
         try std.testing.expectEqualStrings("ink", problem.name);
 
         const unknown = [_][]const u8{ "style shaded\n", "style game:\n", "style watercolour\n" };
         for (unknown) |text| {
-            try std.testing.expectError(error.InvalidStyle, parse(text, defaults, &problem));
+            try std.testing.expectError(error.InvalidStyle, parse(text, defaults, null, &problem));
             try std.testing.expectEqual(1, problem.line);
         }
-        try std.testing.expectError(error.InvalidStyle, parse("land #000000\n", defaults, &problem));
-        try std.testing.expectError(error.InvalidStyle, parse("style relief\nland #000000\nland #000000\n", defaults, &problem));
+        try std.testing.expectError(error.InvalidStyle, parse("land #000000\n", defaults, null, &problem));
+        try std.testing.expectError(error.InvalidStyle, parse("style relief\nland #000000\nland #000000\n", defaults, null, &problem));
         try std.testing.expectEqual(3, problem.line);
-        try std.testing.expectError(error.InvalidStyle, parse("style relief\nink #000000\nink #000000\n", defaults, &problem));
-        try std.testing.expectError(error.InvalidStyle, parse("style relief\nfield #000000\n", defaults, &problem));
+        try std.testing.expectError(error.InvalidStyle, parse("style relief\nink #000000\nink #000000\n", defaults, null, &problem));
+        try std.testing.expectError(error.InvalidStyle, parse("style relief\nfield #000000\n", defaults, null, &problem));
         try std.testing.expectEqual(2, problem.line);
         try std.testing.expectEqualStrings("field", problem.name);
-        try std.testing.expectError(error.InvalidStyle, parse("style relief\nland AC8858\n", defaults, &problem));
+        try std.testing.expectError(error.InvalidStyle, parse("style relief\nland AC8858\n", defaults, null, &problem));
+    }
+
+    test parseName {
+        try std.testing.expectEqualDeep(Name{ .kind = .relief }, parseName("relief").?);
+        try std.testing.expectEqualDeep(Name{ .kind = .game }, parseName("game").?);
+        try std.testing.expectEqualDeep(Name{ .kind = .game, .game = "coloured" }, parseName("game:coloured").?);
+        for ([_][]const u8{ "game:", "shaded", "Relief" }) |text| try std.testing.expectEqual(null, parseName(text));
+    }
+
+    test "parse with an override" {
+        const defaults: world.Palette = .{ .colours = .initFill(.{ 9, 9, 9 }), .ink = .{ 7, 7, 7 }, .wateredge = .{ 8, 8, 8 } };
+        var problem: Problem = .{};
+        // The file's colours, though its own style ignores them, and the rest from the defaults.
+        const palette = (try parse("style game\nland #010203\n", defaults, .{ .kind = .relief }, &problem)).relief;
+        try std.testing.expectEqual(Rgb{ 1, 2, 3 }, palette.colours.get(.land));
+        try std.testing.expectEqual(Rgb{ 9, 9, 9 }, palette.colours.get(.desert));
+        // A file without a style line.
+        try std.testing.expectEqualStrings("coloured", (try parse("land #010203\n", null, .{ .kind = .game, .game = "coloured" }, &problem)).game.?);
     }
 
     test "Problem.format" {
         var problem: Problem = .{};
         var buffer: [64]u8 = undefined;
-        try std.testing.expectError(error.InvalidStyle, parse("style shaded\n", null, &problem));
+        try std.testing.expectError(error.InvalidStyle, parse("style shaded\n", null, null, &problem));
         try std.testing.expectEqualStrings("unknown style shaded. expected: relief, game, game:<name>", try std.fmt.bufPrint(&buffer, "{f}", .{problem}));
-        try std.testing.expectError(error.InvalidStyle, parse("style relief\nland 010203\n", null, &problem));
+        try std.testing.expectError(error.InvalidStyle, parse("style relief\nland 010203\n", null, null, &problem));
         try std.testing.expectEqualStrings("land isn't a #RRGGBB colour", try std.fmt.bufPrint(&buffer, "{f}", .{problem}));
     }
 };

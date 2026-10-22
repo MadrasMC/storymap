@@ -14,6 +14,12 @@ zig build run -- path/to/save.vcdbs out --theme plain
 - **`plain`** ([`src/theme/plain`](../src/theme/plain)): the map as the game draws its own, filling the window, with its name, the position, a scale and zoom buttons in small panels, light or dark with the reader's setting. It's short on purpose, so it's a good place to start your own.
 - **A folder of your own:** `--theme path/to/my-theme`, holding a `theme.css` and a `theme.js` as described below. Copying `src/theme/plain` is the quickest start.
 
+`--style` draws the map in another style than the theme's, with the theme's colours ([Map style](#map-style)):
+
+```bash
+zig build run -- path/to/save.vcdbs out --style game:coloured
+```
+
 ## Files
 
 A theme is a stylesheet and a script, and the map's colours:
