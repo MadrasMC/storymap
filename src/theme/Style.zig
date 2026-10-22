@@ -13,18 +13,16 @@ const Style = @This();
 const std = @import("std");
 const world = @import("world");
 
-/// How the colours are used.
-pub const Kind = enum {
-    /// A relief map: a type's colour is its colour at sea level; lower ground darkens towards
-    /// `ink` and higher ground pales, slopes are shaded, liquids darken with depth, and
+/// The map drawn, and so how the colours are used.
+pub const Kind = union(enum) {
+    /// Storymap's relief map: a type's colour is its colour at sea level; lower ground darkens
+    /// towards `ink` and higher ground pales, slopes are shaded, liquids darken with depth, and
     /// coastlines are drawn in `wateredge`.
     relief,
-    /// As the game draws its own map: each type's colour as it is, whatever the height, with
-    /// the game's hill shading, and lakes unshaded with an edge in `wateredge`.
-    shaded,
-    /// As the game draws its colour-accurate map: each block in its texture's colour, with
-    /// grain, and the game's hill shading. A block without a texture takes its type's colour.
-    coloured,
+    /// One of the game's own maps, by the name the game gives it, drawn as the game draws it in
+    /// the style's colours: for Vintage Story, `shaded` or `coloured`
+    /// (docs/themes.md#map-colours). Whether the game has a map by that name is up to the game.
+    game: []const u8,
 };
 
 kind: Kind,
@@ -73,7 +71,7 @@ pub fn parse(text: []const u8, defaults: ?world.Palette, problem: *Problem) erro
 
         if (std.mem.eql(u8, name, "style")) {
             if (seenKind) return fail(problem, number, "names the style a second time", name);
-            file.kind = std.meta.stringToEnum(Kind, value) orelse return fail(problem, number, "names a style that isn't relief, shaded or coloured", value);
+            file.kind = if (std.mem.eql(u8, value, "relief")) .relief else .{ .game = value };
             seenKind = true;
             continue;
         }
@@ -122,8 +120,9 @@ test parse {
     var problem: Problem = .{};
     // What the file leaves out comes from the defaults.
     const style = try parse("# A comment\nstyle shaded\nland #010203\nwateredge #FFFFFF\n", defaults, &problem);
-    try std.testing.expectEqual(Kind.shaded, style.kind);
+    try std.testing.expectEqualStrings("shaded", style.kind.game);
     try std.testing.expectEqual(Rgb{ 1, 2, 3 }, style.colours.get(.land));
+    try std.testing.expectEqual(Kind.relief, (try parse("style relief\n", defaults, &problem)).kind);
     try std.testing.expectEqual(Rgb{ 9, 9, 9 }, style.colours.get(.desert));
     try std.testing.expectEqual(Rgb{ 7, 7, 7 }, style.ink);
     try std.testing.expectEqual(Rgb{ 255, 255, 255 }, style.wateredge);
@@ -141,5 +140,4 @@ test parse {
     try std.testing.expectEqual(2, problem.line);
     try std.testing.expectEqualStrings("field", problem.name);
     try std.testing.expectError(error.InvalidStyle, parse("style relief\nland AC8858\n", defaults, &problem));
-    try std.testing.expectError(error.InvalidStyle, parse("style watercolour\n", defaults, &problem));
 }

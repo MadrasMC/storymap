@@ -25,7 +25,7 @@ gameData: GameData,
 tileList: []tiles.Tile,
 /// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else from
 /// what its code says.
-appearances: []world.Appearance,
+appearances: []Appearance,
 /// How many chunk levels the world has: chunks have y 0 to `levels` − 1.
 levels: usize,
 /// The colour maps that tint each block ID, from the prepared blocks (`useBlocks`); none
@@ -180,10 +180,36 @@ pub const Season = enum {
     }
 };
 
-/// How a block ID appears on the map. Anything unknown is land.
-pub fn appearance(self: *const SaveFile, id: i32) world.Appearance {
+/// What a block is on the game's own maps.
+pub const Appearance = struct {
+    mapType: world.MapType,
+    /// Drawn as water by the shaded map: unshaded, with an edge where it meets anything else.
+    /// Water, and ice other than glacier ice.
+    lake: bool = false,
+    /// A thin layer the shaded map looks under, showing the block beneath it instead, as with
+    /// snow.
+    cover: bool = false,
+    /// The average colour of its texture, for the colour-accurate map, or null if it isn't
+    /// known.
+    colour: ?world.Rgb = null,
+    /// Colours from across its texture, for grain: each column shows one of them, mixed in.
+    grain: []const world.Rgb = &.{},
+};
+
+/// How a block ID appears on the game's own maps. Anything unknown is land.
+pub fn appearance(self: *const SaveFile, id: i32) Appearance {
     return if (id >= 0 and id < self.appearances.len) self.appearances[@intCast(id)] else .{ .mapType = .land };
 }
+
+/// What a block ID is on a map. Anything unknown is land.
+pub fn mapType(self: *const SaveFile, id: i32) world.MapType {
+    return self.appearance(id).mapType;
+}
+
+/// The game's own maps, which a theme's style can name.
+pub const Map = MapPainter.Map;
+/// Draws one of them, from what a `Reader` made for it reads.
+pub const MapPainter = @import("MapPainter.zig");
 
 /// Takes each block's appearance from the prepared blocks: its map type is its map colour code
 /// (docs/rendering.md#block-colours), and it's drawn as a lake if it's water, or ice other
@@ -236,8 +262,8 @@ fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
 /// saltwater is `ocean` and lava `lava` (docs/rendering.md#how-the-game-draws-its-own-world-map),
 /// other water `lake`, snow layers `glacier` and looked under, and everything else `land`. A liquid surface that isn't one of those
 /// is drawn as a lake.
-fn appearancesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]world.Appearance {
-    const appearances = try allocator.alloc(world.Appearance, gameData.blockCodes.len);
+fn appearancesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]Appearance {
+    const appearances = try allocator.alloc(Appearance, gameData.blockCodes.len);
     for (appearances, gameData.blockCodes) |*blockAppearance, code| {
         const name = code orelse "";
         blockAppearance.* = if (std.mem.startsWith(u8, name, "saltwater-"))
@@ -259,7 +285,7 @@ test appearancesByCode {
     const gameData: GameData = .{ .arena = undefined, .blockCodes = &codes, .itemCodes = &.{}, .worldHeight = 256 };
     const appearances = try appearancesByCode(std.testing.allocator, gameData);
     defer std.testing.allocator.free(appearances);
-    const expected = [_]world.Appearance{
+    const expected = [_]Appearance{
         .{ .mapType = .land },
         .{ .mapType = .lake, .lake = true },
         .{ .mapType = .ocean, .lake = true },
@@ -268,7 +294,7 @@ test appearancesByCode {
         .{ .mapType = .glacier, .cover = true },
         .{ .mapType = .land },
     };
-    try std.testing.expectEqualSlices(world.Appearance, &expected, appearances);
+    try std.testing.expectEqualSlices(Appearance, &expected, appearances);
 }
 
 /// One thread's connection, decoder and buffers, reused for every tile it reads.
@@ -283,10 +309,21 @@ pub const Reader = struct {
     mapChunk: *MapChunk,
     /// The climate map of the tile's map region, for tints.
     climate: Tint.ClimateMap,
+    /// For the shaded map: the block right under each column's highest solid one, liquid or
+    /// solid, or 0 where it isn't known, which the map shows under a cover such as snow
+    /// (`Appearance.cover`). Indexed as the surface is; empty for other maps.
+    under: []i32,
+    /// For the coloured map: what the game tints each column's highest solid block and highest
+    /// liquid by where they are, such as grass and leaves by climate and season, or white:
+    /// multiplied into their colour. Only for the tile's own columns; empty for other maps.
+    topTint: []world.Rgb,
+    liquidTint: []world.Rgb,
     /// Chunks read: those holding a surface block, in each tile and the ring around it.
     chunksRead: usize = 0,
 
-    pub fn init(save: *const SaveFile, allocator: std.mem.Allocator) !Reader {
+    /// A reader for drawing `map`, one of the game's own maps, or another map without one: it
+    /// reads what that map needs beyond the surface.
+    pub fn init(save: *const SaveFile, allocator: std.mem.Allocator, map: ?Map) !Reader {
         const db = try DB.initImmutable(allocator, save.path);
         errdefer db.deinit();
         const mapChunkRow = try db.prepare("SELECT data FROM mapchunk WHERE position = ?1;");
@@ -303,7 +340,17 @@ pub const Reader = struct {
         errdefer allocator.destroy(chunk);
         chunk.* = .{};
         const mapChunk = try allocator.create(MapChunk);
+        errdefer allocator.destroy(mapChunk);
+        const area = world.Surface.side * world.Surface.side;
+        const under = try allocator.alloc(i32, if (map == .shaded) area else 0);
+        errdefer allocator.free(under);
+        const topTint = try allocator.alloc(world.Rgb, if (map == .coloured) area else 0);
+        errdefer allocator.free(topTint);
+        const liquidTint = try allocator.alloc(world.Rgb, if (map == .coloured) area else 0);
         return .{
+            .under = under,
+            .topTint = topTint,
+            .liquidTint = liquidTint,
             .save = save,
             .db = db,
             .mapChunkRow = mapChunkRow,
@@ -317,6 +364,9 @@ pub const Reader = struct {
     }
 
     pub fn deinit(self: *Reader, allocator: std.mem.Allocator) void {
+        allocator.free(self.liquidTint);
+        allocator.free(self.topTint);
+        allocator.free(self.under);
         allocator.free(self.climate.values);
         allocator.destroy(self.mapChunk);
         allocator.destroy(self.chunk);
@@ -330,6 +380,9 @@ pub const Reader = struct {
     /// Fills `surface` with the tile's block columns and the ring around them, from the save.
     pub fn read(self: *Reader, tile: tiles.Tile, surface: *world.Surface) !void {
         surface.clear();
+        @memset(self.under, 0);
+        @memset(self.topTint, Tint.none);
+        @memset(self.liquidTint, Tint.none);
         // The surface's north-west corner, in blocks, and the chunk column holding it.
         const x0 = @as(i64, tile.x) * tiles.size - 1;
         const z0 = @as(i64, tile.y) * tiles.size - 1;
@@ -341,7 +394,7 @@ pub const Reader = struct {
             if (cx < 0 or cz < 0 or cx > Chunk.Position.maxXZ or cz > Chunk.Position.maxXZ) continue;
             try self.readColumn(surface.*, @intCast(cx), @intCast(cz), x0, z0);
         };
-        if (surface.topTint.len > 0) try self.readTints(tile, surface.*);
+        if (self.topTint.len > 0) try self.readTints(tile, surface.*);
     }
 
     /// Tints the top solid block and the top liquid of each of the tile's own columns by
@@ -368,8 +421,8 @@ pub const Reader = struct {
             const liquid = if (surface.liquidTop[i] != null) save.blockTint(surface.liquidBlock[i]) else BlockTint{};
             if (top.climate == null and top.season == null and liquid.climate == null and liquid.season == null) continue;
             const here = self.climate.at(@as(f32, @floatFromInt(px)) / tiles.size, @as(f32, @floatFromInt(pz)) / tiles.size);
-            if (top.climate != null or top.season != null) surface.topTint[i] = Tint.tint(top.climate, top.season, here, surface.top[i].?, sea, save.seasonProgress);
-            if (liquid.climate != null or liquid.season != null) surface.liquidTint[i] = Tint.tint(liquid.climate, liquid.season, here, surface.liquidTop[i].?, sea, save.seasonProgress);
+            if (top.climate != null or top.season != null) self.topTint[i] = Tint.tint(top.climate, top.season, here, surface.top[i].?, sea, save.seasonProgress);
+            if (liquid.climate != null or liquid.season != null) self.liquidTint[i] = Tint.tint(liquid.climate, liquid.season, here, surface.liquidTop[i].?, sea, save.seasonProgress);
         };
     }
 
@@ -441,7 +494,7 @@ pub const Reader = struct {
             }
             self.chunksRead += 1;
             decodeOrWarn(&self.decoder, self.chunk, position, self.chunkRow.column([]const u8, 0)) catch continue;
-            if (recordChunk(surface, self.chunk, stored, span)) scanFrom = @max(scanFrom orelse level, level);
+            if (recordChunk(surface, self.under, self.chunk, stored, span)) scanFrom = @max(scanFrom orelse level, level);
         }
     }
 };
@@ -449,14 +502,14 @@ pub const Reader = struct {
 /// Records the block columns of `span` in one chunk: from their stored heights where they
 /// have them, by scanning down where they don't. Returns whether a stored height turned out
 /// stale, in which case its column needs the chunks below scanned too.
-fn recordChunk(surface: world.Surface, chunk: *const Chunk, stored: *MapChunk, span: Span) bool {
+fn recordChunk(surface: world.Surface, under: []i32, chunk: *const Chunk, stored: *MapChunk, span: Span) bool {
     var stale = false;
     for (span.z0..span.z1) |z| for (span.x0..span.x1) |x| {
         const index = span.index(x, z);
         const rain = &stored.rainHeight[z * 32 + x];
         if (rain.* != MapChunk.unset) {
             if (rain.* / 32 != chunk.position.y) continue;
-            if (recordStored(surface, chunk, x, rain.* % 32, z, rain.*, stored.terrainHeight[z * 32 + x], index)) continue;
+            if (recordStored(surface, under, chunk, x, rain.* % 32, z, rain.*, stored.terrainHeight[z * 32 + x], index)) continue;
             // The block there is gone: the column has no blocks at all (the game stores 0
             // then), or it changed after its height was stored. Scan it instead.
             rain.* = MapChunk.unset;
@@ -466,8 +519,8 @@ fn recordChunk(surface: world.Surface, chunk: *const Chunk, stored: *MapChunk, s
         // from above, the water shows, and its depth goes down to the ground below them.
         recordTop(&chunk.blocks, &chunk.liquids, chunk.position.y, x, z, &surface.top[index], &surface.topBlock[index]);
         recordTop(&chunk.liquids, null, chunk.position.y, x, z, &surface.liquidTop[index], &surface.liquidBlock[index]);
-        if (surface.top[index]) |top| if (top / 32 == chunk.position.y) {
-            surface.underBlock[index] = blockBelow(chunk, x, top % 32, z);
+        if (under.len > 0) if (surface.top[index]) |top| if (top / 32 == chunk.position.y) {
+            under[index] = blockBelow(chunk, x, top % 32, z);
         };
     };
     return stale;
@@ -486,7 +539,7 @@ fn blockBelow(chunk: *const Chunk, x: usize, y: usize, z: usize) i32 {
 /// Records a column from its stored heights: the block at the rain height, in the chunk that
 /// holds it. Rain stops at water, so a liquid there is the water surface, and the terrain
 /// height is its bed. Returns false, recording nothing, if there's no block there.
-fn recordStored(surface: world.Surface, chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, index: usize) bool {
+fn recordStored(surface: world.Surface, under: []i32, chunk: *const Chunk, x: usize, y: usize, z: usize, rain: u16, terrain: u16, index: usize) bool {
     const block = (y * 32 + z) * 32 + x;
     const liquidId = if (chunk.liquids.bits == 0) 0 else chunk.liquids.get(block);
     const solid = if (chunk.blocks.bits == 0) 0 else chunk.blocks.get(block);
@@ -500,7 +553,7 @@ fn recordStored(surface: world.Surface, chunk: *const Chunk, x: usize, y: usize,
     } else {
         surface.top[index] = rain;
         surface.topBlock[index] = solid;
-        surface.underBlock[index] = blockBelow(chunk, x, y, z);
+        if (under.len > 0) under[index] = blockBelow(chunk, x, y, z);
         // Liquid under the top block, such as a lake under a tree's leaves: the highest
         // liquid in the column, though the solid block above it is what shows. It can only
         // be above the terrain height, the ground before trees and plants grew, which for

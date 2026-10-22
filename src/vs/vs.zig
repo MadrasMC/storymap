@@ -16,6 +16,7 @@ pub const TextureColours = @import("TextureColours.zig");
 pub const Tint = @import("Tint.zig");
 pub const TreeAttribute = @import("TreeAttribute.zig");
 pub const Wildcard = @import("Wildcard.zig");
+pub const MapPainter = @import("MapPainter.zig");
 
 test {
     std.testing.refAllDecls(@This());

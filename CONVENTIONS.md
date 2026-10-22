@@ -21,7 +21,7 @@ Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a r
 
 ## Keeping the game apart
 
-Everything that knows Vintage Story, its save format, its assets and its block names, lives in `vs`. The renderers, the tile pipeline, the viewer and `world` don't import it: a game's reader tells them what they need to know about its world (`world`): what's on top of each block column, how each block appears on a map, and the world's name and heights. They draw from that alone, so another game could be read the same way. Only the commands in `cli`, which put the program together, import both.
+Everything that knows Vintage Story, its save format, its assets and its block names, lives in `vs`. The renderers, the tile pipeline, the viewer and `world` don't import it: a game's reader tells them what they need to know about its world (`world`): what's on top of each block column, what each block is on a map, and the world's name and heights. They draw from that alone, so another game could be read the same way. How a game draws its own maps is knowledge about the game too, so the game's reader draws those (`vs/MapPainter.zig`), and the renderer only draws Storymap's own relief map. Only the commands in `cli`, which put the program together, import both.
 
 ## Libraries
 

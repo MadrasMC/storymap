@@ -126,7 +126,10 @@ const Result = struct {
     /// The build mode, as Zig names it, e.g. "fast" for -Doptimize=ReleaseFast.
     build: []const u8,
     /// The style drawn: always the default theme's, as there are no prepared blocks here.
-    style: []const u8 = @tagName(style.kind),
+    style: []const u8 = switch (style.kind) {
+        .relief => "relief",
+        .game => |name| name,
+    },
     threads: usize,
     /// Renders timed, after one untimed; every time is the median.
     runs: usize,

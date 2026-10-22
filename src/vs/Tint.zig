@@ -9,6 +9,9 @@ const stb = @import("stb_image");
 
 const Rgb = world.Rgb;
 
+/// No tint: white, which leaves a colour as it is.
+pub const none: Rgb = .{ 255, 255, 255 };
+
 /// One of the game's colour maps (`config/colormaps.json`): an image a block's colour is
 /// multiplied by.
 pub const ColourMap = struct {

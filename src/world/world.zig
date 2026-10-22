@@ -1,5 +1,5 @@
 //! What a game tells the renderers and the viewer about its world, the same for every game:
-//! for a tile's block columns, what's on top of each one, how each block appears on a map, and
+//! for a tile's block columns, what's on top of each one, what each block is on a map, and
 //! what the world is called. A game's reader (`vs` for Vintage Story) fills these in from its
 //! save files; the renderers and the viewer know nothing of any save format.
 const std = @import("std");
@@ -25,22 +25,6 @@ pub const MapType = enum {
     pub fn isLiquid(self: MapType) bool {
         return self == .lake or self == .ocean or self == .lava;
     }
-};
-
-/// What the map needs to know about a block.
-pub const Appearance = struct {
-    mapType: MapType,
-    /// Drawn as water by a shaded map: unshaded, with an edge where it meets anything else. In
-    /// Vintage Story, water and ice other than glacier ice.
-    lake: bool = false,
-    /// A thin layer a shaded map looks under, showing the block beneath it instead, as the
-    /// game's map does with snow.
-    cover: bool = false,
-    /// The average colour of its texture, for a map coloured by what blocks look like, or
-    /// null if the game's reader doesn't know it.
-    colour: ?Rgb = null,
-    /// Colours from across its texture, for grain: each column shows one of them, mixed in.
-    grain: []const Rgb = &.{},
 };
 
 /// A colour, red, green and blue.
@@ -96,21 +80,8 @@ pub const Surface = struct {
     /// block, such as a lake under a tree's leaves, is here too, though the solid block shows.
     liquidTop: []?u16,
     liquidBlock: []i32,
-    /// The block right under the highest solid one, liquid or solid, or 0 where it isn't
-    /// known: what a shaded map shows under a cover such as snow (`Appearance.cover`).
-    underBlock: []i32,
-    /// What the game tints the highest solid block's colour and the highest liquid's by where
-    /// they are, such as grass and leaves by climate and season, or white: multiplied into
-    /// their colour. Only for the tile's own columns, and empty unless asked for (`init`).
-    topTint: []Rgb = &.{},
-    liquidTint: []Rgb = &.{},
 
-    pub const Options = struct {
-        /// Whether the game's reader fills in `topTint` and `liquidTint`.
-        tints: bool = false,
-    };
-
-    pub fn init(allocator: std.mem.Allocator, options: Options) !Surface {
+    pub fn init(allocator: std.mem.Allocator) !Surface {
         const top = try allocator.alloc(?u16, side * side);
         errdefer allocator.free(top);
         const topBlock = try allocator.alloc(i32, side * side);
@@ -118,13 +89,7 @@ pub const Surface = struct {
         const liquidTop = try allocator.alloc(?u16, side * side);
         errdefer allocator.free(liquidTop);
         const liquidBlock = try allocator.alloc(i32, side * side);
-        errdefer allocator.free(liquidBlock);
-        const underBlock = try allocator.alloc(i32, side * side);
-        errdefer allocator.free(underBlock);
-        const topTint = try allocator.alloc(Rgb, if (options.tints) side * side else 0);
-        errdefer allocator.free(topTint);
-        const liquidTint = try allocator.alloc(Rgb, if (options.tints) side * side else 0);
-        return .{ .top = top, .topBlock = topBlock, .liquidTop = liquidTop, .liquidBlock = liquidBlock, .underBlock = underBlock, .topTint = topTint, .liquidTint = liquidTint };
+        return .{ .top = top, .topBlock = topBlock, .liquidTop = liquidTop, .liquidBlock = liquidBlock };
     }
 
     pub fn deinit(self: Surface, allocator: std.mem.Allocator) void {
@@ -132,9 +97,6 @@ pub const Surface = struct {
         allocator.free(self.topBlock);
         allocator.free(self.liquidTop);
         allocator.free(self.liquidBlock);
-        allocator.free(self.underBlock);
-        allocator.free(self.topTint);
-        allocator.free(self.liquidTint);
     }
 
     pub fn clear(self: Surface) void {
@@ -142,11 +104,47 @@ pub const Surface = struct {
         @memset(self.topBlock, 0);
         @memset(self.liquidTop, null);
         @memset(self.liquidBlock, 0);
-        @memset(self.underBlock, 0);
-        @memset(self.topTint, white);
-        @memset(self.liquidTint, white);
+    }
+
+    /// What column `i` shows from above.
+    pub fn columnTop(self: Surface, i: usize) ColumnTop {
+        return .of(self.top[i], self.liquidTop[i]);
+    }
+
+    /// The block column `i` shows from above: its liquid, or else its highest solid block.
+    pub fn shownBlock(self: Surface, i: usize) i32 {
+        return if (self.columnTop(i) == .liquid) self.liquidBlock[i] else self.topBlock[i];
     }
 };
 
-/// No tint.
-pub const white: Rgb = .{ 255, 255, 255 };
+/// What a column shows from above, and at what height.
+pub const ColumnTop = union(enum) {
+    /// No blocks at all, as far as the save goes.
+    none,
+    land: u16,
+    /// Liquid at or above the highest solid block. Plants growing in water share their
+    /// block with it, so the water still shows.
+    liquid: u16,
+
+    pub fn of(top: ?u16, liquidTop: ?u16) ColumnTop {
+        const liquid = liquidTop orelse return if (top) |y| .{ .land = y } else .none;
+        const land = top orelse return .{ .liquid = liquid };
+        return if (liquid >= land) .{ .liquid = liquid } else .{ .land = land };
+    }
+
+    pub fn height(self: ColumnTop) ?u16 {
+        return switch (self) {
+            .none => null,
+            .land, .liquid => |y| y,
+        };
+    }
+};
+
+test ColumnTop {
+    try std.testing.expectEqual(ColumnTop.none, ColumnTop.of(null, null));
+    try std.testing.expectEqual(ColumnTop{ .land = 90 }, ColumnTop.of(90, null));
+    try std.testing.expectEqual(ColumnTop{ .liquid = 109 }, ColumnTop.of(90, 109));
+    try std.testing.expectEqual(ColumnTop{ .liquid = 109 }, ColumnTop.of(109, 109)); // seaweed
+    try std.testing.expectEqual(ColumnTop{ .land = 120 }, ColumnTop.of(120, 12)); // water in a cave
+    try std.testing.expectEqual(ColumnTop{ .liquid = 109 }, ColumnTop.of(null, 109));
+}

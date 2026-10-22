@@ -60,6 +60,11 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         else
             console.fail("the theme {s}'s topdown/style.txt, line {}: {s} {s}\n", .{ themeName, problem.style.line, problem.style.name, problem.style.message }),
     };
+    switch (theme.topdown.kind) {
+        .relief => {},
+        .game => |name| if (std.meta.stringToEnum(SaveFile.Map, name) == null)
+            console.fail("the theme {s}'s topdown/style.txt names a style that isn't {s}: {s}\n", .{ themeName, styleNames, name }),
+    }
 
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err|
         console.fail("can't create {s} ({s})\n", .{ outPath, @errorName(err) });
@@ -81,6 +86,14 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
     try viewer.write(allocator, init.io, out, save.describe(), now, &views, theme);
 }
+
+/// The styles a theme can name, for a message: relief, and the game's own maps.
+const styleNames = names: {
+    const maps = std.meta.fieldNames(SaveFile.Map);
+    var text: []const u8 = "relief";
+    for (maps, 0..) |name, i| text = text ++ (if (i == maps.len - 1) " or " else ", ") ++ name;
+    break :names text;
+};
 
 /// The save file at `path`, opened for rendering. One that can't be read stops the program
 /// with a message saying why.
@@ -111,8 +124,8 @@ fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, sa
 test "the plain theme's colours are the game's" {
     var problem: Style.Problem = .{};
     const style = Theme.plain.topdown;
-    try std.testing.expectEqual(.shaded, style.kind);
+    try std.testing.expectEqualStrings("shaded", style.kind.game);
     try std.testing.expectEqual(SaveFile.palette.colours, style.colours);
     try std.testing.expectEqual(SaveFile.palette.wateredge, style.wateredge);
-    try std.testing.expectEqual(style, try Style.parse("style shaded\n", SaveFile.palette, &problem));
+    try std.testing.expectEqualDeep(style, try Style.parse("style shaded\n", SaveFile.palette, &problem));
 }
