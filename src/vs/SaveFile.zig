@@ -130,8 +130,8 @@ pub fn blockName(self: *const SaveFile, id: i32) ?[]const u8 {
     return self.gameData.blockCode(id);
 }
 
-/// The game's own map colours (vsessentialsmod `ChunkMapLayer`): the game's own styles' colours,
-/// and those a theme's style leaves out. Its edges are in the same ink as the rest of its lines.
+/// The game's own map colours (vsessentialsmod `ChunkMapLayer`), which its own styles are drawn
+/// in. Its edges are in the same ink as the rest of its lines.
 pub const palette: world.Palette = .{
     .colours = .init(.{
         .land = .{ 0xAC, 0x88, 0x58 },

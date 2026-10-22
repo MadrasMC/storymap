@@ -56,7 +56,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         null;
 
     var problem: Theme.Problem = .{};
-    const theme = Theme.load(init.arena.allocator(), init.io, themeName, SaveFile.palette, style, &problem) catch switch (problem.kind) {
+    const theme = Theme.load(init.arena.allocator(), init.io, themeName, style, &problem) catch switch (problem.kind) {
         .unreadable => console.fail("unknown theme {s}: not printed, plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(problem.cause.?) }),
         .stylesheetEndsItsElement => console.fail("{s}/theme.css: contains </style, which would end it early\n", .{themeName}),
         .scriptEndsItsElement => console.fail("{s}/theme.js: contains </script, which would end it early\n", .{themeName}),

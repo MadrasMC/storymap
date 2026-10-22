@@ -2,8 +2,8 @@ const std = @import("std");
 const world = @import("world");
 
 /// How a theme draws the top-down map: `topdown/style.txt` in the theme's folder
-/// (docs/themes.md#map-style). The style's name, then, for Storymap's own styles, a colour for
-/// each map type and for the two inks, one per line; colours left out are the game's own:
+/// (docs/themes.md#map-style). The style's name, then a colour for each map type and for the
+/// two inks, one per line:
 ///
 ///     # Comments start with #.
 ///     style relief
@@ -11,17 +11,13 @@ const world = @import("world");
 ///     …
 ///     ink        #4A301A
 ///     wateredge  #5C462E
-///
-/// A game's own style, `game` or `game:<name>`, takes the game's own colours, and ignores any the
-/// file gives.
 pub const Style = union(enum) {
     /// Storymap's relief map, in these colours: a type's colour is its colour at sea level;
     /// lower ground darkens towards `ink` and higher ground pales, slopes are shaded, liquids
     /// darken with depth, and coastlines are drawn in `wateredge`.
     relief: world.Palette,
-    /// One of the game's own styles, drawn as the game draws its map, in the game's colours:
-    /// `game` for the game's default, null here, or `game:<name>` for one by name, which the game
-    /// may not have.
+    /// One of the game's own styles, in the game's colours: the name after `game:`, or null for
+    /// `game`, the game's default.
     game: ?[]const u8,
 
     pub const Rgb = world.Rgb;
@@ -90,10 +86,8 @@ pub const Style = union(enum) {
         return .{ .kind = std.meta.stringToEnum(std.meta.Tag(Style), text) orelse return null };
     }
 
-    /// Parses a style file, a Storymap style taking the colours it leaves out from `defaults`,
-    /// such as the game's own palette. Without defaults, it must give every colour. The style
-    /// must be named, unless `override` names it instead of the file, and each colour may be
-    /// given once. On an error, `problem` says what's wrong.
+    /// Parses a style file. Colours it leaves out come from `defaults`; without them, it must give
+    /// every colour. `override` replaces the file's style.
     pub fn parse(text: []const u8, defaults: ?world.Palette, override: ?Name, problem: *Problem) error{InvalidStyle}!Style {
         // For the built-in themes' styles, parsed when compiling.
         @setEvalBranchQuota(100_000);

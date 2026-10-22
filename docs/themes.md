@@ -117,8 +117,8 @@ style game
 
 - **The styles** are Storymap's own, `relief`, and the game's own, `game` for the game's default or `game:<name>` for one by name. A Storymap style takes the theme's colours; the game's styles take the game's own, and ignore any the file gives. A style that isn't one of these, or one the game doesn't have, stops the render with a message listing the ones there are.
 - **`style relief`** draws a relief map. A type's colour is its colour at sea level: lower ground darkens towards `ink`, reaching it at the lowest, and higher ground pales towards white. Slopes facing the north-west are lit, the others shaded. Liquids darken with depth, and `wateredge` outlines water where it meets land.
-- **The types** are the game's own map types, which every block has, from its map colour code ([rendering.md](rendering.md#block-colours)): ground (`land`, `desert` for sand and gravel, `forest` for wood and leaves, `plant`, `settlement` for most building blocks, `road`, `devastation`, `glacier` for snow and ice) and liquids (`lake` for water, `ocean` for saltwater, `lava`).
-- **Only `style` is needed.** A colour left out is the game's own, so a style can give just the colours it changes. A colour is `#RRGGBB`, given once; a repeated or unknown entry stops the render with a message saying which, on which line.
+- **The types** are Storymap's map types, which the game's reader sorts each block into, for Vintage Story by its map colour code ([rendering.md](rendering.md#block-colours)): ground (`land`, `desert` for sand and gravel, `forest` for wood and leaves, `plant`, `settlement` for most building blocks, `road`, `devastation`, `glacier` for snow and ice) and liquids (`lake` for water, `ocean` for saltwater, `lava`).
+- **Only `style` is needed.** A colour left out is the Printed theme's, so a style can give just the colours it changes. A colour is `#RRGGBB`, given once; a repeated or unknown entry stops the render with a message saying which, on which line.
 
 ### Vintage Story's styles
 

@@ -5,9 +5,10 @@
 const std = @import("std");
 const tiles = @import("tiles");
 
-/// What a block is on a map, which picks its colour from a theme's style
-/// (docs/themes.md#map-style). The names are Vintage Story's map colour codes; a game's
-/// reader says which each of its blocks is. Seas are `ocean`; lakes, rivers and springs `lake`.
+/// What a block is on Storymap's maps, which picks its colour from a theme's style
+/// (docs/themes.md#map-style). Each game's reader sorts its blocks into these. The names are
+/// borrowed from Vintage Story's map colour codes, but the types are Storymap's. Seas are
+/// `ocean`; lakes, rivers and springs `lake`.
 pub const MapType = enum {
     land,
     desert,
@@ -30,8 +31,8 @@ pub const MapType = enum {
 /// A colour, red, green and blue.
 pub const Rgb = [3]u8;
 
-/// How a game colours its own map, which a theme's style starts from: a colour for each map
-/// type, and the ink for water's edges and low ground.
+/// A colour for each map type, and the inks for water's edges and low ground: a theme's colours
+/// for Storymap's styles, or a game's own for its maps.
 pub const Palette = struct {
     colours: std.EnumArray(MapType, Rgb),
     ink: Rgb,

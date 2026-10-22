@@ -40,8 +40,12 @@ pub const builtIn = [_]struct { name: []const u8, theme: Theme, style: []const u
     .{ .name = "plain", .theme = plain, .style = plainStyle },
 };
 
-/// A built-in theme's style, parsed when compiling. A Storymap style gives every colour, so it
-/// doesn't depend on any game's.
+/// The colours Storymap's own styles use for those a theme's style leaves out: the Printed
+/// theme's, which gives every colour.
+pub const defaultColours: world.Palette = printed.topdown.relief;
+
+/// A built-in theme's style, parsed when compiling, without defaults: a built-in Storymap style
+/// gives every colour.
 fn builtInStyle(comptime name: []const u8, comptime text: []const u8) Style {
     comptime {
         var problem: Style.Problem = .{};
@@ -71,19 +75,19 @@ pub const Problem = struct {
 
 /// The built-in theme called `name`, or else the theme in the folder at that path: its
 /// `theme.css`, `theme.js` and `topdown/style.txt`, read with `arena` and kept for the render.
-/// The colours its style leaves out come from `defaults`, such as the game's own palette, and a
-/// folder without `topdown/style.txt` draws the map as the Printed theme does. `style`, if
-/// given, replaces the style its file names. If it can't be loaded, returns
-/// error.InvalidTheme and `problem` says why.
-pub fn load(arena: std.mem.Allocator, io: Io, name: []const u8, defaults: ?world.Palette, style: ?Style.Name, problem: *Problem) error{InvalidTheme}!Theme {
+/// The colours its style leaves out are `defaultColours`, and a folder without
+/// `topdown/style.txt` draws the map as the Printed theme does. `style`, if given, replaces the
+/// style its file names. If it can't be loaded, returns error.InvalidTheme and `problem` says
+/// why.
+pub fn load(arena: std.mem.Allocator, io: Io, name: []const u8, style: ?Style.Name, problem: *Problem) error{InvalidTheme}!Theme {
     for (builtIn) |entry| {
         if (!std.mem.eql(u8, entry.name, name)) continue;
         if (style == null) return entry.theme;
         var theme = entry.theme;
-        theme.topdown = Style.parse(entry.style, defaults, style, &problem.style) catch return fail(problem, .invalidStyle);
+        theme.topdown = Style.parse(entry.style, defaultColours, style, &problem.style) catch return fail(problem, .invalidStyle);
         return theme;
     }
-    return loadFolder(arena, io, name, defaults, style, problem) catch |err| switch (err) {
+    return loadFolder(arena, io, name, style, problem) catch |err| switch (err) {
         error.InvalidTheme => return error.InvalidTheme,
         else => {
             problem.* = .{ .kind = .unreadable, .cause = err };
@@ -92,7 +96,7 @@ pub fn load(arena: std.mem.Allocator, io: Io, name: []const u8, defaults: ?world
     };
 }
 
-fn loadFolder(arena: std.mem.Allocator, io: Io, path: []const u8, defaults: ?world.Palette, style: ?Style.Name, problem: *Problem) !Theme {
+fn loadFolder(arena: std.mem.Allocator, io: Io, path: []const u8, style: ?Style.Name, problem: *Problem) !Theme {
     var folder = try Io.Dir.cwd().openDir(io, path, .{});
     defer folder.close(io);
     const stylesheet = try folder.readFileAlloc(io, "theme.css", arena, .limited(16 << 20));
@@ -105,7 +109,7 @@ fn loadFolder(arena: std.mem.Allocator, io: Io, path: []const u8, defaults: ?wor
         error.FileNotFound => printedStyle,
         else => return err,
     };
-    const topdown = Style.parse(text, defaults, style, &problem.style) catch return fail(problem, .invalidStyle);
+    const topdown = Style.parse(text, defaultColours, style, &problem.style) catch return fail(problem, .invalidStyle);
     return .{ .stylesheet = stylesheet, .script = script, .topdown = topdown };
 }
 
