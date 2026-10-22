@@ -1,7 +1,7 @@
-//! Paints one of the game's own maps (`Map`) for a tile, from what a reader read for it, as
-//! vsessentialsmod's `ChunkMapLayer.GenerateChunkImage` draws it, in the colours of a theme's
-//! style (docs/rendering.md#how-the-game-draws-its-own-world-map). Each thread drawing the map
-//! keeps one, with its shading.
+//! Paints the game's map for a tile in one of the game's own styles (`MapStyle`), from what a
+//! reader read for it, as vsessentialsmod's `ChunkMapLayer.GenerateChunkImage` draws it, in the
+//! game's own colours (docs/rendering.md#how-the-game-draws-its-own-world-map). Each thread
+//! drawing the map keeps one, with its shading.
 const MapPainter = @This();
 
 const std = @import("std");
@@ -12,14 +12,14 @@ const Tint = @import("Tint.zig");
 
 const Rgb = world.Rgb;
 
-map: Map,
+style: MapStyle,
 save: *const SaveFile,
 /// The shading, a byte per pixel as the game keeps it, and a copy of it before blurring.
 shade: []u8,
 unblurred: []u8,
 
-/// The game's maps.
-pub const Map = enum {
+/// The game's own map styles, by the names a theme gives them after `game:`.
+pub const MapStyle = enum {
     /// The world map: each column in its map type's colour, hill-shaded; lakes unshaded and
     /// edged in `wateredge`, and snow looked under.
     shaded,
@@ -27,14 +27,17 @@ pub const Map = enum {
     /// in its top block's texture colour, with grain, tinted by climate and season, and
     /// hill-shaded.
     coloured,
+
+    /// What `game` alone means: the world map as players see it by default.
+    pub const default: MapStyle = .shaded;
 };
 
-/// For drawing `map` of `save`'s world.
-pub fn init(save: *const SaveFile, allocator: std.mem.Allocator, map: Map) !MapPainter {
+/// For drawing `save`'s world in `style`.
+pub fn init(save: *const SaveFile, allocator: std.mem.Allocator, style: MapStyle) !MapPainter {
     const shade = try allocator.alloc(u8, tiles.size * tiles.size);
     errdefer allocator.free(shade);
     const unblurred = try allocator.alloc(u8, tiles.size * tiles.size);
-    return .{ .map = map, .save = save, .shade = shade, .unblurred = unblurred };
+    return .{ .style = style, .save = save, .shade = shade, .unblurred = unblurred };
 }
 
 pub fn deinit(self: MapPainter, allocator: std.mem.Allocator) void {
@@ -42,11 +45,11 @@ pub fn deinit(self: MapPainter, allocator: std.mem.Allocator) void {
     allocator.free(self.shade);
 }
 
-/// Draws the map of the tile `reader` just read, `surface`, into `pixels`, in `palette`, the
-/// theme's colours. The reader must have been made for this map. Columns without blocks are
-/// transparent.
-pub fn draw(self: *MapPainter, reader: *const SaveFile.Reader, tile: tiles.Tile, surface: *const world.Surface, palette: *const world.Palette, pixels: *tiles.Pixels) void {
-    switch (self.map) {
+/// Paints the map of the tile `reader` just read, `surface`, into `pixels`. The reader must have
+/// been made for this style. Columns without blocks are transparent.
+pub fn paint(self: *MapPainter, reader: *const SaveFile.Reader, tile: tiles.Tile, surface: *const world.Surface, pixels: *tiles.Pixels) void {
+    const palette = &SaveFile.palette;
+    switch (self.style) {
         .shaded => self.paintShaded(reader, surface, palette, pixels),
         .coloured => self.paintColoured(reader, tile, surface, palette, pixels),
     }

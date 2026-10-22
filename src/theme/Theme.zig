@@ -5,7 +5,7 @@ const Theme = @This();
 
 const std = @import("std");
 const Io = std.Io;
-pub const Style = @import("Style.zig");
+pub const Style = @import("style.zig").Style;
 const world = @import("world");
 
 /// `theme.css`.
@@ -37,13 +37,13 @@ pub const builtIn = [_]struct { name: []const u8, theme: Theme }{
     .{ .name = "plain", .theme = plain },
 };
 
-/// A built-in theme's style, parsed when compiling. It gives every colour, so it doesn't depend
-/// on any game.
+/// A built-in theme's style, parsed when compiling. A Storymap style gives every colour, so it
+/// doesn't depend on any game's.
 fn builtInStyle(comptime name: []const u8, comptime text: []const u8) Style {
     comptime {
         var problem: Style.Problem = .{};
         return Style.parse(text, null, &problem) catch
-            @compileError("the " ++ name ++ " theme's topdown/style.txt " ++ problem.message ++ " " ++ problem.name);
+            @compileError(std.fmt.comptimePrint("{s}/topdown/style.txt:{}: {f}", .{ name, problem.line, problem }));
     }
 }
 

@@ -6,7 +6,7 @@ const std = @import("std");
 const tiles = @import("tiles");
 
 /// What a block is on a map, which picks its colour from a theme's style
-/// (docs/themes.md#map-colours). The names are Vintage Story's map colour codes; a game's
+/// (docs/themes.md#map-style). The names are Vintage Story's map colour codes; a game's
 /// reader says which each of its blocks is. Seas are `ocean`; lakes, rivers and springs `lake`.
 pub const MapType = enum {
     land,

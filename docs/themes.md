@@ -1,6 +1,6 @@
 # Themes
 
-The map viewer is two parts. The map itself, in [`src/viewer/viewer.html`](../src/viewer/viewer.html), is the same for everyone: the tiles, panning and zooming, the zoom steps, and the place kept in the page's address. A **theme** draws everything around it: where the map sits on the page, a title, the position and scale, zoom controls, a grid, and what to show when there's no map. Storymap inlines the theme into `index.html` when it renders, so the page still opens straight from the disk. A theme also says how the map itself is coloured ([Map colours](#map-colours)).
+The map viewer is two parts. The map itself, in [`src/viewer/viewer.html`](../src/viewer/viewer.html), is the same for everyone: the tiles, panning and zooming, the zoom steps, and the place kept in the page's address. A **theme** draws everything around it: where the map sits on the page, a title, the position and scale, zoom controls, a grid, and what to show when there's no map. Storymap inlines the theme into `index.html` when it renders, so the page still opens straight from the disk. A theme also says how the map itself is drawn ([Map style](#map-style)).
 
 ## Choosing a theme
 
@@ -11,7 +11,7 @@ zig build run -- path/to/save.vcdbs out --theme plain
 ```
 
 - **`printed`** (the default, [`src/theme/printed`](../src/theme/printed)): the map as a printed sheet, with a neatline, a grid labelled in the margin, a title cartouche, a scale bar and a key of hills for zooming.
-- **`plain`** ([`src/theme/plain`](../src/theme/plain)): the map filling the window, with its name, the position, a scale and zoom buttons in small panels, light or dark with the reader's setting. It's short on purpose, so it's a good place to start your own.
+- **`plain`** ([`src/theme/plain`](../src/theme/plain)): the map as the game draws its own, filling the window, with its name, the position, a scale and zoom buttons in small panels, light or dark with the reader's setting. It's short on purpose, so it's a good place to start your own.
 - **A folder of your own:** `--theme path/to/my-theme`, holding a `theme.css` and a `theme.js` as described below. Copying `src/theme/plain` is the quickest start.
 
 ## Files
@@ -20,7 +20,7 @@ A theme is a stylesheet and a script, and the map's colours:
 
 - **`theme.css`** styles the page, and places the map: the page puts `#map` over the whole window (`position: fixed; inset: 0`), and the theme moves or frames it, e.g. `#map { inset: 2rem; border: 1px solid; }`. The map's size is measured from there, so a theme's stylesheet decides how much of the window the map gets.
 - **`theme.js`** builds everything the theme draws and keeps it up to date, as below.
-- **`topdown/style.txt`** colours the map when it's rendered ([Map colours](#map-colours)). A theme without one colours its map as the Printed theme does.
+- **`topdown/style.txt`** says how the map is drawn when it's rendered ([Map style](#map-style)). A theme without one draws its map as the Printed theme does.
 
 The stylesheet and script are inlined, so the stylesheet can't contain `</style` and the script can't contain `</script`. Anything they load has to come with them, for the same reason a page opened from the disk can't fetch files beside it: fonts and images go in as `data:` URLs.
 
@@ -81,9 +81,9 @@ Positions are as the game shows them, from its origin: in Vintage Story, the wor
 
 Called instead of `update` when there's no map to show: the page has no map data, the view is one this viewer can't draw, the world has nothing generated yet, or no tile loads. The message says which, in a sentence; the map has stopped, and `map.zoomIn()` and the rest do nothing.
 
-## Map colours
+## Map style
 
-`topdown/style.txt` says how the top-down map is coloured when it's rendered: a drawing style, then a colour for every type of block on the map, and for two inks. One entry per line; a line starting with `#` is a comment. The Printed theme's:
+`topdown/style.txt` says how the top-down map is drawn when it's rendered: a style, then, for Storymap's own styles, a colour for every type of block on the map, and for two inks. One entry per line; a line starting with `#` is a comment. The Printed theme's:
 
 ```
 style relief
@@ -103,9 +103,18 @@ ink         #4A301A
 wateredge   #5C462E
 ```
 
-- **The types** are the game's own map types, which every block has, from its map colour code ([rendering.md](rendering.md#block-colours)): ground (`land`, `desert` for sand and gravel, `forest` for wood and leaves, `plant`, `settlement` for most building blocks, `road`, `devastation`, `glacier` for snow and ice) and liquids (`lake` for water, `ocean` for saltwater, `lava`).
-- **The styles** are `relief`, Storymap's own map, and the game's own maps, drawn as the game draws them: for Vintage Story, `shaded` and `coloured`. A style the game doesn't have stops the render with a message listing the ones it does.
+The plain theme's, which draws the map as the game draws its own:
+
+```
+style game
+```
+
+- **The styles** are Storymap's own, `relief`, and the game's own, `game` for the game's default or `game:<name>` for one by name. A Storymap style takes the theme's colours; the game's styles take the game's own, and ignore any the file gives. A style that isn't one of these, or one the game doesn't have, stops the render with a message listing the ones there are.
 - **`style relief`** draws a relief map. A type's colour is its colour at sea level: lower ground darkens towards `ink`, reaching it at the lowest, and higher ground pales towards white. Slopes facing the north-west are lit, the others shaded. Liquids darken with depth, and `wateredge` outlines water where it meets land.
-- **`style shaded`** draws the map as the game draws its own: each type's colour as it is, at any height, lit or shaded by the game's own hill shading. It looks under snow at what's beneath, and lakes aren't shaded but edged in `wateredge` where they meet anything else. `ink` isn't used. The plain theme uses it with the game's own colours.
-- **`style coloured`** draws the map as the game draws its colour-accurate one: each block in the colour of its texture, with a grain of colours from across it, and the same hill shading on everything, water included. Nothing is looked under, and there are no edges. The colours are only for blocks without a texture. Grass, leaves and water are tinted by the climate where they are and by the season on the save's date, or the one `--season` gives: `spring`, `summer`, `fall` or `winter` ([rendering.md](rendering.md#climate-and-season-tint)).
-- **Only `style` is needed.** A colour left out is the game's own, as in the plain theme's file, so a style can give just the colours it changes. A colour is `#RRGGBB`, given once; a repeated or unknown entry stops the render with a message saying which, on which line.
+- **The types** are the game's own map types, which every block has, from its map colour code ([rendering.md](rendering.md#block-colours)): ground (`land`, `desert` for sand and gravel, `forest` for wood and leaves, `plant`, `settlement` for most building blocks, `road`, `devastation`, `glacier` for snow and ice) and liquids (`lake` for water, `ocean` for saltwater, `lava`).
+- **Only `style` is needed.** A colour left out is the game's own, so a style can give just the colours it changes. A colour is `#RRGGBB`, given once; a repeated or unknown entry stops the render with a message saying which, on which line.
+
+### Vintage Story's styles
+
+- **`style game:shaded`**, or `style game`, draws the map as the game draws its own world map: each type's colour as it is, at any height, lit or shaded by the game's own hill shading. It looks under snow at what's beneath, and lakes aren't shaded but edged where they meet anything else.
+- **`style game:coloured`** draws the map as the game draws its colour-accurate one: each block in the colour of its texture, with a grain of colours from across it, and the same hill shading on everything, water included. Nothing is looked under, and there are no edges. Blocks without a texture take their type's colour. Grass, leaves and water are tinted by the climate where they are and by the season on the save's date, or the one `--season` gives: `spring`, `summer`, `fall` or `winter` ([rendering.md](rendering.md#climate-and-season-tint)).

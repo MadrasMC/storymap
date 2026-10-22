@@ -52,18 +52,18 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
 
     var problem: Theme.Problem = .{};
     const theme = Theme.load(init.arena.allocator(), init.io, themeName, SaveFile.palette, &problem) catch switch (problem.kind) {
-        .unreadable => console.fail("there's no theme {s}: it isn't printed or plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(problem.cause.?) }),
-        .stylesheetEndsItsElement => console.fail("{s}/theme.css can't contain </style: it would end the theme's style in the page early\n", .{themeName}),
-        .scriptEndsItsElement => console.fail("{s}/theme.js can't contain </script: it would end the theme's script in the page early\n", .{themeName}),
+        .unreadable => console.fail("unknown theme {s}: not printed, plain, or a folder with theme.css and theme.js ({s})\n", .{ themeName, @errorName(problem.cause.?) }),
+        .stylesheetEndsItsElement => console.fail("{s}/theme.css: contains </style, which would end it early\n", .{themeName}),
+        .scriptEndsItsElement => console.fail("{s}/theme.js: contains </script, which would end it early\n", .{themeName}),
         .invalidStyle => if (problem.style.line == 0)
-            console.fail("the theme {s}'s topdown/style.txt {s}{s}{s}\n", .{ themeName, problem.style.message, if (problem.style.name.len > 0) " " else "", problem.style.name })
+            console.fail("{s}/topdown/style.txt: {f}\n", .{ themeName, problem.style })
         else
-            console.fail("the theme {s}'s topdown/style.txt, line {}: {s} {s}\n", .{ themeName, problem.style.line, problem.style.name, problem.style.message }),
+            console.fail("{s}/topdown/style.txt:{}: {f}\n", .{ themeName, problem.style.line, problem.style }),
     };
-    switch (theme.topdown.kind) {
-        .relief => {},
-        .game => |name| if (std.meta.stringToEnum(SaveFile.Map, name) == null)
-            console.fail("the theme {s}'s topdown/style.txt names a style that isn't {s}: {s}\n", .{ themeName, styleNames, name }),
+    switch (theme.topdown) {
+        .game => |gameStyle| if (gameStyle) |name| if (std.meta.stringToEnum(SaveFile.MapStyle, name) == null)
+            console.fail("{s}/topdown/style.txt: unknown style game:{s}. expected: {s}\n", .{ themeName, name, gameStyles }),
+        else => {},
     }
 
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err|
@@ -87,11 +87,10 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     try viewer.write(allocator, init.io, out, save.describe(), now, &views, theme);
 }
 
-/// The styles a theme can name, for a message: relief, and the game's own maps.
-const styleNames = names: {
-    const maps = std.meta.fieldNames(SaveFile.Map);
-    var text: []const u8 = "relief";
-    for (maps, 0..) |name, i| text = text ++ (if (i == maps.len - 1) " or " else ", ") ++ name;
+/// The game's own styles, for a message: "game:shaded, game:coloured".
+const gameStyles = names: {
+    var text: []const u8 = "";
+    for (std.meta.fieldNames(SaveFile.MapStyle)) |name| text = text ++ (if (text.len > 0) ", " else "") ++ "game:" ++ name;
     break :names text;
 };
 
@@ -121,11 +120,6 @@ fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, sa
     if (unknown.example) |example| std.debug.print("storymap: {} of the world's blocks aren't defined by the game or its mods, such as {s}\n", .{ unknown.codes, example });
 }
 
-test "the plain theme's colours are the game's" {
-    var problem: Style.Problem = .{};
-    const style = Theme.plain.topdown;
-    try std.testing.expectEqualStrings("shaded", style.kind.game);
-    try std.testing.expectEqual(SaveFile.palette.colours, style.colours);
-    try std.testing.expectEqual(SaveFile.palette.wateredge, style.wateredge);
-    try std.testing.expectEqualDeep(style, try Style.parse("style shaded\n", SaveFile.palette, &problem));
+test "the plain theme draws the game's default style" {
+    try std.testing.expectEqual(Style{ .game = null }, Theme.plain.topdown);
 }

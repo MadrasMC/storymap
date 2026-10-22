@@ -130,8 +130,8 @@ pub fn blockName(self: *const SaveFile, id: i32) ?[]const u8 {
     return self.gameData.blockCode(id);
 }
 
-/// The game's own map colours (vsessentialsmod `ChunkMapLayer`), for what a theme's style
-/// leaves out. Its edges are in the same ink as the rest of its lines.
+/// The game's own map colours (vsessentialsmod `ChunkMapLayer`): the game's own styles' colours,
+/// and those a theme's style leaves out. Its edges are in the same ink as the rest of its lines.
 pub const palette: world.Palette = .{
     .colours = .init(.{
         .land = .{ 0xAC, 0x88, 0x58 },
@@ -206,9 +206,9 @@ pub fn mapType(self: *const SaveFile, id: i32) world.MapType {
     return self.appearance(id).mapType;
 }
 
-/// The game's own maps, which a theme's style can name.
-pub const Map = MapPainter.Map;
-/// Draws one of them, from what a `Reader` made for it reads.
+/// The game's own map styles, which a theme names as `game:<name>`, or `game` for the default.
+pub const MapStyle = MapPainter.MapStyle;
+/// Paints the map in one of them, from what a `Reader` made for it reads.
 pub const MapPainter = @import("MapPainter.zig");
 
 /// Takes each block's appearance from the prepared blocks: its map type is its map colour code
@@ -321,9 +321,9 @@ pub const Reader = struct {
     /// Chunks read: those holding a surface block, in each tile and the ring around it.
     chunksRead: usize = 0,
 
-    /// A reader for drawing `map`, one of the game's own maps, or another map without one: it
-    /// reads what that map needs beyond the surface.
-    pub fn init(save: *const SaveFile, allocator: std.mem.Allocator, map: ?Map) !Reader {
+    /// A reader for drawing the map in `style`, one of the game's own, or in another style
+    /// without one: it reads what that style needs beyond the surface.
+    pub fn init(save: *const SaveFile, allocator: std.mem.Allocator, style: ?MapStyle) !Reader {
         const db = try DB.initImmutable(allocator, save.path);
         errdefer db.deinit();
         const mapChunkRow = try db.prepare("SELECT data FROM mapchunk WHERE position = ?1;");
@@ -342,11 +342,11 @@ pub const Reader = struct {
         const mapChunk = try allocator.create(MapChunk);
         errdefer allocator.destroy(mapChunk);
         const area = world.Surface.side * world.Surface.side;
-        const under = try allocator.alloc(i32, if (map == .shaded) area else 0);
+        const under = try allocator.alloc(i32, if (style == .shaded) area else 0);
         errdefer allocator.free(under);
-        const topTint = try allocator.alloc(world.Rgb, if (map == .coloured) area else 0);
+        const topTint = try allocator.alloc(world.Rgb, if (style == .coloured) area else 0);
         errdefer allocator.free(topTint);
-        const liquidTint = try allocator.alloc(world.Rgb, if (map == .coloured) area else 0);
+        const liquidTint = try allocator.alloc(world.Rgb, if (style == .coloured) area else 0);
         return .{
             .under = under,
             .topTint = topTint,

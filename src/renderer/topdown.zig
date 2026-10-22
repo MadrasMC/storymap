@@ -1,22 +1,23 @@
 //! The top-down map: one pixel per block column, coloured by what's on top, in tiles of
 //! 512 × 512 blocks (see tiles.zig). It draws from what a game's reader tells it about each
 //! column (see the `world` module), so it knows nothing of any game's save format. It draws
-//! Storymap's relief map itself, and the game's own maps through the game's reader.
+//! Storymap's own styles itself, and the game's own styles through the game's reader.
 //!
 //! A source is a game's save, opened for reading, with:
 //! - `tileList: []const tiles.Tile`, the tiles that may have something to draw;
 //! - `heights() world.Heights`;
 //! - `blockCount() usize`, `blockName(id: i32) ?[]const u8` and `mapType(id: i32) world.MapType`,
 //!   for the game's block IDs;
-//! - `Map`, an enum of the game's own maps, by the names a theme's style gives them;
-//! - `Reader`, one per thread, with `init(source: *const Source, allocator, map: ?Map) !Reader`,
-//!   reading what `map` needs beyond the surface, `deinit(*Reader, allocator)`,
+//! - `MapStyle`, an enum of the game's own styles, by the names a theme gives them after
+//!   `game:`, with a `default` for `game` alone;
+//! - `Reader`, one per thread, with `init(source: *const Source, allocator, style: ?MapStyle)
+//!   !Reader`, reading what `style` needs beyond the surface, `deinit(*Reader, allocator)`,
 //!   `read(*Reader, tile: tiles.Tile, surface: *world.Surface) !void` and a `chunksRead: usize`
 //!   count;
-//! - `MapPainter`, one per thread drawing one of the game's maps, with
-//!   `init(source: *const Source, allocator, map: Map) !MapPainter`, `deinit(MapPainter, allocator)`
-//!   and `draw(*MapPainter, reader: *const Reader, tile, surface: *const world.Surface,
-//!   palette: *const world.Palette, pixels: *tiles.Pixels) void`, from what the reader just read.
+//! - `MapPainter`, one per thread drawing in one of the game's styles, with
+//!   `init(source: *const Source, allocator, style: MapStyle) !MapPainter`,
+//!   `deinit(MapPainter, allocator)` and `paint(*MapPainter, reader: *const Reader, tile,
+//!   surface: *const world.Surface, pixels: *tiles.Pixels) void`, from what the reader just read.
 const std = @import("std");
 const Io = std.Io;
 const world = @import("world");
@@ -47,15 +48,15 @@ pub const title = "Top-down";
 pub const projection = "topdown";
 
 pub const Options = struct {
-    /// How the map is coloured: a theme's `topdown/style.txt`.
+    /// How the map is drawn: a theme's `topdown/style.txt`.
     style: Style,
     /// Records the stages' times here instead of printing a summary of the map.
     stats: ?*Stats = null,
 };
 
 /// Renders the top-down tiles of `source` into `output`, and returns the tiles written, at every
-/// level, which the caller frees with `allocator`. A style naming a map the game doesn't draw
-/// is error.UnknownMap.
+/// level, which the caller frees with `allocator`. A game style the game doesn't have is
+/// error.UnknownStyle.
 pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options) ![]tiles.Written {
     const start: Io.Timestamp = .now(io, .awake);
     var view: View(Source) = try .init(allocator, source, options.style);
@@ -91,11 +92,8 @@ fn View(comptime Source: type) type {
 
         source: *const Source,
         heights: Heights,
-        style: Style,
-        /// The map drawn: relief, or one of the game's own.
-        map: union(enum) { relief, game: Source.Map },
-        /// The style's colours, for the game's own maps.
-        palette: world.Palette,
+        /// The style drawn: relief in its colours, or one of the game's own.
+        style: union(enum) { relief: world.Palette, game: Source.MapStyle },
 
         chunksRead: usize = 0,
         /// Block columns drawn at full detail.
@@ -107,20 +105,16 @@ fn View(comptime Source: type) type {
         highest: u16 = 0,
 
         fn init(allocator: std.mem.Allocator, source: *const Source, style: Style) !Self {
-            const map: @FieldType(Self, "map") = switch (style.kind) {
-                .relief => .relief,
-                .game => |mapName| .{ .game = std.meta.stringToEnum(Source.Map, mapName) orelse return error.UnknownMap },
+            const drawn: @FieldType(Self, "style") = switch (style) {
+                .relief => |palette| .{ .relief = palette },
+                .game => |gameStyle| .{ .game = if (gameStyle) |styleName|
+                    std.meta.stringToEnum(Source.MapStyle, styleName) orelse return error.UnknownStyle
+                else
+                    Source.MapStyle.default },
             };
             const blockCounts = try allocator.alloc(usize, source.blockCount());
             @memset(blockCounts, 0);
-            return .{
-                .source = source,
-                .heights = .of(source.heights()),
-                .style = style,
-                .map = map,
-                .palette = .{ .colours = style.colours, .ink = style.ink, .wateredge = style.wateredge },
-                .blockCounts = blockCounts,
-            };
+            return .{ .source = source, .heights = .of(source.heights()), .style = drawn, .blockCounts = blockCounts };
         }
 
         fn deinit(self: Self, allocator: std.mem.Allocator) void {
@@ -140,7 +134,7 @@ fn View(comptime Source: type) type {
             view: *const Self,
             reader: Source.Reader,
             surface: world.Surface,
-            /// For drawing one of the game's own maps.
+            /// For drawing in one of the game's own styles.
             mapPainter: ?Source.MapPainter,
 
             blockCounts: []usize,
@@ -149,15 +143,15 @@ fn View(comptime Source: type) type {
             highest: u16 = 0,
 
             pub fn init(view: *const Self, allocator: std.mem.Allocator) !Worker {
-                const gameMap: ?Source.Map = switch (view.map) {
+                const gameStyle: ?Source.MapStyle = switch (view.style) {
                     .relief => null,
-                    .game => |map| map,
+                    .game => |style| style,
                 };
-                var reader: Source.Reader = try .init(view.source, allocator, gameMap);
+                var reader: Source.Reader = try .init(view.source, allocator, gameStyle);
                 errdefer reader.deinit(allocator);
                 var surface: world.Surface = try .init(allocator);
                 errdefer surface.deinit(allocator);
-                var mapPainter: ?Source.MapPainter = if (gameMap) |map| try .init(view.source, allocator, map) else null;
+                var mapPainter: ?Source.MapPainter = if (gameStyle) |style| try .init(view.source, allocator, style) else null;
                 errdefer if (mapPainter) |*painter| painter.deinit(allocator);
                 const blockCounts = try allocator.alloc(usize, view.blockCounts.len);
                 @memset(blockCounts, 0);
@@ -176,9 +170,9 @@ fn View(comptime Source: type) type {
             pub fn draw(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) !bool {
                 try self.reader.read(tile, &self.surface);
                 if (!self.count()) return false;
-                switch (self.view.map) {
-                    .relief => self.paintRelief(pixels),
-                    .game => self.mapPainter.?.draw(&self.reader, tile, &self.surface, &self.view.palette, pixels),
+                switch (self.view.style) {
+                    .relief => |*palette| self.paintRelief(palette, pixels),
+                    .game => self.mapPainter.?.paint(&self.reader, tile, &self.surface, pixels),
                 }
                 return true;
             }
@@ -204,8 +198,8 @@ fn View(comptime Source: type) type {
                 return any;
             }
 
-            /// Colours the tile's pixels from the surface as a relief map.
-            fn paintRelief(self: *Worker, pixels: *tiles.Pixels) void {
+            /// Colours the tile's pixels from the surface as a relief map, in `palette`.
+            fn paintRelief(self: *Worker, palette: *const world.Palette, pixels: *tiles.Pixels) void {
                 const surface = &self.surface;
                 const view = self.view;
                 const side = world.Surface.side;
@@ -222,7 +216,6 @@ fn View(comptime Source: type) type {
                     const east = surface.columnTop(i + 1);
                     const south = surface.columnTop(i + side);
 
-                    const style = &view.style;
                     const mapType = view.source.mapType(surface.shownBlock(i));
                     if (here == .liquid) {
                         // Where water meets land, its edge, as an old map inks its coastlines.
@@ -230,14 +223,14 @@ fn View(comptime Source: type) type {
                         // A liquid the game's reader doesn't place is drawn as a lake.
                         const liquid = if (mapType.isLiquid()) mapType else .lake;
                         pixel.* = if (shore and liquid != .lava)
-                            rgb(style.wateredge)
+                            rgb(palette.wateredge)
                         else
-                            liquidColour(style.colours.get(liquid), if (surface.top[i]) |ground| y - ground else maxDepth);
+                            liquidColour(palette.colours.get(liquid), if (surface.top[i]) |ground| y - ground else maxDepth);
                         continue;
                     }
                     // Neighbours without blocks count as level ground.
                     const slope = @as(i32, y) * 2 - (west.height() orelse y) - (north.height() orelse y);
-                    pixel.* = groundColour(style, style.colours.get(mapType), y, view.heights, slope);
+                    pixel.* = groundColour(palette, palette.colours.get(mapType), y, view.heights, slope);
                 };
             }
         };
@@ -284,11 +277,11 @@ fn liquidColour(base: Rgb, depth: u16) u32 {
     return rgb(mix(base, .{ 0, 0, 0 }, fraction));
 }
 
-/// A relief style for the tests: sepia ground and dark ink.
-const testStyle: Style = .{ .kind = .relief, .colours = .initFill(.{ 0xE4, 0xD2, 0xA0 }), .ink = .{ 0x4A, 0x30, 0x1A }, .wateredge = .{ 0x5C, 0x46, 0x2E } };
+/// Relief colours for the tests: sepia ground and dark ink.
+const testPalette: world.Palette = .{ .colours = .initFill(.{ 0xE4, 0xD2, 0xA0 }), .ink = .{ 0x4A, 0x30, 0x1A }, .wateredge = .{ 0x5C, 0x46, 0x2E } };
 
 test liquidColour {
-    const lake = testStyle.colours.get(.lake);
+    const lake = testPalette.colours.get(.lake);
     try std.testing.expectEqual(rgb(lake), liquidColour(lake, 0));
     try std.testing.expectEqual(liquidColour(lake, maxDepth), liquidColour(lake, 200));
     try std.testing.expect(liquidColour(lake, maxDepth) & 0xFF < rgb(lake) & 0xFF);
@@ -335,13 +328,13 @@ test "Heights.of" {
 }
 
 /// The colour of ground of colour `base` at height `y`: `base` at sea level, darkening
-/// towards the style's ink below it and paling towards white above it. `slope` is how much
+/// towards the palette's ink below it and paling towards white above it. `slope` is how much
 /// higher the column is than its west and north neighbours together: slopes facing the
 /// north-west light are brightened, the others darkened, as on a hand-shaded relief map.
-fn groundColour(style: *const Style, base: Rgb, y: u16, heights: Heights, slope: i32) u32 {
+fn groundColour(palette: *const world.Palette, base: Rgb, y: u16, heights: Heights, slope: i32) u32 {
     const clamped = std.math.clamp(y, heights.low, heights.high);
     var channels = if (clamped <= heights.ground)
-        mix(base, style.ink, share(heights.ground - clamped, heights.ground - heights.low))
+        mix(base, palette.ink, share(heights.ground - clamped, heights.ground - heights.low))
     else
         mix(base, .{ 255, 255, 255 }, share(clamped - heights.ground, heights.high - heights.ground) * paling / 256);
     // Light in 1/256ths: each block of slope changes the brightness by 1/16, up to ±3/8.
@@ -364,16 +357,16 @@ fn rgb(colour: Rgb) u32 {
 }
 
 test groundColour {
-    const style = &testStyle;
-    const land = style.colours.get(.land);
+    const palette = &testPalette;
+    const land = palette.colours.get(.land);
     const heights: Heights = .{ .low = 10, .ground = 60, .high = 110 };
     // Level ground: ink at the low end, its own colour at sea level, pale at the high end.
-    try std.testing.expectEqual(rgb(style.ink), groundColour(style, land, 10, heights, 0));
-    try std.testing.expectEqual(rgb(land), groundColour(style, land, 60, heights, 0));
-    try std.testing.expectEqual(groundColour(style, land, 110, heights, 0), groundColour(style, land, 200, heights, 0));
-    try std.testing.expect(groundColour(style, land, 110, heights, 0) & 0xFF > rgb(land) & 0xFF);
+    try std.testing.expectEqual(rgb(palette.ink), groundColour(palette, land, 10, heights, 0));
+    try std.testing.expectEqual(rgb(land), groundColour(palette, land, 60, heights, 0));
+    try std.testing.expectEqual(groundColour(palette, land, 110, heights, 0), groundColour(palette, land, 200, heights, 0));
+    try std.testing.expect(groundColour(palette, land, 110, heights, 0) & 0xFF > rgb(land) & 0xFF);
     // A slope facing the light is brighter, one facing away darker.
-    const level = groundColour(style, land, 40, heights, 0);
-    try std.testing.expect(groundColour(style, land, 40, heights, 2) & 0xFF > level & 0xFF);
-    try std.testing.expect(groundColour(style, land, 40, heights, -2) & 0xFF < level & 0xFF);
+    const level = groundColour(palette, land, 40, heights, 0);
+    try std.testing.expect(groundColour(palette, land, 40, heights, 2) & 0xFF > level & 0xFF);
+    try std.testing.expect(groundColour(palette, land, 40, heights, -2) & 0xFF < level & 0xFF);
 }
