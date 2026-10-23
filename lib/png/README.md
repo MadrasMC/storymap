@@ -20,7 +20,9 @@ try dir.writeFile(io, .{ .sub_path = "tile.png", .data = file });
 
 | name | contents |
 | --- | --- |
-| `Encoder.init(allocator, width, height, options)` | an encoder for images up to `width` × `height`: about 4 bytes per pixel, plus 64 KB for deflate's window and the compressor's 224 KB |
-| `Encoder.encode(pixels, width, height)` | the PNG, valid until the next `encode` |
+| `Encoder.init(allocator, width, height, options)` | an encoder for images up to `width` × `height`: about 8 bytes per pixel, plus 64 KB for deflate's window and the compressor's 224 KB |
+| `Encoder.encode(pixels, width, height)` | the PNG, valid until the next `encode` or `compress`: `filter`, then `compress` |
+| `Encoder.filter(pixels, width, height)` | filters the image's rows, the first half of `encode`; with `compress`, the two halves can be timed apart |
+| `Encoder.compress()` | the PNG of the image `filter` last filtered, the second half of `encode` |
 | `Encoder.deinit(allocator)` | frees the buffers |
 | `Options.level` | deflate's trade between speed and size, one of `std.compress.flate.Compress.Options` (`.level_4` by default) |

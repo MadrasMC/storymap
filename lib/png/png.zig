@@ -16,9 +16,14 @@ pub const Encoder = struct {
     out: []u8,
     /// Deflate's history.
     window: []u8,
-    /// Each filter's output for the row being written, with its filter type first.
+    /// Each filter's output for the row being filtered, with its filter type first.
     rows: [5][]u8,
-    compress: *flate.Compress,
+    /// The image `filter` last filtered, row by row, each with its filter type first, and its
+    /// size in pixels.
+    filtered: []u8,
+    filteredWidth: u32 = 0,
+    filteredHeight: u32 = 0,
+    deflate: *flate.Compress,
 
     /// An encoder for images of up to `width` × `height` pixels.
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32, options: Options) !Encoder {
@@ -31,23 +36,48 @@ pub const Encoder = struct {
         errdefer allocator.free(window);
         const rows = try allocator.alloc(u8, 5 * rowBytes);
         errdefer allocator.free(rows);
-        const compress = try allocator.create(flate.Compress);
-        var encoder: Encoder = .{ .width = width, .height = height, .options = options, .out = out, .window = window, .rows = undefined, .compress = compress };
+        const filtered = try allocator.alloc(u8, raw);
+        errdefer allocator.free(filtered);
+        const deflate = try allocator.create(flate.Compress);
+        var encoder: Encoder = .{ .width = width, .height = height, .options = options, .out = out, .window = window, .rows = undefined, .filtered = filtered, .deflate = deflate };
         for (&encoder.rows, 0..) |*row, i| row.* = rows[i * rowBytes ..][0..rowBytes];
         return encoder;
     }
 
     pub fn deinit(self: Encoder, allocator: std.mem.Allocator) void {
-        allocator.destroy(self.compress);
+        allocator.destroy(self.deflate);
+        allocator.free(self.filtered);
         allocator.free(self.rows[0].ptr[0 .. 5 * self.rows[0].len]);
         allocator.free(self.window);
         allocator.free(self.out);
     }
 
     /// The PNG of `pixels`, `width` × `height` of them row by row, each red, green, blue and
-    /// alpha bytes. Valid until the next `encode`.
+    /// alpha bytes. Valid until the next `encode` or `compress`. It's `filter`, then `compress`,
+    /// for timing the two apart.
     pub fn encode(self: *Encoder, pixels: []const u8, width: u32, height: u32) ![]const u8 {
+        self.filter(pixels, width, height);
+        return self.compress();
+    }
+
+    /// Filters each row of `pixels`, as `encode` takes them, for `compress`.
+    pub fn filter(self: *Encoder, pixels: []const u8, width: u32, height: u32) void {
         std.debug.assert(width <= self.width and height <= self.height and pixels.len == @as(usize, width) * height * 4);
+        const rowBytes = @as(usize, width) * 4;
+        var previous: []const u8 = &.{};
+        for (0..height) |y| {
+            const row = pixels[y * rowBytes ..][0..rowBytes];
+            @memcpy(self.filtered[y * (1 + rowBytes) ..][0 .. 1 + rowBytes], self.filterRow(row, previous));
+            previous = row;
+        }
+        self.filteredWidth = width;
+        self.filteredHeight = height;
+    }
+
+    /// The PNG of the image `filter` last filtered. Valid until the next `encode` or `compress`.
+    pub fn compress(self: *Encoder) ![]const u8 {
+        const width = self.filteredWidth;
+        const height = self.filteredHeight;
         const signature = "\x89PNG\r\n\x1a\n";
         @memcpy(self.out[0..8], signature);
         var header: [13]u8 = undefined;
@@ -60,15 +90,9 @@ pub const Encoder = struct {
         // The image data's length and type are filled in once it's compressed.
         const data = end + 8;
         var output: std.Io.Writer = .fixed(self.out[data .. self.out.len - 12 - 4]);
-        self.compress.* = try .init(&output, self.window, .zlib, self.options.level);
-        const rowBytes = @as(usize, width) * 4;
-        var previous: []const u8 = &.{};
-        for (0..height) |y| {
-            const row = pixels[y * rowBytes ..][0..rowBytes];
-            try self.compress.writer.writeAll(self.filter(row, previous));
-            previous = row;
-        }
-        try self.compress.finish();
+        self.deflate.* = try .init(&output, self.window, .zlib, self.options.level);
+        try self.deflate.writer.writeAll(self.filtered[0 .. height * (1 + @as(usize, width) * 4)]);
+        try self.deflate.finish();
         const length = output.end;
         std.mem.writeInt(u32, self.out[end..][0..4], @intCast(length), .big);
         @memcpy(self.out[end + 4 ..][0..4], "IDAT");
@@ -81,7 +105,7 @@ pub const Encoder = struct {
     /// `row` filtered as each PNG filter does it, and the one whose bytes, as signed numbers, add
     /// up to the least: the usual guess at which compresses best. `previous` is the row above,
     /// empty for the first.
-    fn filter(self: *Encoder, row: []const u8, previous: []const u8) []const u8 {
+    fn filterRow(self: *Encoder, row: []const u8, previous: []const u8) []const u8 {
         var best: usize = 0;
         var bestSum: usize = std.math.maxInt(usize);
         for (&self.rows, 0..) |out, kind| {
