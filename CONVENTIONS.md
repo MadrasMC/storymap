@@ -8,7 +8,7 @@ Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a r
 
 | module | imports |
 | --- | --- |
-| `tiles` | – |
+| `tiles` | `png` |
 | `world` | `tiles` |
 | `theme` | `world` |
 | `viewer` | `tiles`, `theme`, `world` |
@@ -25,7 +25,7 @@ Everything that knows Vintage Story, its save format, its assets and its block n
 
 ## Libraries
 
-`lib/` holds libraries that know nothing of Storymap: `args` for command lines, `sqlite` and `protobuf`. Each has its own README. Anything about Storymap itself, such as how its messages read or when it exits, stays in Storymap: a library returns what happened and leaves the rest to the program.
+`lib/` holds libraries that know nothing of Storymap: `args` for command lines, `png`, `sqlite` and `protobuf`. Each has its own README. Anything about Storymap itself, such as how its messages read or when it exits, stays in Storymap: a library returns what happened and leaves the rest to the program.
 
 ## Versions
 

@@ -58,27 +58,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Each stb implementation is built into the module that uses it.
     const stb = b.dependency("stb", .{});
-    const stb_impl = b.addWriteFiles();
-    const stb_image_write_impl = stb_impl.add("stb_image_write.c",
-        \\#define STB_IMAGE_WRITE_IMPLEMENTATION
-        \\#include "stb_image_write.h"
-        \\
-    );
-    const stb_image_impl = stb_impl.add("stb_image.c",
+    const stb_image_impl = b.addWriteFiles().add("stb_image.c",
         \\#define STB_IMAGE_IMPLEMENTATION
         \\#define STBI_ONLY_PNG
         \\#define STBI_NO_STDIO
         \\#include "stb_image.h"
         \\
     );
-
-    const stb_translate_c = b.addTranslateC(.{
-        .root_source_file = stb.path("stb_image_write.h"),
-        .target = target,
-        .optimize = optimize,
-    });
 
     const stb_image_translate_c = b.addTranslateC(.{
         .root_source_file = stb.path("stb_image.h"),
@@ -108,6 +95,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const png_mod = b.createModule(.{
+        .root_source_file = b.path("lib/png/png.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const options = b.addOptions();
     options.addOption([]const u8, "version", @import("build.zig.zon").version);
     const options_mod = options.createModule();
@@ -119,11 +112,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/tiles/tiles.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
-        .imports = &.{.{ .name = "stb_image_write", .module = stb_translate_c.createModule() }},
+        .imports = &.{.{ .name = "png", .module = png_mod }},
     });
-    tiles_mod.addCSourceFile(.{ .file = stb_image_write_impl });
-    tiles_mod.addIncludePath(stb.path("."));
 
     const world_mod = b.createModule(.{
         .root_source_file = b.path("src/world/world.zig"),
@@ -237,7 +227,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
-        args_mod,    sqlite_mod,   protobuf_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
+        args_mod,    sqlite_mod,   protobuf_mod, png_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
         console_mod, renderer_mod, vs_mod,       cli_mod,
     };
     for (tested) |module| {

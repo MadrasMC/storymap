@@ -186,13 +186,13 @@ Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/
 | Block entity data | arbitrary (mods, full chests) | Not set by the format: a per-chunk limit, 2 MiB by default (`Chunk.Decoder.defaultBlockEntityBytes`), with entities over it skipped with a warning. Parsed, block entities take up to 4.6× their raw bytes; the busiest test chunk, a ruin with 659 chiseled blocks and 134 KB of raw data, needs 615 KB. |
 | Block and item names (`gamedata`), later assets | the game version and mods | Read once at startup. |
 | Tile height arrays and pixels | the tile size | Fixed per worker, reused for every tile. |
-| PNG encoding (stb) | the tile size | stb's memory functions can be replaced (`STBIW_MALLOC`), so it can use a fixed buffer. |
+| PNG encoding (`lib/png`) | the tile size | Each worker's encoder sets up its buffers once, for a full tile; nothing is allocated per tile. |
 
 Stages:
 
 1. **No allocation per chunk** (done): each worker sets up one `Chunk.Decoder` (a zstd context in a fixed buffer, and the block entity buffer, reset before each chunk) and one `Chunk` with fixed-size layers, about 380 KB, and reuses both for every chunk. `Decoder.decode` takes no allocator. Collecting each tree's entries on the stack before copying them out once halved block entity memory (1.2 MB → 615 KB for the busiest chunk). Renders take the same time as before on the test worlds, since the PNG dominates; decoding-heavy work is much faster: a stress test of about 12 million damaged inputs went from about 14 minutes to just over a second, with identical results.
-2. **Tiles with levels of detail,** each worker reusing one fixed tile buffer.
-3. **Enforcement:** an allocator that refuses to allocate after startup, SQLite on its own fixed block, and stb's memory functions pointed at a fixed buffer.
+2. **No allocation per tile** (done): each worker sets up its tile buffers and its PNG encoder (`lib/png`) before any work starts, and the tiles written go into a list sized from the tile pyramid. The encoder replaced stb_image_write, whose zlib allocated for every tile; in the larger 1.22.7 world its tiles are 20% smaller (6.9 MB against 8.7 MB), with the same pixels, and the render 14% faster. *(Measured 2026-10-23, against v0.1.0 in one sitting, as in [performance.md](performance.md); deflate level 4, as level 1 was no faster within the noise for 2% larger files, and level 6 took 30% longer for 2% smaller.)*
+3. **Enforcement:** an allocator that refuses to allocate after startup, and SQLite on its own fixed block.
 
 ## Performance
 

@@ -14,7 +14,7 @@
 //! built from its four children shrunk to half size, so nothing is read back from disk.
 const std = @import("std");
 const Io = std.Io;
-const stb = @import("stb_image_write");
+const png = @import("png");
 
 /// A tile's side in pixels, in every view and level.
 pub const size = 512;
@@ -101,6 +101,12 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     const otherBlock: Built = try .init(allocator, if (split + 1 < pyramid.levels.len) pyramid.levels[split + 1].count() else 0);
     defer otherBlock.deinit(allocator);
 
+    // Every tile the pyramid has, at most, is written; workers take the slots in turn.
+    var tileCount: usize = 0;
+    for (pyramid.levels) |level| tileCount += level.count();
+    try written.ensureUnusedCapacity(allocator, tileCount);
+    var slots: Slots = .{ .written = written.unusedCapacitySlice()[0..tileCount] };
+
     const count = @max(1, @min(cores, items.len));
     const jobs = try allocator.alloc(Job(View), count);
     defer allocator.free(jobs);
@@ -108,7 +114,7 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     var ready: usize = 0;
     defer for (jobs[0..ready]) |*job| job.deinit(allocator);
     for (jobs) |*job| {
-        job.* = try .init(view, allocator, io, &pyramid, split, items, halves, drawn, &next, output);
+        job.* = try .init(view, allocator, io, &pyramid, split, items, halves, drawn, &next, output, &slots);
         ready += 1;
     }
 
@@ -132,9 +138,9 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
 
     var stats: Stats = .{ .levels = pyramid.levels.len };
     const start = written.items.len;
+    written.items.len += slots.taken.raw;
     for (jobs) |*job| {
         view.collect(&job.worker);
-        try written.appendSlice(allocator, job.written.items);
         stats.tiles += job.stats.tiles;
         stats.draw = .{ .nanoseconds = stats.draw.nanoseconds + job.stats.draw.nanoseconds };
         stats.encode = .{ .nanoseconds = stats.encode.nanoseconds + job.stats.encode.nanoseconds };
@@ -152,6 +158,12 @@ fn runAll(comptime View: type, jobs: []Job(View), threads: []?std.Thread, compti
     for (threads) |thread| if (thread) |t| t.join();
     for (jobs) |*job| if (job.err) |err| return err;
 }
+
+/// Room for every tile written, shared by all workers.
+const Slots = struct {
+    written: []Written,
+    taken: std.atomic.Value(usize) = .init(0),
+};
 
 /// A level's tiles at half size, and whether each has anything on it.
 const Built = struct {
@@ -234,7 +246,6 @@ fn Job(comptime View: type) type {
     return struct {
         const Self = @This();
 
-        allocator: std.mem.Allocator,
         io: Io,
         pyramid: *const Pyramid,
         split: usize,
@@ -248,18 +259,20 @@ fn Job(comptime View: type) type {
         worker: View.Worker,
         /// One tile's pixels per level of a subtree: level 0's are drawn, the others built.
         pixels: []Pixels,
-        png: std.ArrayList(u8) = .empty,
-        written: std.ArrayList(Written) = .empty,
-        pngFailed: bool = false,
+        encoder: png.Encoder,
+        slots: *Slots,
         stats: Stats = .{},
         err: ?anyerror = null,
         above: ?*const Above = null,
 
-        fn init(view: *const View, allocator: std.mem.Allocator, io: Io, pyramid: *const Pyramid, split: usize, items: []const Tile, halves: []u32, drawn: []bool, next: *std.atomic.Value(usize), output: Output) !Self {
+        fn init(view: *const View, allocator: std.mem.Allocator, io: Io, pyramid: *const Pyramid, split: usize, items: []const Tile, halves: []u32, drawn: []bool, next: *std.atomic.Value(usize), output: Output, slots: *Slots) !Self {
             const pixels = try allocator.alloc(Pixels, split + 1);
             errdefer allocator.free(pixels);
+            const encoder: png.Encoder = try .init(allocator, size, size, .{});
+            errdefer encoder.deinit(allocator);
             return .{
-                .allocator = allocator,
+                .encoder = encoder,
+                .slots = slots,
                 .io = io,
                 .pyramid = pyramid,
                 .split = split,
@@ -276,8 +289,7 @@ fn Job(comptime View: type) type {
         fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             self.worker.deinit(allocator);
             allocator.free(self.pixels);
-            self.png.deinit(allocator);
-            self.written.deinit(allocator);
+            self.encoder.deinit(allocator);
         }
 
         fn run(self: *Self) void {
@@ -359,10 +371,7 @@ fn Job(comptime View: type) type {
 
         /// Encodes a tile as PNG and writes it to `<view>/<level>/<x>/<y>.png`.
         fn write(self: *Self, level: usize, tile: Tile, pixels: *const Pixels) !void {
-            self.png.clearRetainingCapacity();
-            self.pngFailed = false;
-            if (stb.stbi_write_png_to_func(appendPng, self, size, size, 4, pixels, size * @sizeOf(u32)) == 0) return error.EncodePngFailed;
-            if (self.pngFailed) return error.OutOfMemory;
+            const data = try self.encoder.encode(std.mem.sliceAsBytes(pixels), size, size);
             self.stats.tiles += 1;
 
             const folder = switch (self.output) {
@@ -374,16 +383,8 @@ fn Job(comptime View: type) type {
             try folder.createDirPath(self.io, dir);
             var pathBuffer: [80]u8 = undefined;
             const path = try std.fmt.bufPrint(&pathBuffer, "{s}/{d}.png", .{ dir, tile.y });
-            try folder.writeFile(self.io, .{ .sub_path = path, .data = self.png.items });
-            try self.written.append(self.allocator, .{ .level = @intCast(level), .tile = tile });
-        }
-
-        fn appendPng(context: ?*anyopaque, data: ?*anyopaque, length: c_int) callconv(.c) void {
-            const self: *Self = @ptrCast(@alignCast(context.?));
-            const bytes: [*]const u8 = @ptrCast(data.?);
-            self.png.appendSlice(self.allocator, bytes[0..@intCast(length)]) catch {
-                self.pngFailed = true;
-            };
+            try folder.writeFile(self.io, .{ .sub_path = path, .data = data });
+            self.slots.written[self.slots.taken.fetchAdd(1, .monotonic)] = .{ .level = @intCast(level), .tile = tile };
         }
     };
 }

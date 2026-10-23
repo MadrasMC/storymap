@@ -12,8 +12,8 @@ Storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)). Stage 1, no allocation per chunk, is done.
 
-4. **Fixed buffers throughout.** Tiles already reuse per-worker buffers, and every waiting half is set aside before any work starts, but those are sized and allocated per render, and the PNG encoder allocates per tile.
-5. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`); stb's memory functions on a fixed buffer.
+4. **Buffers sized at startup.** Nothing is allocated per tile, but a render's buffers are sized and allocated when it starts; once a process renders more than once (incremental rendering), they should be set up once.
+5. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`).
 
 ## Block entities
 
@@ -57,5 +57,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Command lines parsed and routed by `lib/args`, a library of our own, with each command's usage and help generated from what it takes.
 - Each part of Storymap a module of its own, so `build.zig` enforces what each may import, and the renderer can't import the game's reader ([`CONVENTIONS.md`](CONVENTIONS.md#modules)).
 - The game's own map styles drawn by the game's reader (`src/vs/MapPainter.zig`), in the game's own colours: `game` for the game's default, or `game:shaded` and `game:coloured`. The renderer draws only Storymap's relief, in the theme's colours. `--style` picks another style than the theme's ([`docs/themes.md`](docs/themes.md#map-style)).
+- No allocation per tile (memory stage 2): PNGs written by an encoder of our own (`lib/png`) into buffers set up before any work starts, replacing stb_image_write; tiles 20% smaller and renders 14% faster ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)).
 - Performance recorded per version, one table per save, by `scripts/benchmark.zig`, which builds each tag with the Zig release it names ([`docs/performance.md`](docs/performance.md)).
 - A modded world: the larger 1.22.7 test world was created with Primitive Survival. Mods' block and item codes carry their domain, and their IDs follow the game's ([save format §6](docs/save-format/README.md#block-and-item-ids)).
