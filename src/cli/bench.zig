@@ -102,6 +102,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .area = stats.area,
         .seconds = seconds,
         .areaPerSecond = area / seconds.total,
+        .chunksPerSecond = @as(f64, @floatFromInt(chunks)) / seconds.total,
         .encodeShare = encodeShare[runs / 2],
     };
     var buffer: [1024]u8 = undefined;
@@ -138,6 +139,8 @@ const Result = struct {
     seconds: Seconds,
     /// Square metres drawn per second, end to end.
     areaPerSecond: f64,
+    /// The save's chunks per second, end to end; only those holding the surface are read.
+    chunksPerSecond: f64,
     /// The share of the workers' time spent encoding PNGs.
     encodeShare: f64,
 
