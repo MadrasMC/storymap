@@ -27,6 +27,12 @@ Everything that knows Vintage Story, its save format, its assets and its block n
 
 `lib/` holds libraries that know nothing of Storymap: `args` for command lines, `sqlite` and `protobuf`. Each has its own README. Anything about Storymap itself, such as how its messages read or when it exits, stays in Storymap: a library returns what happened and leaves the rest to the program.
 
+## Versions
+
+`minimum_zig_version` in `build.zig.zon` is the exact Zig release that must be used to build Storymap. Only tagged Zig releases must be used; not master. `scripts/benchmark.zig` uses this property to reproduce Storymap versions with the exact Zig version for consistency of benchmarks.
+
+Switching to a new Zig release must cause a Storymap version bump in `build.zig.zon`.
+
 ## Zig conventions
 
 ### Parameter order
