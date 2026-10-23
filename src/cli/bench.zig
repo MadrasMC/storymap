@@ -252,7 +252,7 @@ fn openAndRender(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, folde
         topdown.render(SaveFile, allocator, io, &save, .discard, options));
     if (withIsometric) {
         var stats: isometric.Stats = .{};
-        const isometricOptions: isometric.Options = .{ .palette = Theme.defaultColours, .stats = &stats };
+        const isometricOptions: isometric.Options = .{ .palette = Theme.printed.isometric.relief, .stats = &stats };
         allocator.free(try if (folder) |dir|
             isometric.render(SaveFile, allocator, io, &save, .{ .folder = dir }, isometricOptions)
         else

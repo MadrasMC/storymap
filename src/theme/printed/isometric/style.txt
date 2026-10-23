@@ -1,0 +1,2 @@
+# Blocks as cubes in the relief map's colours, which this file leaves out.
+style relief

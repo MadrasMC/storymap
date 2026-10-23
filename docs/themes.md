@@ -27,6 +27,7 @@ A theme is a stylesheet and a script, and the map's colours:
 - **`theme.css`** styles the page, and places the map: the page puts `#map` over the whole window (`position: fixed; inset: 0`), and the theme moves or frames it, e.g. `#map { inset: 2rem; border: 1px solid; }`. The map's size is measured from there, so a theme's stylesheet decides how much of the window the map gets.
 - **`theme.js`** builds everything the theme draws and keeps it up to date, as below.
 - **`topdown/style.txt`** says how the map is drawn when it's rendered ([Map style](#map-style)). A theme without one draws its map as the Printed theme does.
+- **`isometric/style.txt`** says how the isometric view is drawn ([Isometric style](#isometric-style)). A theme without one draws it in its top-down style.
 
 The stylesheet and script are inlined, so the stylesheet can't contain `</style` and the script can't contain `</script`. Anything they load has to come with them, for the same reason a page opened from the disk can't fetch files beside it: fonts and images go in as `data:` URLs.
 
@@ -126,3 +127,12 @@ style game
 
 - **`style game:shaded`**, or `style game`, draws the map as the game draws its own world map: each type's colour as it is, at any height, lit or shaded by the game's own hill shading. It looks under snow at what's beneath, and lakes aren't shaded but edged where they meet anything else.
 - **`style game:coloured`** draws the map as the game draws its colour-accurate one: each block in the colour of its texture, with a grain of colours from across it, and the same hill shading on everything, water included. Nothing is looked under, and there are no edges. Blocks without a texture take their type's colour. Grass, leaves and water are tinted by the climate where they are and by the season on the save's date, or the one `--season` gives: `spring`, `summer`, `fall` or `winter` ([rendering.md](rendering.md#climate-and-season-tint)).
+
+## Isometric style
+
+`isometric/style.txt` says how the isometric view (`--isometric`) is drawn, in the same form as `topdown/style.txt`:
+
+- **`style relief`** draws every block as a cube in its type's colour, darkening and paling with height as the relief map does, with its top, south and east faces lit differently. Colours the file leaves out are the theme's top-down colours, so the Printed theme's is just `style relief`.
+- **`style game`** draws blocks in the game's own textures. Until textured blocks are done ([TODO.md](../TODO.md), item 8), it draws them as `style relief` in the Printed theme's colours. It's the Plain theme's style.
+
+A theme without the file draws the isometric view in its top-down style: `relief` with the same colours, or `game` for any of the game's styles. `--style` sets only the top-down style.

@@ -66,12 +66,21 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
             console.fail("{s}/topdown/style.txt: {f}\n", .{ themeName, problem.style })
         else
             console.fail("{s}/topdown/style.txt:{}: {f}\n", .{ themeName, problem.style.line, problem.style }),
+        .invalidIsometricStyle => if (problem.style.line == 0)
+            console.fail("{s}/isometric/style.txt: {f}\n", .{ themeName, problem.style })
+        else
+            console.fail("{s}/isometric/style.txt:{}: {f}\n", .{ themeName, problem.style.line, problem.style }),
     };
     switch (theme.topdown) {
         .game => |gameStyle| if (gameStyle) |name| if (std.meta.stringToEnum(SaveFile.MapStyle, name) == null) {
             if (style != null) console.fail("`--style`: unknown style game:{s}. expected: {s}\n", .{ name, gameStyles });
             console.fail("{s}/topdown/style.txt: unknown style game:{s}. expected: {s}\n", .{ themeName, name, gameStyles });
         },
+        else => {},
+    }
+    // The isometric view has one game style, `game`.
+    switch (theme.isometric) {
+        .game => |gameStyle| if (gameStyle) |name| console.fail("{s}/isometric/style.txt: unknown style game:{s}. expected: {s}, game\n", .{ themeName, name, Style.storymapNames }),
         else => {},
     }
 
@@ -93,7 +102,9 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     defer views.deinit(allocator);
     try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .written = written });
 
-    const palette = switch (theme.topdown) {
+    // The game's textures come with textured cubes (TODO.md item 8); until then, `game` draws
+    // relief cubes in the default colours.
+    const palette = switch (theme.isometric) {
         .relief => |colours| colours,
         .game => Theme.defaultColours,
     };

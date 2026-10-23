@@ -1,5 +1,5 @@
 //! A theme (docs/themes.md): the stylesheet and script of the viewer page around the map, and
-//! the map's style, `topdown/style.txt`.
+//! the views' styles, `topdown/style.txt` and `isometric/style.txt`.
 const Theme = @This();
 
 const std = @import("std");
@@ -13,6 +13,9 @@ stylesheet: []const u8,
 script: []const u8,
 /// `topdown/style.txt`, parsed.
 topdown: Style,
+/// `isometric/style.txt`, parsed: `relief` draws blocks as cubes in its colours, `game` in the
+/// game's textures. Colours it leaves out are the top-down style's.
+isometric: Style,
 
 const printedStyle = @embedFile("printed/topdown/style.txt");
 const plainStyle = @embedFile("plain/topdown/style.txt");
@@ -22,15 +25,18 @@ const plainStyle = @embedFile("plain/topdown/style.txt");
 pub const printed: Theme = .{
     .stylesheet = @embedFile("printed/theme.css"),
     .script = @embedFile("printed/theme.js"),
-    .topdown = builtInStyle("printed", printedStyle),
+    .topdown = printedTopdown,
+    .isometric = builtInStyle("printed/isometric", @embedFile("printed/isometric/style.txt"), printedTopdown.relief),
 };
+const printedTopdown = builtInStyle("printed/topdown", printedStyle, null);
 
 /// The map filling the window, with small panels over it, light or dark with the reader's
 /// setting. Short on purpose, as a place to start a theme of one's own.
 pub const plain: Theme = .{
     .stylesheet = @embedFile("plain/theme.css"),
     .script = @embedFile("plain/theme.js"),
-    .topdown = builtInStyle("plain", plainStyle),
+    .topdown = builtInStyle("plain/topdown", plainStyle, null),
+    .isometric = builtInStyle("plain/isometric", @embedFile("plain/isometric/style.txt"), null),
 };
 
 pub const builtIn = [_]struct { name: []const u8, theme: Theme, style: []const u8 }{
@@ -42,20 +48,39 @@ pub const builtIn = [_]struct { name: []const u8, theme: Theme, style: []const u
 /// colour.
 pub const defaultColours: world.Palette = printed.topdown.relief;
 
-/// Parsed when compiling, without defaults: a built-in style gives every colour.
-fn builtInStyle(comptime name: []const u8, comptime text: []const u8) Style {
+/// Parsed when compiling. A built-in top-down style gives every colour; an isometric one takes
+/// those it leaves out from `defaults`.
+fn builtInStyle(comptime path: []const u8, comptime text: []const u8, comptime defaults: ?world.Palette) Style {
     comptime {
         var problem: Style.Problem = .{};
-        return Style.parse(text, null, null, &problem) catch
-            @compileError(std.fmt.comptimePrint("{s}/topdown/style.txt:{}: {f}", .{ name, problem.line, problem }));
+        return Style.parse(text, defaults, null, &problem) catch
+            @compileError(std.fmt.comptimePrint("{s}/style.txt:{}: {f}", .{ path, problem.line, problem }));
     }
+}
+
+/// The isometric style of a theme without `isometric/style.txt`: its top-down one, with any of
+/// the game's styles as `game`, which is the one the isometric view has.
+fn isometricOf(topdown: Style) Style {
+    return switch (topdown) {
+        .relief => topdown,
+        .game => .{ .game = null },
+    };
+}
+
+/// The colours an isometric style leaves out: the top-down style's, if it has any.
+fn coloursOf(topdown: Style) world.Palette {
+    return switch (topdown) {
+        .relief => |palette| palette,
+        .game => defaultColours,
+    };
 }
 
 pub const Problem = struct {
     kind: Kind = .unreadable,
     /// The error behind it, for `unreadable`.
     cause: ?anyerror = null,
-    /// What's wrong with `topdown/style.txt`, for `invalidStyle`.
+    /// What's wrong with `topdown/style.txt` or `isometric/style.txt`, for `invalidStyle` and
+    /// `invalidIsometricStyle`.
     style: Style.Problem = .{},
 
     pub const Kind = enum {
@@ -66,12 +91,14 @@ pub const Problem = struct {
         /// `theme.js` holds `</script`, which would end its element early once inlined.
         scriptEndsItsElement,
         invalidStyle,
+        invalidIsometricStyle,
     };
 };
 
 /// The built-in theme called `name`, or else the theme in the folder at that path. Colours its
-/// style leaves out are `defaultColours`; a folder without `topdown/style.txt` draws the map as
-/// Printed does. `style` replaces the style its file names.
+/// top-down style leaves out are `defaultColours`; a folder without `topdown/style.txt` draws
+/// the map as Printed does, and one without `isometric/style.txt` the isometric view in its
+/// top-down style (`isometricOf`). `style` replaces the top-down style its file names.
 pub fn load(arena: std.mem.Allocator, io: Io, name: []const u8, style: ?Style.Name, problem: *Problem) error{InvalidTheme}!Theme {
     for (builtIn) |entry| {
         if (!std.mem.eql(u8, entry.name, name)) continue;
@@ -102,7 +129,13 @@ fn loadFolder(arena: std.mem.Allocator, io: Io, path: []const u8, style: ?Style.
         else => return err,
     };
     const topdown = Style.parse(text, defaultColours, style, &problem.style) catch return fail(problem, .invalidStyle);
-    return .{ .stylesheet = stylesheet, .script = script, .topdown = topdown };
+    const isometric = if (folder.readFileAlloc(io, "isometric/style.txt", arena, .limited(1 << 20))) |isometricText|
+        Style.parse(isometricText, coloursOf(topdown), null, &problem.style) catch return fail(problem, .invalidIsometricStyle)
+    else |err| switch (err) {
+        error.FileNotFound => isometricOf(topdown),
+        else => return err,
+    };
+    return .{ .stylesheet = stylesheet, .script = script, .topdown = topdown, .isometric = isometric };
 }
 
 fn fail(problem: *Problem, kind: Problem.Kind) error{InvalidTheme} {
@@ -112,6 +145,16 @@ fn fail(problem: *Problem, kind: Problem.Kind) error{InvalidTheme} {
 
 test {
     _ = Style;
+}
+
+test "the built-in isometric styles" {
+    try std.testing.expectEqualDeep(Style{ .relief = printed.topdown.relief }, printed.isometric);
+    try std.testing.expectEqualDeep(Style{ .game = null }, plain.isometric);
+}
+
+test isometricOf {
+    try std.testing.expectEqualDeep(Style{ .game = null }, isometricOf(.{ .game = "coloured" }));
+    try std.testing.expectEqualDeep(printed.topdown, isometricOf(printed.topdown));
 }
 
 test "the built-in themes can be inlined" {
