@@ -400,8 +400,10 @@ fn View(comptime Source: type) type {
         pub const Worker = struct {
             view: *const Self,
             reader: Source.Reader,
-            /// Where a chunk is read into before its blocks' kinds go into the cache.
+            /// Where a chunk is read into, and its blocks' kinds worked out, before they go into
+            /// the cache.
             chunk: *world.Chunk,
+            kinds: *ChunkCache.Kinds,
             cache: ChunkCache,
             /// The depth of what each pixel shows: x + y + z of its block, larger nearer.
             depth: *[tiles.size * tiles.size]i32,
@@ -411,15 +413,18 @@ fn View(comptime Source: type) type {
                 errdefer reader.deinit(allocator);
                 const chunk = try allocator.create(world.Chunk);
                 errdefer allocator.destroy(chunk);
+                const kinds = try allocator.create(ChunkCache.Kinds);
+                errdefer allocator.destroy(kinds);
                 var cache: ChunkCache = try .init(allocator, ChunkCache.defaultChunks, ChunkCache.defaultChunksWithBlocks);
                 errdefer cache.deinit(allocator);
                 const depth = try allocator.create([tiles.size * tiles.size]i32);
-                return .{ .view = view, .reader = reader, .chunk = chunk, .cache = cache, .depth = depth };
+                return .{ .view = view, .reader = reader, .chunk = chunk, .kinds = kinds, .cache = cache, .depth = depth };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
                 allocator.destroy(self.depth);
                 self.cache.deinit(allocator);
+                allocator.destroy(self.kinds);
                 allocator.destroy(self.chunk);
                 self.reader.deinit(allocator);
             }
@@ -496,13 +501,22 @@ fn View(comptime Source: type) type {
                     _ = self.cache.put(position, false);
                     return null;
                 }
-                const kinds = self.cache.put(position, true).?;
                 const byId = self.view.kinds;
-                for (kinds, self.chunk.solid, self.chunk.liquid) |*kind, solid, liquid| {
+                var drawn: u8 = 0;
+                for (self.kinds, self.chunk.solid, self.chunk.liquid) |*kind, solid, liquid| {
                     const solidKind = if (solid >= 0 and solid < byId.len) byId[@intCast(solid)] else 0;
                     const liquidKind = if (liquid >= 0 and liquid < byId.len) byId[@intCast(liquid)] else 0;
                     kind.* = if (solidKind != 0) solidKind else liquidKind;
+                    drawn |= kind.*;
                 }
+                // A chunk of only air, plants or invisible blocks, such as those in the sky, is kept
+                // as having nothing to draw: lines pass it in one step, and it takes no slot.
+                if (drawn == 0) {
+                    _ = self.cache.put(position, false);
+                    return null;
+                }
+                const kinds = self.cache.put(position, true).?;
+                kinds.* = self.kinds.*;
                 return kinds;
             }
 
