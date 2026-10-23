@@ -26,8 +26,10 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 ## Isometric render
 
-7. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
-8. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
+7. **Coloured cubes.** Every block drawn as a cube in its average colour, its top, left and right faces lit differently, from one direction. Builds the isometric view without block art: tiles defined in pixels, each a slanted strip through the world's height; drawing back to front; what the game's reader gives the renderer (blocks in 3D, where the top-down map has a surface); a second projection in the viewer; and how fast it is, as it reads every chunk under a tile.
+8. **Textured cubes.** Cube-shaped blocks (rock, soil, planks, ores) drawn once, when preparing blocks, as an isometric image per block ID and direction, as Mapcrafter's Blockcrafter does; a render pastes them. Climate tint.
+9. **Shapes.** A rasterizer for the game's shapes (boxes with rotations and per-face texture coordinates) draws the images of every other block: stairs, slabs, fences, plants, leaves and liquids.
+10. **Block entities.** Chiseled blocks first, drawn per block at render time from their boxes and their materials' textures; then ground storage (needs item stacks and item models), then containers, displays and decorations.
 
 ## Done
 
