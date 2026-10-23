@@ -58,6 +58,26 @@ pub const Heights = struct {
     sea: u16,
 };
 
+/// A cube of the world's blocks, 32 on each side, as the game's block IDs; 0 is air. Chunk
+/// (x, y, z) holds blocks x · 32 to x · 32 + 31, and likewise for y and z; within it, block
+/// (x, y, z) is at index `(y * side + z) * side + x`. Every game's reader fills them, whatever
+/// the game itself stores its blocks in.
+pub const Chunk = struct {
+    pub const side = 32;
+    pub const volume = side * side * side;
+
+    solid: [volume]i32,
+    /// Liquids, in their own layer: a block and a liquid can share a place, as plants growing
+    /// in water do.
+    liquid: [volume]i32,
+};
+
+/// The chunks at x and z from the bottom of the world to the top.
+pub const ChunkColumn = struct {
+    x: i32,
+    z: i32,
+};
+
 /// The surface of a tile: what's on top of each of its block columns, and of a one-block ring
 /// around them, so hill shading and coastlines match across tile edges. Column (x, z) is at
 /// index `z * side + x`; the tile's own columns start at (1, 1).

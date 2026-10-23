@@ -31,6 +31,20 @@ pub const Layer = struct {
         return self.palette[index];
     }
 
+    /// Every block ID, as `get` would give them, much faster than one at a time.
+    pub fn unpack(self: *const Layer, ids: *[planeWords * 32]i32) void {
+        if (self.bits == 0) return @memset(ids, self.palette[0]);
+        for (0..planeWords) |word| {
+            var indexes: @Vector(32, u16) = @splat(0);
+            for (self.planes[0..self.bits], 0..) |*plane, b| {
+                const bits: @Vector(32, u1) = @bitCast(plane[word]);
+                indexes |= @as(@Vector(32, u16), bits) << @splat(@as(u4, @intCast(b)));
+            }
+            const array: [32]u16 = indexes;
+            for (ids[word * 32 ..][0..32], array) |*id, index| id.* = self.palette[index];
+        }
+    }
+
     pub fn clear(self: *Layer) void {
         self.bits = 0;
         self.palette[0] = 0;
@@ -118,6 +132,22 @@ test "the one-block chunk from the 1.19 sample" {
     // Block (5, 7, 18) is n = 7,749: word 242, bit 5.
     try std.testing.expectEqual(164, layer.get(7749));
     try std.testing.expectEqual(0, layer.get(0));
+}
+
+test "unpack gives what get gives" {
+    const layer = try std.testing.allocator.create(Layer);
+    defer std.testing.allocator.destroy(layer);
+    layer.bits = 3;
+    for (layer.palette[0..8], 0..) |*id, i| id.* = @intCast(100 + i);
+    var random: std.Random.DefaultPrng = .init(1);
+    for (layer.planes[0..3]) |*plane| random.random().bytes(std.mem.sliceAsBytes(plane));
+    const ids = try std.testing.allocator.create([planeWords * 32]i32);
+    defer std.testing.allocator.destroy(ids);
+    layer.unpack(ids);
+    for (ids, 0..) |id, i| try std.testing.expectEqual(layer.get(i), id);
+    layer.clear();
+    layer.unpack(ids);
+    try std.testing.expectEqual(0, ids[12345]);
 }
 
 test "a palette that isn't a power of two is padded with air" {

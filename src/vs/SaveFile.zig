@@ -21,6 +21,8 @@ path: []const u8,
 unsaved: bool,
 db: DB,
 gameData: GameData,
+/// The chunk columns with a map chunk, in dimension 0: those that may have blocks.
+chunkColumns: []world.ChunkColumn,
 /// The tiles that may have something to draw.
 tileList: []tiles.Tile,
 /// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else its code.
@@ -59,9 +61,11 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem:
     errdefer db.deinit();
 
     // SQLite opens any file lazily, so this first query is where a wrong file shows up.
-    const list = readTileList(allocator, db) catch |err| return fail(problem, .notASave, err);
+    const columns = readChunkColumns(allocator, db) catch |err| return fail(problem, .notASave, err);
+    errdefer allocator.free(columns);
+    if (columns.len == 0) return fail(problem, .noChunks, null);
+    const list = try tilesOf(allocator, columns);
     errdefer allocator.free(list);
-    if (list.len == 0) return fail(problem, .noChunks, null);
 
     // Block IDs are per save; this maps them to block codes.
     const gameData = GameData.read(allocator, db) catch |err| return fail(problem, .unreadableBlockList, err);
@@ -78,6 +82,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem:
         .path = path,
         .db = db,
         .gameData = gameData,
+        .chunkColumns = columns,
         .tileList = list,
         .appearances = appearances,
         // 8 for the default height of 256.
@@ -95,6 +100,7 @@ pub fn close(self: SaveFile, allocator: std.mem.Allocator) void {
     allocator.free(self.appearances);
     self.gameData.deinit();
     allocator.free(self.tileList);
+    allocator.free(self.chunkColumns);
     self.db.deinit();
 }
 
@@ -201,6 +207,11 @@ pub fn mapType(self: *const SaveFile, id: i32) world.MapType {
     return self.appearance(id).mapType;
 }
 
+/// False for air and for blocks not seen in play, such as meta blocks.
+pub fn isVisible(self: *const SaveFile, id: i32) bool {
+    return id != 0 and !self.appearance(id).invisible;
+}
+
 /// The game's own map styles, which a theme names as `game:<name>`, or `game` for the default.
 pub const MapStyle = MapPainter.MapStyle;
 /// Paints the map in one of them from what a `Reader` reads.
@@ -232,20 +243,31 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
 /// A tile is 16 × 16 chunk columns, the same area as a map region.
 const chunksPerTile = tiles.size / 32;
 
-/// The tiles holding a chunk column with a map chunk, in dimension 0. Every chunk column has one
-/// in the saves seen (docs/save-format/README.md#2-positions), and `mapchunk` has a row per
-/// column where `chunk` has one per chunk, so it's much quicker to scan. Partly generated
-/// columns aren't drawn (see `Reader.readColumn`), so a tile of only those comes out empty;
-/// filtering them here would mean reading every map chunk first.
-fn readTileList(allocator: std.mem.Allocator, db: DB) ![]tiles.Tile {
-    var set: std.AutoArrayHashMapUnmanaged(tiles.Tile, void) = .empty;
-    defer set.deinit(allocator);
+/// The chunk columns with a map chunk, in dimension 0. Every chunk column has one in the saves
+/// seen (docs/save-format/README.md#2-positions), and `mapchunk` has a row per column where
+/// `chunk` has one per chunk, so it's much quicker to scan. Partly generated columns aren't
+/// drawn (see `Reader.readColumn`); filtering them here would mean reading every map chunk
+/// first.
+fn readChunkColumns(allocator: std.mem.Allocator, db: DB) ![]world.ChunkColumn {
+    var columns: std.ArrayList(world.ChunkColumn) = .empty;
+    errdefer columns.deinit(allocator);
     const rows = try db.prepare("SELECT position FROM mapchunk;");
     defer rows.finalize();
     while (rows.step()) {
         const position: Chunk.Position = @bitCast(rows.column(u64, 0));
         if (position.dimension() != 0) continue;
-        try set.put(allocator, .{ .x = position.x / chunksPerTile, .y = position.z / chunksPerTile }, {});
+        try columns.append(allocator, .{ .x = position.x, .z = position.z });
+    }
+    return columns.toOwnedSlice(allocator);
+}
+
+/// The top-down tiles holding `columns`. A tile of only partly generated columns comes out
+/// empty.
+fn tilesOf(allocator: std.mem.Allocator, columns: []const world.ChunkColumn) ![]tiles.Tile {
+    var set: std.AutoArrayHashMapUnmanaged(tiles.Tile, void) = .empty;
+    defer set.deinit(allocator);
+    for (columns) |column| {
+        try set.put(allocator, .{ .x = @divFloor(column.x, chunksPerTile), .y = @divFloor(column.z, chunksPerTile) }, {});
     }
     return allocator.dupe(tiles.Tile, set.keys());
 }
@@ -320,6 +342,9 @@ pub const Reader = struct {
     grainTint: []world.Rgb,
     /// Chunks read: those holding a surface block, in each tile and its ring.
     chunksRead: usize = 0,
+    /// The chunk column `readChunk` last looked up, and whether it's fully generated.
+    lastColumn: ?world.ChunkColumn = null,
+    lastColumnDone: bool = false,
 
     /// `style` is one of the game's own, or null for another: it decides what's read beyond
     /// the surface, and how chiseled blocks show (`showChiseledBlocks`).
@@ -406,6 +431,35 @@ pub const Reader = struct {
             try self.readColumn(surface.*, @intCast(cx), @intCast(cz), x0, z0);
         };
         if (self.topTint.len > 0) try self.readTints(tile, surface.*);
+    }
+
+    /// Fills `out` with chunk (x, y, z). Returns false, leaving `out` as it was, where the
+    /// save has no chunk, or its column isn't fully generated: `read` leaves those out too.
+    pub fn readChunk(self: *Reader, x: i32, y: i32, z: i32, out: *world.Chunk) !bool {
+        if (x < 0 or z < 0 or y < 0 or x > Chunk.Position.maxXZ or z > Chunk.Position.maxXZ or y >= self.save.levels) return false;
+        if (!self.isDone(.{ .x = x, .z = z })) return false;
+        const position = (Chunk.Position{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) }).position64();
+        self.chunkRow.bind(1, position);
+        defer self.chunkRow.reset();
+        if (!self.chunkRow.step()) return false;
+        self.chunksRead += 1;
+        decodeOrWarn(&self.decoder, self.chunk, position, self.chunkRow.column([]const u8, 0)) catch return false;
+        self.chunk.blocks.unpack(&out.solid);
+        self.chunk.liquids.unpack(&out.liquid);
+        return true;
+    }
+
+    /// Whether a chunk column is fully generated. A column whose map chunk can't be read isn't.
+    fn isDone(self: *Reader, column: world.ChunkColumn) bool {
+        if (self.lastColumn) |last| if (std.meta.eql(last, column)) return self.lastColumnDone;
+        self.lastColumn = column;
+        self.lastColumnDone = false;
+        self.mapChunkRow.bind(1, (Chunk.Position{ .x = @intCast(column.x), .z = @intCast(column.z) }).position64());
+        defer self.mapChunkRow.reset();
+        if (!self.mapChunkRow.step()) return false;
+        self.mapChunk.decode(self.mapChunkRow.column([]const u8, 0)) catch {};
+        self.lastColumnDone = self.mapChunk.stage == .done;
+        return self.lastColumnDone;
     }
 
     /// Tints the tile's own columns by the climate in its map region and the season. A tile
