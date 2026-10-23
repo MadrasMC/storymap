@@ -140,7 +140,7 @@ fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets, fo
     const file = "config/colormaps.json";
     const bytes = try assets.read(arena, io, Assets.gameDomain, file) orelse return &.{};
     const json = Json.parse(arena, bytes) catch |err| {
-        std.debug.print("storymap: can't read the game's {s} ({s}); nothing will be tinted\n", .{ file, @errorName(err) });
+        std.debug.print("storymap: {s}: could not read ({s}); nothing will be tinted\n", .{ file, @errorName(err) });
         return &.{};
     };
     if (json != .array) return &.{};
@@ -153,7 +153,7 @@ fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets, fo
         const domain = if (colon) |c| base[0..c] else Assets.gameDomain;
         const path = try std.fmt.allocPrint(arena, "textures/{s}.png", .{if (colon) |c| base[c + 1 ..] else base});
         const png = try assets.read(arena, io, domain, path) orelse {
-            std.debug.print("storymap: the colour map {s} has no image {s}:{s}\n", .{ code, domain, path });
+            std.debug.print("storymap: colour map {s}: no image {s}:{s}\n", .{ code, domain, path });
             continue;
         };
         const sub = try std.fmt.allocPrint(arena, "{s}/{s}.png", .{ colourMapFolder, code });

@@ -423,10 +423,10 @@ pub const Reader = struct {
             // A finished column whose heights can't be read is scanned instead. One whose
             // stage can't be read either isn't drawn.
             if (stored.stage != .done) {
-                if (stored.stage == .none) std.debug.print("storymap: skipping chunk column ({}, {}): {s}\n", .{ cx, cz, @errorName(err) });
+                if (stored.stage == .none) std.debug.print("storymap: skipped chunk column ({}, {}): could not read ({s})\n", .{ cx, cz, @errorName(err) });
                 return;
             }
-            std.debug.print("storymap: scanning chunk column ({}, {}) for heights: {s}\n", .{ cx, cz, @errorName(err) });
+            std.debug.print("storymap: scanned chunk column ({}, {}) for heights: could not read its stored ones ({s})\n", .{ cx, cz, @errorName(err) });
             @memset(&stored.rainHeight, MapChunk.unset);
         };
         if (stored.stage != .done) return;
@@ -575,7 +575,7 @@ const Span = struct {
 fn decodeOrWarn(decoder: *Chunk.Decoder, chunk: *Chunk, position: u64, data: []const u8) !void {
     decoder.decode(chunk, position, data) catch |err| {
         const pos = chunk.position;
-        std.debug.print("storymap: skipping chunk ({}, {}, {}): {s}\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
+        std.debug.print("storymap: skipped chunk ({}, {}, {}): could not read ({s})\n", .{ pos.x, pos.y, pos.z, @errorName(err) });
         return err;
     };
 }

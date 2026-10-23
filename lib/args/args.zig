@@ -256,16 +256,16 @@ pub const Problem = struct {
         missingPositional,
     };
 
-    /// The problem as a message, e.g. "unknown option --verbos", for `{f}`.
+    /// The problem as a message, e.g. "unknown option `--verbos`", for `{f}`.
     pub fn format(self: Problem, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self.kind) {
             .missingArguments => try writer.writeAll("no arguments given"),
-            .unknownCommand => try writer.print("unknown command {s}", .{self.argument}),
-            .unknownOption => try writer.print("unknown option {s}", .{self.argument}),
-            .unexpectedValue => try writer.print("--{s} doesn't take a value", .{self.argument}),
-            .missingValue => try writer.print("--{s} needs a value", .{self.argument}),
-            .extraArgument => try writer.print("unexpected argument {s}", .{self.argument}),
-            .missingPositional => try writer.print("<{s}> is missing", .{self.argument}),
+            .unknownCommand => try writer.print("unknown command `{s}`", .{self.argument}),
+            .unknownOption => try writer.print("unknown option `{s}`", .{self.argument}),
+            .unexpectedValue => try writer.print("`--{s}` doesn't take a value", .{self.argument}),
+            .missingValue => try writer.print("`--{s}` needs a value", .{self.argument}),
+            .extraArgument => try writer.print("unexpected argument `{s}`", .{self.argument}),
+            .missingPositional => try writer.print("`<{s}>` is missing", .{self.argument}),
         }
     }
 };
@@ -553,5 +553,5 @@ test "Problem.format" {
     var problem: Problem = .{};
     try std.testing.expectError(error.InvalidArguments, parse(testSpec, &.{ "a", "--verbos" }, &problem));
     var buffer: [64]u8 = undefined;
-    try std.testing.expectEqualStrings("unknown option --verbos", try std.fmt.bufPrint(&buffer, "{f}", .{problem}));
+    try std.testing.expectEqualStrings("unknown option `--verbos`", try std.fmt.bufPrint(&buffer, "{f}", .{problem}));
 }

@@ -114,12 +114,12 @@ Every command takes `-h, --help`, which prints its help on stdout instead of run
 
 | kind | message |
 | --- | --- |
-| `missingArguments` | no arguments given |
-| `unknownCommand` | unknown command `x` |
-| `unknownOption` | unknown option `--x` |
-| `unexpectedValue` | `--x` doesn't take a value |
-| `missingValue` | `--x` needs a value |
-| `extraArgument` | unexpected argument `x` |
-| `missingPositional` | `<x>` is missing |
+| `missingArguments` | `no arguments given` |
+| `unknownCommand` | ``unknown command `x` `` |
+| `unknownOption` | ``unknown option `--x` `` |
+| `unexpectedValue` | `` `--x` doesn't take a value`` |
+| `missingValue` | `` `--x` needs a value`` |
+| `extraArgument` | ``unexpected argument `x` `` |
+| `missingPositional` | `` `<x>` is missing`` |
 
 `missingArguments` is for a command line with no arguments at all where some are needed, so a program can print only the usage there.

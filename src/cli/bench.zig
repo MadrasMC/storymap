@@ -34,7 +34,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const json = parsed.flag("json");
     const dbPath = parsed.positional("save-file").?;
     const runs = if (parsed.positional("runs")) |text| std.fmt.parseInt(usize, text, 10) catch 0 else 5;
-    if (runs == 0) fail("storymap: [runs] must be a whole number above 0\n", .{});
+    if (runs == 0) fail("storymap: `[runs]`: invalid count {s}. expected: a whole number above 0\n", .{parsed.positional("runs").?});
 
     const open = try allocator.alloc(Io.Duration, runs);
     defer allocator.free(open);

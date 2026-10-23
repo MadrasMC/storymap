@@ -97,7 +97,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
     for (try assets.list(arena, io, "blocktypes")) |name| {
         if (!std.mem.endsWith(u8, name.path, ".json")) continue;
         const blockType = expander.blockType(name) catch |err| {
-            std.debug.print("storymap: skipping the block type {s}:{s} ({s})\n", .{ name.domain, name.path, @errorName(err) });
+            std.debug.print("storymap: skipped block type {s}:{s}: could not read ({s})\n", .{ name.domain, name.path, @errorName(err) });
             continue;
         };
         var warned = false;
@@ -114,7 +114,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                 else => look: {
                     // As in the game, a variant whose …ByType properties can't be resolved
                     // keeps the defaults.
-                    if (!warned) std.debug.print("storymap: can't resolve the …ByType properties of {s}:{s} ({s})\n", .{ name.domain, name.path, @errorName(err) });
+                    if (!warned) std.debug.print("storymap: {s}:{s}: could not resolve its …ByType properties ({s})\n", .{ name.domain, name.path, @errorName(err) });
                     warned = true;
                     break :look Look{ .material = defaultMaterial, .colorCode = defaultColorCode(defaultMaterial), .textures = .{} };
                 },
@@ -385,7 +385,7 @@ const Expander = struct {
                 const location = try Location.parse(arena, propertyName, Assets.gameDomain);
                 const key = try std.fmt.allocPrint(arena, "{s}:{s}", .{ location.domain, location.path });
                 const codeKey = self.properties.get(key) orelse {
-                    std.debug.print("storymap: {s}:{s} names the world property {s}, which doesn't exist\n", .{ name.domain, name.path, key });
+                    std.debug.print("storymap: {s}:{s}: unknown world property {s}\n", .{ name.domain, name.path, key });
                     break;
                 };
                 const typeName = groupCode orelse codeKey[std.mem.indexOfScalar(u8, codeKey, ':').? + 1 ..];
@@ -483,7 +483,7 @@ const Expander = struct {
 
 fn matchOrWarn(pattern: Location, code: Location, name: Assets.Name) bool {
     return pattern.matches(code) catch |err| {
-        std.debug.print("storymap: {s}:{s} filters its variants with the pattern {s}, which can't be read ({s})\n", .{ name.domain, name.path, pattern.path, @errorName(err) });
+        std.debug.print("storymap: {s}:{s}: could not read variant pattern {s} ({s})\n", .{ name.domain, name.path, pattern.path, @errorName(err) });
         return false;
     };
 }

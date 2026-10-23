@@ -40,24 +40,24 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Prepared {
     const arena = init.arena.allocator();
 
     const gamePath = folders.game orelse Assets.findFolder(arena, io, init.environ_map, .game) orelse {
-        if (force) console.fail("couldn't find Vintage Story; pass its install folder with --game\n", .{});
+        if (force) console.fail("could not locate Vintage Story; pass `--game <folder>`\n", .{});
         var blocksDir = std.Io.Dir.cwd().openDir(io, folders.blocks, .{ .iterate = true }) catch return noBlocks();
         defer blocksDir.close(io);
         const newest = (Prepared.newest(arena, io, blocksDir) catch null) orelse return noBlocks();
         var folder = blocksDir.openDir(io, newest, .{}) catch return noBlocks();
         defer folder.close(io);
         const prepared = Prepared.load(init.gpa, io, folder) catch return noBlocks();
-        std.debug.print("blocks: prepared earlier for Vintage Story {s}; the game wasn't found\n", .{prepared.gameVersion});
+        std.debug.print("blocks: prepared earlier for Vintage Story {s} (game not found)\n", .{prepared.gameVersion});
         return prepared;
     };
 
     var assets = openAssets(init, gamePath, folders.data);
     defer assets.close(io);
     var keyBuffer: [16]u8 = undefined;
-    const key = Prepared.key(&keyBuffer, io, &assets) catch |err| console.fail("can't read the mods ({s})\n", .{@errorName(err)});
+    const key = Prepared.key(&keyBuffer, io, &assets) catch |err| console.fail("could not read the mods ({s})\n", .{@errorName(err)});
     const folderPath = std.fs.path.join(arena, &.{ folders.blocks, key }) catch console.fail("out of memory\n", .{});
     var folder = std.Io.Dir.cwd().createDirPathOpen(io, folderPath, .{}) catch |err|
-        console.fail("can't create {s} ({s})\n", .{ folderPath, @errorName(err) });
+        console.fail("{s}: could not create ({s})\n", .{ folderPath, @errorName(err) });
     defer folder.close(io);
 
     const mods = assets.sources.items.len - 1;
@@ -67,19 +67,19 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Prepared {
         var scratch: std.heap.ArenaAllocator = .init(init.gpa);
         defer scratch.deinit();
         const count = Prepared.prepare(scratch.allocator(), io, &assets, folder) catch |err|
-            console.fail("can't prepare the blocks into {s} ({s})\n", .{ folderPath, @errorName(err) });
+            console.fail("{s}: could not prepare the blocks ({s})\n", .{ folderPath, @errorName(err) });
         const seconds = @as(f64, @floatFromInt(start.untilNow(io, .awake).toMilliseconds())) / 1000;
-        std.debug.print("blocks: prepared {} from Vintage Story {s} and {} {s} in {d:.1} s, into {s}\n", .{
+        std.debug.print("blocks: {} prepared from Vintage Story {s} and {} {s} in {d:.1} s ({s})\n", .{
             count, assets.version orelse "(unknown version)", mods, modText, seconds, folderPath,
         });
     } else {
         std.debug.print("blocks: Vintage Story {s} and {} {s}, prepared earlier\n", .{ assets.version orelse "(unknown version)", mods, modText });
     }
-    return Prepared.load(init.gpa, io, folder) catch |err| console.fail("can't read the blocks prepared in {s} ({s})\n", .{ folderPath, @errorName(err) });
+    return Prepared.load(init.gpa, io, folder) catch |err| console.fail("{s}: could not read the prepared blocks ({s})\n", .{ folderPath, @errorName(err) });
 }
 
 fn noBlocks() ?Prepared {
-    std.debug.print("storymap: couldn't find Vintage Story, so its blocks aren't known; pass its install folder with --game\n", .{});
+    std.debug.print("storymap: could not locate Vintage Story; drawing the map without block colours; pass `--game <folder>`\n", .{});
     return null;
 }
 
@@ -88,13 +88,13 @@ fn noBlocks() ?Prepared {
 fn openAssets(init: std.process.Init, game: []const u8, dataPath: ?[]const u8) Assets {
     const io = init.io;
     const data = dataPath orelse Assets.findFolder(init.arena.allocator(), io, init.environ_map, .data);
-    var gameDir = std.Io.Dir.cwd().openDir(io, game, .{}) catch |err| console.fail("can't open the game folder {s} ({s})\n", .{ game, @errorName(err) });
+    var gameDir = std.Io.Dir.cwd().openDir(io, game, .{}) catch |err| console.fail("{s}: could not open the game folder ({s})\n", .{ game, @errorName(err) });
     defer gameDir.close(io);
     var dataDir: ?std.Io.Dir = if (data) |path| std.Io.Dir.cwd().openDir(io, path, .{}) catch |err|
-        console.fail("can't open the data folder {s} ({s})\n", .{ path, @errorName(err) }) else null;
+        console.fail("{s}: could not open the data folder ({s})\n", .{ path, @errorName(err) }) else null;
     defer if (dataDir) |*dir| dir.close(io);
     return Assets.open(init.gpa, io, gameDir, dataDir) catch |err| switch (err) {
-        error.NoAssetsFolder => console.fail("{s} has no assets folder; is it a Vintage Story install?\n", .{game}),
-        else => console.fail("can't read the assets in {s} ({s})\n", .{ game, @errorName(err) }),
+        error.NoAssetsFolder => console.fail("{s}: not a Vintage Story install (missing assets folder)\n", .{game}),
+        else => console.fail("{s}: could not read the assets ({s})\n", .{ game, @errorName(err) }),
     };
 }
