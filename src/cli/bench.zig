@@ -1,8 +1,8 @@
 //! `storymap bench`: renders a save several times and prints the median time of each stage,
 //! for the numbers in docs/rendering.md#performance. Build with -Doptimize=ReleaseFast.
 //!
-//! The PNGs are encoded but not written, so the disk isn't timed. One untimed render first
-//! warms the file cache.
+//! The PNGs are encoded but not written, so the disk isn't timed, unless `--folder` names a
+//! folder to write them to. One untimed render first warms the file cache.
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
@@ -10,6 +10,7 @@ const DB = @import("sqlite");
 const Chunk = @import("vs").Chunk;
 const SaveFile = @import("vs").SaveFile;
 const topdown = @import("renderer").topdown;
+const isometric = @import("renderer").isometric;
 const Theme = @import("theme");
 const build_options = @import("build_options");
 const console = @import("console");
@@ -19,6 +20,8 @@ const args = @import("args");
 pub const spec: args.Spec = .{
     .options = &.{
         .{ .name = "json", .description = "Print the results as one line of JSON, for scripts, instead of the summary." },
+        .{ .name = "isometric", .description = "Also render the isometric view." },
+        .{ .name = "folder", .value = "folder", .description = "Write the tiles into this folder, so writing them is timed too." },
     },
     .positionals = &.{
         .{ .name = "save-file", .description = "The world's save file (.vcdbs)." },
@@ -32,59 +35,62 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const io = init.io;
 
     const json = parsed.flag("json");
+    const withIsometric = parsed.flag("isometric");
     const dbPath = parsed.positional("save-file").?;
     const runs = if (parsed.positional("runs")) |text| std.fmt.parseInt(usize, text, 10) catch 0 else 5;
     if (runs == 0) fail("storymap: `[runs]`: invalid count {s}. expected: a whole number above 0\n", .{parsed.positional("runs").?});
+    var folder: ?Io.Dir = null;
+    if (parsed.value("folder")) |path| folder = Io.Dir.cwd().createDirPathOpen(io, path, .{}) catch |err|
+        fail("storymap: {s}: could not create ({s})\n", .{ path, @errorName(err) });
+    defer if (folder) |dir| dir.close(io);
 
-    const open = try allocator.alloc(Io.Duration, runs);
-    defer allocator.free(open);
-    const decode = try allocator.alloc(Io.Duration, runs);
-    defer allocator.free(decode);
-    const tiles = try allocator.alloc(Io.Duration, runs);
-    defer allocator.free(tiles);
-    const total = try allocator.alloc(Io.Duration, runs);
-    defer allocator.free(total);
-    const encodeShare = try allocator.alloc(f64, runs);
-    defer allocator.free(encodeShare);
-
-    var stats: topdown.Stats = .{};
+    const samples = try allocator.alloc(Sample, runs);
+    defer allocator.free(samples);
     // Every chunk in the save, which a render doesn't count: it reads only those it needs.
     var chunks: usize = 0;
-    _ = try openAndRender(allocator, io, dbPath, &stats);
-    for (0..runs) |i| {
-        open[i] = try openAndRender(allocator, io, dbPath, &stats);
-        tiles[i] = stats.duration;
-        total[i] = .{ .nanoseconds = open[i].nanoseconds + stats.duration.nanoseconds };
-        const draw: f64 = @floatFromInt(stats.draw.nanoseconds);
-        const encode: f64 = @floatFromInt(stats.encode.nanoseconds);
-        encodeShare[i] = encode / (draw + encode);
-
+    _ = try openAndRender(allocator, io, dbPath, folder, withIsometric);
+    for (samples) |*sample| {
+        sample.* = try openAndRender(allocator, io, dbPath, folder, withIsometric);
         const start: Io.Timestamp = .now(io, .awake);
         chunks = try decodeAll(allocator, dbPath);
-        decode[i] = start.untilNow(io, .awake);
+        sample.decode = start.untilNow(io, .awake);
     }
 
+    // The counts are the same every run.
+    const counts = samples[0];
     const threads = std.Thread.getCpuCount() catch 1;
     const world = std.fs.path.basename(dbPath);
     const seconds: Result.Seconds = .{
-        .open = medianSeconds(open),
-        .decode = medianSeconds(decode),
-        .tiles = medianSeconds(tiles),
-        .total = medianSeconds(total),
+        .open = try medianSeconds(allocator, samples, Sample.opening),
+        .decode = try medianSeconds(allocator, samples, Sample.decoding),
+        .tiles = try medianSeconds(allocator, samples, Sample.topdownTiles),
+        .total = try medianSeconds(allocator, samples, Sample.whole),
     };
-    std.mem.sort(f64, encodeShare, {}, std.sort.asc(f64));
+    const work = try workerSeconds(allocator, samples, .topdown);
+    const isometricResult: ?Result.Isometric = if (counts.isometric) |stats| .{
+        .tiles = stats.tiles,
+        .levels = stats.levels,
+        .chunksRead = stats.chunksRead,
+        .seconds = try medianSeconds(allocator, samples, Sample.isometricTiles),
+        .workerSeconds = try workerSeconds(allocator, samples, .isometric),
+    } else null;
     // A block is a metre across, so the area in blocks is in square metres.
-    const area: f64 = @floatFromInt(stats.area);
+    const area: f64 = @floatFromInt(counts.topdown.area);
 
     if (!json) {
-        std.debug.print("storymap {s}, {s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs\n", .{
-            build_options.version, world, chunks, stats.chunksRead, stats.tiles, threads, @tagName(builtin.mode), runs,
+        std.debug.print("storymap {s}, {s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs{s}\n", .{
+            build_options.version, world, chunks, counts.topdown.chunksRead, counts.topdown.tiles, threads, @tagName(builtin.mode), runs, if (folder != null) ", tiles written" else "",
         });
         printStage("open and block list", seconds.open, null);
         printStage("decode every chunk", seconds.decode, chunks);
         printStage("tiles", seconds.tiles, chunks);
+        if (isometricResult) |result| printStage("isometric tiles", result.seconds, null);
         printStage("end to end", seconds.total, chunks);
-        std.debug.print("  of the workers' time, {d:.0}% went to encoding PNGs\n", .{encodeShare[runs / 2] * 100});
+        printWork("top-down", work);
+        if (isometricResult) |result| {
+            printWork("isometric", result.workerSeconds);
+            std.debug.print("  isometric: {} tiles in {} levels, {} chunks read\n", .{ result.tiles, result.levels, result.chunksRead });
+        }
         std.debug.print("  map area {d:.2} km², drawn at {d:.1} km²/s end to end\n", .{ area / 1e6, area / 1e6 / seconds.total });
         return;
     }
@@ -95,20 +101,66 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .build = @tagName(builtin.mode),
         .threads = threads,
         .runs = runs,
+        .written = folder != null,
         .chunks = chunks,
-        .chunksRead = stats.chunksRead,
-        .tiles = stats.tiles,
-        .levels = stats.levels,
-        .area = stats.area,
+        .chunksRead = counts.topdown.chunksRead,
+        .tiles = counts.topdown.tiles,
+        .levels = counts.topdown.levels,
+        .area = counts.topdown.area,
         .seconds = seconds,
         .areaPerSecond = area / seconds.total,
         .chunksPerSecond = @as(f64, @floatFromInt(chunks)) / seconds.total,
-        .encodeShare = encodeShare[runs / 2],
+        .encodeShare = (work.filter + work.compress) / (work.draw + work.filter + work.compress + work.write + work.shrink),
+        .workerSeconds = work,
+        .isometric = isometricResult,
     };
-    var buffer: [1024]u8 = undefined;
+    var buffer: [2048]u8 = undefined;
     var stdout = Io.File.stdout().writerStreaming(io, &buffer);
-    try stdout.interface.print("{f}\n", .{std.json.fmt(result, .{})});
+    try stdout.interface.print("{f}\n", .{std.json.fmt(result, .{ .emit_null_optional_fields = false })});
     try stdout.interface.flush();
+}
+
+/// One render's times and counts.
+const Sample = struct {
+    open: Io.Duration = .zero,
+    topdown: topdown.Stats = .{},
+    isometric: ?isometric.Stats = null,
+    decode: Io.Duration = .zero,
+
+    fn opening(self: Sample) Io.Duration {
+        return self.open;
+    }
+    fn decoding(self: Sample) Io.Duration {
+        return self.decode;
+    }
+    fn topdownTiles(self: Sample) Io.Duration {
+        return self.topdown.duration;
+    }
+    fn isometricTiles(self: Sample) Io.Duration {
+        return if (self.isometric) |stats| stats.duration else .zero;
+    }
+    fn whole(self: Sample) Io.Duration {
+        return .{ .nanoseconds = self.open.nanoseconds + self.topdown.duration.nanoseconds + self.isometricTiles().nanoseconds };
+    }
+};
+
+/// The median of each part of the tile pipeline's time in one view, summed over all workers.
+fn workerSeconds(allocator: std.mem.Allocator, samples: []const Sample, comptime view: enum { topdown, isometric }) !Result.WorkerSeconds {
+    var out: Result.WorkerSeconds = undefined;
+    const times = try allocator.alloc(Io.Duration, samples.len);
+    defer allocator.free(times);
+    inline for (.{ "draw", "filter", "compress", "write", "shrink" }) |name| {
+        for (times, samples) |*time, sample| time.* = switch (view) {
+            .topdown => @field(sample.topdown.pipeline, name),
+            .isometric => @field(sample.isometric.?.pipeline, name),
+        };
+        @field(out, name) = toSeconds(median(times));
+    }
+    return out;
+}
+
+fn printWork(view: []const u8, work: Result.WorkerSeconds) void {
+    std.debug.print("  workers' time, {s}: draw {d:.2} s, filter {d:.2} s, compress {d:.2} s, write {d:.2} s, shrink {d:.2} s\n", .{ view, work.draw, work.filter, work.compress, work.write, work.shrink });
 }
 
 /// The results `--json` prints, for scripts comparing versions. Keys keep their names and
@@ -128,6 +180,8 @@ const Result = struct {
     threads: usize,
     /// Renders timed, after one untimed; every time is the median.
     runs: usize,
+    /// Whether the tiles were written (`--folder`), so writing them is in the times.
+    written: bool,
     /// Chunks in the save, and those read for the map.
     chunks: usize,
     chunksRead: usize,
@@ -141,36 +195,82 @@ const Result = struct {
     areaPerSecond: f64,
     /// The save's chunks per second, end to end; only those holding the surface are read.
     chunksPerSecond: f64,
-    /// The share of the workers' time spent encoding PNGs.
+    /// The share of the top-down workers' time spent encoding PNGs.
     encodeShare: f64,
+    /// Each part of the top-down tiles' time, summed over all workers.
+    workerSeconds: WorkerSeconds,
+    /// The isometric view, with `--isometric`.
+    isometric: ?Isometric = null,
 
     const Seconds = struct {
         /// Opening the save, its block list and which tiles it has.
         open: f64,
         /// Decoding every chunk, without drawing, for comparison.
         decode: f64,
-        /// Drawing and encoding every tile.
+        /// Drawing and encoding every top-down tile.
         tiles: f64,
-        /// Opening and the tiles: a whole render.
+        /// Opening and the tiles of every view rendered: a whole render.
         total: f64,
+    };
+
+    /// Summed over all workers, so more than the wall time.
+    const WorkerSeconds = struct {
+        /// Drawing full-detail tiles.
+        draw: f64,
+        /// Encoding PNGs: filtering their rows, then compressing them.
+        filter: f64,
+        compress: f64,
+        /// Creating the tiles' folders and writing their files; 0 without `--folder`.
+        write: f64,
+        /// Shrinking tiles for the level above.
+        shrink: f64,
+    };
+
+    const Isometric = struct {
+        tiles: usize,
+        levels: usize,
+        chunksRead: usize,
+        /// Drawing and encoding every isometric tile.
+        seconds: f64,
+        workerSeconds: WorkerSeconds,
     };
 };
 
 const style = Theme.printed.topdown;
 
-/// Renders the save without writing anything. Returns how long opening it took; `stats` gets the
-/// tiles' times.
-fn openAndRender(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, stats: *topdown.Stats) !Io.Duration {
+/// Opens the save and renders it, writing the tiles into `folder` if there is one.
+fn openAndRender(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, folder: ?Io.Dir, withIsometric: bool) !Sample {
+    var sample: Sample = .{};
     const start: Io.Timestamp = .now(io, .awake);
     const save = try render.openSaveFile(allocator, io, dbPath);
     defer save.close(allocator);
-    const opened = start.untilNow(io, .awake);
-    allocator.free(try topdown.render(SaveFile, allocator, io, &save, .discard, .{ .style = style, .stats = stats }));
-    return opened;
+    sample.open = start.untilNow(io, .awake);
+    const options: topdown.Options = .{ .style = style, .stats = &sample.topdown };
+    allocator.free(try if (folder) |dir|
+        topdown.render(SaveFile, allocator, io, &save, .{ .folder = dir }, options)
+    else
+        topdown.render(SaveFile, allocator, io, &save, .discard, options));
+    if (withIsometric) {
+        var stats: isometric.Stats = .{};
+        const isometricOptions: isometric.Options = .{ .palette = Theme.defaultColours, .stats = &stats };
+        allocator.free(try if (folder) |dir|
+            isometric.render(SaveFile, allocator, io, &save, .{ .folder = dir }, isometricOptions)
+        else
+            isometric.render(SaveFile, allocator, io, &save, .discard, isometricOptions));
+        sample.isometric = stats;
+    }
+    return sample;
 }
 
-fn medianSeconds(times: []Io.Duration) f64 {
-    return @as(f64, @floatFromInt(median(times).nanoseconds)) / std.time.ns_per_s;
+fn medianSeconds(allocator: std.mem.Allocator, samples: []const Sample, comptime get: fn (Sample) Io.Duration) !f64 {
+    const times = try allocator.alloc(Io.Duration, samples.len);
+    defer allocator.free(times);
+    for (times, samples) |*time, sample| time.* = get(sample);
+    return toSeconds(median(times));
+}
+
+fn toSeconds(duration: Io.Duration) f64 {
+    return @as(f64, @floatFromInt(duration.nanoseconds)) / std.time.ns_per_s;
 }
 
 fn printStage(name: []const u8, seconds: f64, chunks: ?usize) void {

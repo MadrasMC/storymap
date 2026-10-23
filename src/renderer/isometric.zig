@@ -44,9 +44,8 @@ pub const Stats = struct {
     chunksRead: usize = 0,
     /// Wall time of drawing and writing every tile; opening the source isn't in it.
     duration: Io.Duration = .zero,
-    /// Summed over all workers, as in `tiles.Stats`.
-    draw: Io.Duration = .zero,
-    encode: Io.Duration = .zero,
+    /// The time each part of the tile pipeline took, summed over all workers.
+    pipeline: tiles.Stats = .{},
 };
 
 pub const Options = struct {
@@ -76,8 +75,7 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
             .levels = rendered.levels,
             .chunksRead = view.chunksRead,
             .duration = start.untilNow(io, .awake),
-            .draw = rendered.draw,
-            .encode = rendered.encode,
+            .pipeline = rendered,
         };
         return result;
     }

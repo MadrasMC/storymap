@@ -53,9 +53,26 @@ pub const Stats = struct {
     levels: usize = 0,
     /// Drawing full-detail tiles (`Worker.draw`).
     draw: Io.Duration = .zero,
-    /// Encoding and writing the PNGs, and shrinking tiles for the level above.
-    encode: Io.Duration = .zero,
+    /// Encoding the PNGs: filtering their rows, then compressing them.
+    filter: Io.Duration = .zero,
+    compress: Io.Duration = .zero,
+    /// Creating the tiles' folders and writing their files; nothing with `Output.discard`.
+    write: Io.Duration = .zero,
+    /// Shrinking tiles to half size for the level above.
+    shrink: Io.Duration = .zero,
+
+    fn add(self: *Stats, other: Stats) void {
+        self.tiles += other.tiles;
+        inline for (.{ "draw", "filter", "compress", "write", "shrink" }) |name| {
+            @field(self, name).nanoseconds += @field(other, name).nanoseconds;
+        }
+    }
 };
+
+/// Adds the time since `start` to `total`.
+fn timeSince(io: Io, total: *Io.Duration, start: Io.Timestamp) void {
+    total.nanoseconds += start.untilNow(io, .awake).nanoseconds;
+}
 
 pub const Written = struct {
     level: u8,
@@ -142,9 +159,7 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     written.items.len += slots.taken.raw;
     for (jobs) |*job| {
         view.collect(&job.worker);
-        stats.tiles += job.stats.tiles;
-        stats.draw = .{ .nanoseconds = stats.draw.nanoseconds + job.stats.draw.nanoseconds };
-        stats.encode = .{ .nanoseconds = stats.encode.nanoseconds + job.stats.encode.nanoseconds };
+        stats.add(job.stats);
     }
     std.mem.sort(Written, written.items[start..], {}, Written.lessThan);
     return stats;
@@ -333,7 +348,7 @@ fn Job(comptime View: type) type {
             if (level == 0) {
                 const start: Io.Timestamp = .now(self.io, .awake);
                 const drawn = try self.worker.draw(tile, pixels);
-                self.stats.draw = .{ .nanoseconds = self.stats.draw.nanoseconds + start.untilNow(self.io, .awake).nanoseconds };
+                timeSince(self.io, &self.stats.draw, start);
                 if (!drawn) return false;
             } else {
                 @memset(pixels, transparent);
@@ -346,10 +361,10 @@ fn Job(comptime View: type) type {
                 }
                 if (!any) return false;
             }
-            const start: Io.Timestamp = .now(self.io, .awake);
             try self.write(level, tile, pixels);
+            const start: Io.Timestamp = .now(self.io, .awake);
             shrink(pixels, into, stride);
-            self.stats.encode = .{ .nanoseconds = self.stats.encode.nanoseconds + start.untilNow(self.io, .awake).nanoseconds };
+            timeSince(self.io, &self.stats.shrink, start);
             return true;
         }
 
@@ -381,22 +396,29 @@ fn Job(comptime View: type) type {
                 }
                 task.built.drawn[i] = any;
                 if (!any) continue;
-                const start: Io.Timestamp = .now(self.io, .awake);
                 try self.write(task.level, tile, pixels);
+                const start: Io.Timestamp = .now(self.io, .awake);
                 shrink(pixels, task.built.halves[i * half * half ..], half);
-                self.stats.encode = .{ .nanoseconds = self.stats.encode.nanoseconds + start.untilNow(self.io, .awake).nanoseconds };
+                timeSince(self.io, &self.stats.shrink, start);
             }
         }
 
         /// Encodes a tile as PNG and writes it to `<view>/<level>/<x>/<y>.png`.
         fn write(self: *Self, level: usize, tile: Tile, pixels: *const Pixels) !void {
-            const data = try self.encoder.encode(std.mem.sliceAsBytes(pixels), size, size);
+            const filtering: Io.Timestamp = .now(self.io, .awake);
+            self.encoder.filter(std.mem.sliceAsBytes(pixels), size, size);
+            timeSince(self.io, &self.stats.filter, filtering);
+            const compressing: Io.Timestamp = .now(self.io, .awake);
+            const data = try self.encoder.compress();
+            timeSince(self.io, &self.stats.compress, compressing);
             self.stats.tiles += 1;
 
             const folder = switch (self.output) {
                 .folder => |folder| folder,
                 .discard => return,
             };
+            const writing: Io.Timestamp = .now(self.io, .awake);
+            defer timeSince(self.io, &self.stats.write, writing);
             var buffer: [64]u8 = undefined;
             const dir = try std.fmt.bufPrint(&buffer, "{s}/{d}/{d}", .{ View.name, level, tile.x });
             try folder.createDirPath(self.io, dir);
