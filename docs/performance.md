@@ -4,11 +4,12 @@ How fast each tagged version of Storymap renders, measured as in [Measuring](#me
 
 ## Vintage Story 1.22.7
 
-A world of 29,192 chunks, 2.79 km² drawn as 34 tiles in 5 levels. Intel Core Ultra 5 225H, 14 threads, Windows 11; measured 2026-10-22 (UTC).
+A world of 29,192 chunks, 2.79 km² drawn as 34 tiles in 5 levels. Intel Core Ultra 5 225H, 14 threads, Windows 11; measured 2026-10-23 (UTC).
 
-| version | save | end to end | km²/s | chunks/s | tiles | open |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0.1.0 | 442c9598fa0d | 0.265 s | 10.6 | 110158 | 0.251 s | 0.014 s |
+| version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.2.0 | 442c9598fa0d | 0.224 s | 12.5 | 130209 | 0.210 s | 0.015 s | 153 MB |
+| 0.1.0 | 442c9598fa0d | 0.278 s | 10.1 | 105016 | 0.260 s | 0.014 s | 170 MB |
 
 ## Measuring
 
@@ -18,7 +19,7 @@ From the project's folder:
 zig run scripts/benchmark.zig -- <save-file>
 ```
 
-[`scripts/benchmark.zig`](../scripts/benchmark.zig) checks out each `v*` tag into its own worktree in `.benchmark/`, builds it with `-Doptimize=ReleaseFast` and runs `storymap bench <save-file> 7 --json`. It prints a table row for each, then the save, the world and the machine. `--tag v0.1.0` (repeatable) measures only the tags given, and `--current` adds the working tree.
+[`scripts/benchmark.zig`](../scripts/benchmark.zig) checks out each `v*` tag into its own worktree in `.benchmark/`, builds it with `-Doptimize=ReleaseFast` and runs `storymap bench <save-file> 7 --json`. It prints a table row for each, newest first, then the save, the world and the machine. `--tag v0.1.0` (repeatable) measures only the tags given, and `--current` adds the working tree.
 
 Each tag is built by the Zig release its `build.zig.zon` names. The script looks for it in `.benchmark/zig/`, or in `--zigs <folder>`, as its archive unpacks (`zig-x86_64-windows-0.17.0/`), and downloads it there from ziglang.org if it's missing.
 

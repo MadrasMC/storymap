@@ -65,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
     // Absolute, as each build runs in its own folder.
     const zigs = try std.fs.path.resolve(arena, &.{ try Io.Dir.cwd().realPathFileAlloc(io, ".", arena), zigsPath });
     if (tags.items.len == 0) {
-        var list = std.mem.tokenizeAny(u8, try git(arena, io, &.{ "tag", "--list", "v*", "--sort=v:refname" }), "\r\n");
+        var list = std.mem.tokenizeAny(u8, try git(arena, io, &.{ "tag", "--list", "v*", "--sort=-v:refname" }), "\r\n");
         while (list.next()) |tag| try tags.append(arena, tag);
     }
     if (tags.items.len == 0 and !current) fail("no tags to measure\n", .{});
@@ -77,16 +77,17 @@ pub fn main(init: std.process.Init) !void {
     try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
     try out.flush();
 
+    // Newest first, as the table lists them.
     var last: ?Result = null;
-    for (tags.items) |tag| {
-        std.debug.print("measuring {s}\n", .{tag});
-        last = try measure(arena, io, tag, save, runs, zigs);
-        try writeRow(out, last.?, "", saveHash);
-    }
     if (current) {
         std.debug.print("measuring the working tree\n", .{});
         last = try bench(arena, io, try build(arena, io, ".", zigs), save, runs);
         try writeRow(out, last.?, " (working tree)", saveHash);
+    }
+    for (tags.items) |tag| {
+        std.debug.print("measuring {s}\n", .{tag});
+        last = try measure(arena, io, tag, save, runs, zigs);
+        try writeRow(out, last.?, "", saveHash);
     }
 
     const result = last.?;
