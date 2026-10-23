@@ -26,10 +26,25 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 ## Isometric render
 
-7. **Coloured cubes.** Every block drawn as a cube in its average colour, its top, left and right faces lit differently, from one direction. Builds the isometric view without block art: tiles defined in pixels, each a slanted strip through the world's height; drawing back to front; what the game's reader gives the renderer (blocks in 3D, where the top-down map has a surface); a second projection in the viewer; and how fast it is, as it reads every chunk under a tile.
+7. **Coloured cubes.** Every block drawn as a cube in its average colour, its top, left and right faces lit differently, from one direction. Builds the isometric view without block art: tiles defined in pixels, each a slanted strip through the world's height; drawing back to front; what the game's reader gives the renderer (blocks in 3D, where the top-down map has a surface); a second projection in the viewer; and how fast it is, as it reads every chunk under a tile. Left:
+	- **Speed:** each tile now reads every chunk under it, at every height (109,168 reads for the larger world's 29,192 chunks at 32 pixels a block). Instead, follow lines of sight, as Mapcrafter does (`TileRenderer::renderBlocks`): from the top of the world, step through the blocks along each line into the world until the first one that isn't transparent, and read a chunk only when a line enters it. Underground chunks are then never read, except where a line reaches them, such as the walls at the explored area's edges, and transparent blocks in front come with it.
+		- **Cache:** each worker keeps the chunks it has read, as one byte per block saying how it's drawn (32 KB a chunk), in a fixed number of slots set up at the start; workers take neighbouring tiles, so most chunks are read once. Measure how many chunks a worker's tiles need at once to size it.
+		- **Map chunks:** whether a chunk column is fully generated is read once per column, not once per chunk.
+	- **Review the command line:** whether the isometric view stays behind `--isometric` or views are chosen another way, and whether the block width (32 pixels) is an option.
+	- **Review the viewer's switch between views:** where it sits in each theme, its wording, and keys for it.
 8. **Textured cubes.** Cube-shaped blocks (rock, soil, planks, ores) drawn once, when preparing blocks, as an isometric image per block ID and direction, as Mapcrafter's Blockcrafter does; a render pastes them. Climate tint.
 9. **Shapes.** A rasterizer for the game's shapes (boxes with rotations and per-face texture coordinates) draws the images of every other block: stairs, slabs, fences, plants, leaves and liquids.
 10. **Block entities.** Chiseled blocks first, drawn per block at render time from their boxes and their materials' textures; then ground storage (needs item stacks and item models), then containers, displays and decorations.
+
+## Output
+
+11. **Packs for hosting.** Tiles written into packs instead of one file each, served by any static host with HTTP range requests, and updated by incremental renders (item 2). Copying or uploading a few packs is much faster than tens of thousands of small files.
+	- **Packs:** each level split into packs of a block of its tiles (4 × 4, say: about 3 MB of top-down tiles), each the tiles' PNGs end to end. A pack's name holds a hash of its contents (`topdown/0/250_249.3fa9c2e1.tiles`), so it never changes once written and can be cached forever.
+	- **Index:** each tile's pack, offset, length and input hash (item 2), in one index per level that the viewer fetches when it first shows that level. The viewer asks for a tile's bytes with a range request.
+	- **Incremental renders:** a pack with a changed tile is written again under its new name, copying its unchanged tiles' bytes from the old one; then the index is replaced in one rename, and packs neither the new index nor the previous one names are deleted, so a viewer that loaded the previous index can finish. An update uploads only the changed packs and the indexes.
+	- **Interrupted renders:** the index still names only finished packs, so the map stays whole, and a rerun reuses the packs already written. Writing the index after each pack shows an interrupted render's tiles too.
+	- **Folder output stays the default:** browsers make no range requests from `file://` pages, so packs are for hosting.
+	- **Open:** the pack size, measured on real updates.
 
 ## Done
 
