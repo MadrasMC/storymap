@@ -35,15 +35,34 @@ Storymap.theme((map, ui) => {
 				<svg class="arrow" viewBox="0 0 8 10" aria-hidden="true"><path d="M4.3 9.4C3.7 7.6 4.5 5.6 3.9 3"/><path d="M1.2 5.6C2.1 4.7 3 3.7 3.8 2.6"/><path d="M3.5 2.3C4.5 3.4 5.6 4.3 6.9 5"/></svg>
 			</button>
 		</div>
+		<div class="panel views" id="views" role="group" aria-label="Views" hidden></div>
 		<p class="panel message" id="message" role="alert" hidden></p>`);
 	const buttons = [...document.querySelectorAll(".controls button")];
+
+	// The views, where the map has more than one: each a word, the one shown underlined.
+	const viewsEl = q("#views");
+	const viewButtons = map.views.map((v) => {
+		const button = document.createElement("button");
+		button.type = "button";
+		button.textContent = v.title;
+		button.addEventListener("click", () => map.showView(v.name));
+		viewsEl.append(button);
+		return { name: v.name, button };
+	});
+	viewsEl.hidden = viewButtons.length < 2;
+	buttons.push(...viewButtons.map((v) => v.button));
+	function showViews() {
+		for (const { name, button } of viewButtons) button.setAttribute("aria-pressed", String(map.view?.name === name));
+		if (!map.view) return;
+		const title = map.view.title.toLowerCase();
+		q("#kind").textContent = `${/^[aeiou]/.test(title) ? "An" : "A"} ${title} view of`;
+	}
 	q("#zoom-in").addEventListener("click", () => map.zoomIn());
 	q("#zoom-out").addEventListener("click", () => map.zoomOut());
 	q("#fit").addEventListener("click", () => map.fit());
 
 	// The cartouche: the kind of map, the world, and what it was made from and when.
 	if (map.world?.name) q("#name").textContent = map.world.name;
-	if (map.view) q("#kind").textContent = `A ${map.view.title.toLowerCase()} view of`;
 	q("#version").textContent = [map.game?.name, map.game?.version].filter(Boolean).join(" ");
 	if (map.rendered) q("#rendered").textContent = `Rendered ${map.rendered.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
 
@@ -255,11 +274,23 @@ Storymap.theme((map, ui) => {
 	return {
 		resize: arrange,
 		update(view) {
+			showViews();
 			statusEl.textContent = view.loading ? "Loading…" : "";
+			showZoom(view.scale, view.fit);
+			// A view without positions, such as the isometric one, has no grid, coordinates or
+			// scale, and shows the panel only while tiles load.
+			const positions = view.position !== null;
+			readoutEl.hidden = !positions && !view.loading;
+			coordsEl.hidden = !positions;
+			scaleEl.hidden = !positions;
+			ticks.hidden = !positions;
+			if (!positions) {
+				gridLines.removeAttribute("d");
+				return;
+			}
 			// The scale first: it settles whether the panel is compact, which the coordinates follow.
 			showScale(view.scale);
 			showCoords(view.position);
-			showZoom(view.scale, view.fit);
 			showGrid(view);
 		},
 		fail(message) {

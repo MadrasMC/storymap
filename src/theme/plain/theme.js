@@ -37,10 +37,31 @@ Storymap.theme((map, ui) => {
 	buttons[1].addEventListener("click", () => map.zoomOut());
 	buttons[2].addEventListener("click", () => map.fit());
 
-	ui.append(title, status, zoom);
+	// The views, where the map has more than one.
+	const views = element(`<div class="plain plain-views" role="group" aria-label="Views"></div>`);
+	const viewButtons = map.views.map((v) => {
+		const button = element(`<button type="button"></button>`);
+		button.textContent = v.title;
+		button.addEventListener("click", () => map.showView(v.name));
+		views.append(button);
+		return { name: v.name, button };
+	});
+	views.hidden = viewButtons.length < 2;
+	buttons.push(...viewButtons.map((v) => v.button));
+
+	ui.append(title, status, zoom, views);
 	const number = (n) => (n < 0 ? `−${-n}` : String(n));
 	return {
 		update(view) {
+			for (const { name, button } of viewButtons) button.setAttribute("aria-pressed", String(map.view?.name === name));
+			loading.textContent = view.loading ? "Loading…" : "";
+			// A view without positions, such as the isometric one, has no position or scale, and
+			// shows the panel only while tiles load.
+			const positions = view.position !== null;
+			status.hidden = !positions && !view.loading;
+			position.hidden = !positions;
+			bar.parentElement.hidden = !positions;
+			if (!positions) return;
 			position.textContent = `${number(view.position.x)}, ${number(view.position.z)}`;
 			// A round number of blocks, 1, 2 or 5 times a power of ten, at most 80 pixels long.
 			const widest = 80 / view.scale;
@@ -48,7 +69,6 @@ Storymap.theme((map, ui) => {
 			const blocks = [5, 2, 1].map((m) => m * power).find((b) => b <= widest) ?? power;
 			bar.style.width = `${Math.round(blocks * view.scale)}px`;
 			label.textContent = `${blocks.toLocaleString("en")} ${blocks === 1 ? "block" : "blocks"}`;
-			loading.textContent = view.loading ? "Loading…" : "";
 		},
 		fail(message) {
 			status.hidden = true;

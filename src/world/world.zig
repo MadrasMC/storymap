@@ -48,6 +48,9 @@ pub const Description = struct {
     /// The block the game shows as position 0, 0, so a map can show positions as the game
     /// does: x east, z south.
     origin: struct { x: i64, z: i64 },
+    /// The height of the sea's surface. A view that shows heights places positions at it, as
+    /// one point on its screen covers a whole line of blocks.
+    seaLevel: u16,
 };
 
 /// The heights a map is coloured by.

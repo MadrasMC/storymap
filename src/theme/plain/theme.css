@@ -51,6 +51,14 @@ html, body { background: var(--bg); color: var(--fg); }
 .plain-zoom button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .plain-zoom button:disabled { opacity: 0.4; cursor: default; }
 .plain-zoom svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+/* The views, above the zoom buttons, the one shown highlighted. */
+.plain-views { bottom: calc(var(--gap) + 3 * 36px + 2px + 8px); right: var(--gap); display: flex; flex-direction: column; overflow: hidden; }
+.plain-views button { padding: 7px 10px; border: 0; background: none; color: var(--fg); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.plain-views button + button { border-top: 1px solid var(--border); }
+.plain-views button:hover:not(:disabled) { background: var(--hover); }
+.plain-views button[aria-pressed="true"] { color: var(--accent); font-weight: 600; }
+.plain-views button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.plain-views button:disabled { opacity: 0.4; cursor: default; }
 .plain-message {
 	top: 50%; left: 50%; transform: translate(-50%, -50%);
 	width: min(24rem, calc(100vw - 2 * var(--gap))); margin: 0; padding: 16px 20px;

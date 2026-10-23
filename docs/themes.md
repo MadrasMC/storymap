@@ -60,22 +60,24 @@ A theme can still reach anywhere in the page if it needs to; `ui` is so it doesn
 | `map.element` | The map's element, `#map`, where the tiles are drawn. The theme's stylesheet places it. |
 | `map.game` | `{ name, version }` of the game the world is from, e.g. `"Vintage Story"`, `"1.22.7"`, the version that last saved the world, or `null`. |
 | `map.world` | `{ name }`, or `null` when the page has no map. |
-| `map.view` | `{ name, title }` of the view shown, e.g. `"topdown"`, `"Top-down"`, or `null`. |
+| `map.view` | `{ name, title, projection }` of the view shown, e.g. `"topdown"`, `"Top-down"`, `"topdown"`, or `null`. It changes when the view does. |
+| `map.views` | Every view the map has, each `{ name, title, projection }`, the first shown at the start. |
 | `map.rendered` | When the map was rendered, as a `Date`, or `null`. |
 | `map.zoomIn()`, `map.zoomOut()` | Step the zoom, as the + and − keys do. |
 | `map.fit()` | Show the whole map, as the 0 key does. |
-| `map.toScreen(x, z)` | Where a position in the game is on the map, as `{ x, y }` in pixels from its top-left corner. |
-| `map.toGame(x, y)` | The position in the game at a point on the map, as `{ x, z }`. |
+| `map.showView(name)` | Show another view, at the same place in the world. |
+| `map.toScreen(x, z)` | Where a position in the game is on the map, as `{ x, y }` in pixels from its top-left corner, or `null` in a view without positions. |
+| `map.toGame(x, y)` | The position in the game at a point on the map, as `{ x, z }`, or `null` in a view without positions. |
 
-Positions are as the game shows them, from its origin: in Vintage Story, the world's centre.
+Positions are as the game shows them, from its origin: in Vintage Story, the world's centre. The isometric view has no positions to show, as each point on it covers a whole line of blocks, so a theme leaves out what's drawn from them there, such as a grid or the coordinates.
 
 ### What `update` is given
 
 | | |
 | --- | --- |
-| `view.scale` | Screen pixels per block: 1 is full detail, 4 the closest zoom, ⅛ eight blocks to a pixel. |
-| `view.centre` | The position at the centre of the map, `{ x, z }`. |
-| `view.position` | The block under the pointer, or at the centre without one, as whole numbers `{ x, z }`. |
+| `view.scale` | Screen pixels per tile pixel at full detail: 1 is full detail, 4 the closest zoom, ⅛ eight tile pixels to a screen pixel. In the top-down view a tile pixel is a block. |
+| `view.centre` | The position at the centre of the map, `{ x, z }`, or `null` in a view without positions. |
+| `view.position` | The block under the pointer, or at the centre without one, as whole numbers `{ x, z }`, or `null` in a view without positions. |
 | `view.width`, `view.height` | The map's size in pixels. |
 | `view.left`, `view.top` | Where its top-left corner is in the window, for things placed outside it. |
 | `view.fit` | Whether the zoom is the view of the whole map. |
@@ -85,7 +87,7 @@ Positions are as the game shows them, from its origin: in Vintage Story, the wor
 
 ### `fail`
 
-Called instead of `update` when there's no map to show: the page has no map data, the view is one this viewer can't draw, the world has nothing generated yet, or no tile loads. The message says which, in a sentence; the map has stopped, and `map.zoomIn()` and the rest do nothing.
+Called instead of `update` when there's no map to show: the page has no map data, it has no view this viewer can draw, the world has nothing generated yet, or no tile loads. The message says which, in a sentence; the map has stopped, and `map.zoomIn()` and the rest do nothing.
 
 ## Map style
 

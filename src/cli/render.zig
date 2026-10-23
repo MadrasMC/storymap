@@ -102,7 +102,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     else
         null;
     defer if (writtenIsometric) |list| allocator.free(list);
-    if (writtenIsometric) |list| try views.append(allocator, .{ .name = isometric.folder, .title = isometric.title, .projection = isometric.projection, .written = list });
+    if (writtenIsometric) |list| try views.append(allocator, .{ .name = isometric.folder, .title = isometric.title, .projection = isometric.projection, .blockWidth = isometric.blockWidth, .written = list });
 
     const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
     var description = save.describe();

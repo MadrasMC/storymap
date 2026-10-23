@@ -21,6 +21,8 @@ pub const View = struct {
     title: []const u8,
     /// How the viewer turns a level-0 pixel into a block position, e.g. "topdown".
     projection: []const u8,
+    /// For an isometric view, a block's width in level-0 pixels.
+    blockWidth: ?u16 = null,
     written: []const tiles.Written,
 };
 
@@ -83,6 +85,7 @@ fn describe(allocator: std.mem.Allocator, description: world.Description, render
         name: []const u8,
         title: []const u8,
         projection: []const u8,
+        blockWidth: ?u16,
         tileSize: usize,
         tiles: []const []const i32,
     };
@@ -97,9 +100,14 @@ fn describe(allocator: std.mem.Allocator, description: world.Description, render
         for (view.written) |w| try perLevel[w.level].appendSlice(arena.allocator(), &.{ w.tile.x, w.tile.y });
         const flat = try arena.allocator().alloc([]const i32, levels);
         for (flat, perLevel) |*level, list| level.* = list.items;
-        out.* = .{ .name = view.name, .title = view.title, .projection = view.projection, .tileSize = tiles.size, .tiles = flat };
+        out.* = .{ .name = view.name, .title = view.title, .projection = view.projection, .blockWidth = view.blockWidth, .tileSize = tiles.size, .tiles = flat };
     }
-    return std.json.Stringify.valueAlloc(allocator, .{ .game = description.game, .world = .{ .name = description.name, .origin = description.origin }, .rendered = rendered, .views = jsonViews }, .{});
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .game = description.game,
+        .world = .{ .name = description.name, .origin = description.origin, .seaLevel = description.seaLevel },
+        .rendered = rendered,
+        .views = jsonViews,
+    }, .{ .emit_null_optional_fields = false });
 }
 
 test describe {
@@ -108,12 +116,13 @@ test describe {
         .{ .level = 0, .tile = .{ .x = 1000, .y = 1000 } },
         .{ .level = 1, .tile = .{ .x = 500, .y = 499 } },
     };
-    const json = try describe(std.testing.allocator, .{ .game = .{ .name = "Vintage Story", .version = "1.22.7" }, .name = "A </script> world", .origin = .{ .x = 512000, .z = 512000 } }, "2026-10-17T09:05:07Z", &.{
+    const json = try describe(std.testing.allocator, .{ .game = .{ .name = "Vintage Story", .version = "1.22.7" }, .name = "A </script> world", .origin = .{ .x = 512000, .z = 512000 }, .seaLevel = 110 }, "2026-10-17T09:05:07Z", &.{
         .{ .name = "topdown", .title = "Top-down", .projection = "topdown", .written = &written },
+        .{ .name = "isometric", .title = "Isometric", .projection = "isometric", .blockWidth = 16, .written = written[0..1] },
     });
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        \\{"game":{"name":"Vintage Story","version":"1.22.7"},"world":{"name":"A </script> world","origin":{"x":512000,"z":512000}},"rendered":"2026-10-17T09:05:07Z","views":[{"name":"topdown","title":"Top-down","projection":"topdown","tileSize":512,"tiles":[[1000,999,1000,1000],[500,499]]}]}
+        \\{"game":{"name":"Vintage Story","version":"1.22.7"},"world":{"name":"A </script> world","origin":{"x":512000,"z":512000},"seaLevel":110},"rendered":"2026-10-17T09:05:07Z","views":[{"name":"topdown","title":"Top-down","projection":"topdown","tileSize":512,"tiles":[[1000,999,1000,1000],[500,499]]},{"name":"isometric","title":"Isometric","projection":"isometric","blockWidth":16,"tileSize":512,"tiles":[[1000,999]]}]}
     , json);
 }
 

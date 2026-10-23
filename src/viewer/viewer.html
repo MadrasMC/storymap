@@ -54,24 +54,73 @@ function start(makeTheme) {
 	const valid = data && data.world && Array.isArray(data.views) && data.views.length > 0;
 	const game = valid ? data.game : null;
 	const world = valid ? data.world : null;
-	const view = valid ? data.views[0] : null;
 	const rendered = valid ? new Date(data.rendered) : null;
 	if (world?.name) document.title = `${world.name} · Storymap`;
 
-	// The map as a theme sees it. Positions are as the game shows them, from its origin, and
-	// screen positions are in pixels from the map's top-left corner.
+	// Positions are as the game shows them, from its origin, the block it calls 0, 0: for some
+	// games the world's centre, for others the world's own 0, 0.
+	const offsetX = world?.origin?.x ?? 0;
+	const offsetZ = world?.origin?.z ?? 0;
+	const seaLevel = world?.seaLevel ?? 0;
+	// How a view's level-0 pixels relate to positions in the game: `toPixels` places a position,
+	// `toGame` finds the one at a pixel, and `span` is how many level-0 pixels a block is across,
+	// to keep blocks the same size when switching views. Top-down, a pixel is a block, x east and
+	// y south. Isometric, a pixel stands for a whole line of blocks, so positions are taken on the
+	// top of the blocks at sea level; `positions` says whether the view has a position at each
+	// pixel to show.
+	const projections = {
+		topdown: () => ({
+			toPixels: (x, z) => ({ x: x + offsetX, y: z + offsetZ }),
+			toGame: (px, py) => ({ x: px - offsetX, z: py - offsetZ }),
+			span: 1,
+			positions: true,
+		}),
+		isometric: (v) => {
+			const across = v.blockWidth / 2;
+			const down = v.blockWidth / 4;
+			const raised = (seaLevel + 1) * (v.blockWidth / 2);
+			return {
+				toPixels: (x, z) => ({ x: (x - z + offsetX - offsetZ) * across, y: (x + z + offsetX + offsetZ) * down - raised }),
+				toGame: (px, py) => {
+					const difference = px / across;
+					const sum = (py + raised) / down;
+					return { x: (sum + difference) / 2 - offsetX, z: (sum - difference) / 2 - offsetZ };
+				},
+				span: v.blockWidth / Math.SQRT2,
+				positions: false,
+			};
+		},
+	};
+	// The views this viewer can draw, the first shown at the start.
+	const views = valid ? data.views.filter((v) => v.projection in projections) : [];
+
+	// The map as a theme sees it. Positions are as the game shows them, and screen positions are
+	// in pixels from the map's top-left corner.
 	let stopped = false;
+	let view = null;
+	let projection = null;
 	const map = {
 		element: mapEl,
 		game: game && { name: game.name, version: game.version },
 		world: world && { name: world.name },
-		view: view && { name: view.name, title: view.title },
+		get view() {
+			return view && { name: view.name, title: view.title, projection: view.projection };
+		},
+		views: views.map((v) => ({ name: v.name, title: v.title, projection: v.projection })),
 		rendered: rendered && !Number.isNaN(rendered.getTime()) ? rendered : null,
 		zoomIn: () => stopped || zoomStep(1),
 		zoomOut: () => stopped || zoomStep(-1),
 		fit: () => stopped || fit(),
-		toScreen: (x, z) => ({ x: (x + offsetX - cam.x) * cam.s + W / 2, y: (z + offsetZ - cam.y) * cam.s + H / 2 }),
-		toGame: (sx, sy) => ({ x: cam.x + (sx - W / 2) / cam.s - offsetX, z: cam.y + (sy - H / 2) / cam.s - offsetZ }),
+		showView: (name) => stopped || showView(name),
+		toScreen(x, z) {
+			if (!projection?.positions) return null;
+			const p = projection.toPixels(x, z);
+			return { x: (p.x - cam.x) * cam.s + W / 2, y: (p.y - cam.y) * cam.s + H / 2 };
+		},
+		toGame(sx, sy) {
+			if (!projection?.positions) return null;
+			return projection.toGame(cam.x + (sx - W / 2) / cam.s, cam.y + (sy - H / 2) / cam.s);
+		},
 	};
 	const theme = makeTheme(map, q("#ui"));
 
@@ -84,35 +133,51 @@ function start(makeTheme) {
 		fail("No map here yet. Render a save into this folder with Storymap, then open this page again.");
 		return;
 	}
-	if (view.projection !== "topdown") {
-		fail(`This viewer can't show the “${view.title}” view.`);
+	if (!views.length) {
+		fail(`This viewer can't show the “${data.views[0].title}” view.`);
 		return;
 	}
-	const T = view.tileSize;
-	// Each level's tiles, so only tiles that exist are asked for.
-	const levels = view.tiles.map((flat) => {
-		const set = new Set();
-		for (let i = 0; i < flat.length; i += 2) set.add(`${flat[i]},${flat[i + 1]}`);
-		return set;
-	});
+
+	// The view shown: its tile size, each level's tiles, so only tiles that exist are asked for,
+	// and the area its full-detail tiles cover, in level-0 pixels.
+	let T = 0;
+	let levels = [];
+	let top = 0;
+	let minX = 0, minY = 0, maxX = 0, maxY = 0;
+	function useView(next) {
+		view = next;
+		projection = projections[next.projection](next);
+		T = next.tileSize;
+		levels = next.tiles.map((flat) => {
+			const set = new Set();
+			for (let i = 0; i < flat.length; i += 2) set.add(`${flat[i]},${flat[i + 1]}`);
+			return set;
+		});
+		top = levels.length - 1;
+		minX = minY = Infinity;
+		maxX = maxY = -Infinity;
+		const full = next.tiles[0] ?? [];
+		for (let i = 0; i < full.length; i += 2) {
+			minX = Math.min(minX, full[i] * T);
+			maxX = Math.max(maxX, (full[i] + 1) * T);
+			minY = Math.min(minY, full[i + 1] * T);
+			maxY = Math.max(maxY, (full[i + 1] + 1) * T);
+		}
+		cache.clear();
+		failed = 0;
+		loadedAny = false;
+		layer.replaceChildren();
+	}
+	// Tiles of the view shown, by "level/x/y": each image is asked for once and kept while it's
+	// useful. A tile that can't load is left out, and only the console says so, unless none load
+	// at all.
+	const cache = new Map();
+	let failed = 0;
+	let loadedAny = false;
+	useView(views[0]);
 	if (!levels.length || !levels[0].size) {
 		fail("This world has no fully generated areas to show yet.");
 		return;
-	}
-	const top = levels.length - 1;
-
-	// Positions are in level-0 pixels, which in the top-down view are blocks: x east, y south.
-	// The game shows them from its origin, the block it calls 0, 0: for some games the world's
-	// centre, for others the world's own 0, 0.
-	const offsetX = world.origin?.x ?? 0;
-	const offsetZ = world.origin?.z ?? 0;
-	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-	const full = view.tiles[0];
-	for (let i = 0; i < full.length; i += 2) {
-		minX = Math.min(minX, full[i] * T);
-		maxX = Math.max(maxX, (full[i] + 1) * T);
-		minY = Math.min(minY, full[i + 1] * T);
-		maxY = Math.max(maxY, (full[i + 1] + 1) * T);
 	}
 
 	// The camera: the level-0 pixel at the centre of the screen, and screen pixels per level-0
@@ -164,11 +229,6 @@ function start(makeTheme) {
 		settle();
 	}
 
-	// Tiles, by "level/x/y": each image is asked for once and kept while it's useful. A tile that
-	// can't load is left out, and only the console says so, unless none load at all.
-	const cache = new Map();
-	let failed = 0;
-	let loadedAny = false;
 	function tile(level, x, y) {
 		const key = `${level}/${x}/${y}`;
 		let entry = cache.get(key);
@@ -300,8 +360,9 @@ function start(makeTheme) {
 	}
 
 	// What the theme draws from, after every redraw and whenever the pointer moves: the zoom, the
-	// position under the pointer (or at the centre without one), the map's size and place on the
-	// page, whether it's the view of the whole map, and whether tiles are still loading.
+	// position under the pointer (or at the centre without one; null in a view without positions),
+	// the map's size and place on the page, whether it's the view of the whole map, and whether
+	// tiles are still loading.
 	let pointer = null;
 	function report() {
 		if (stopped || !W) return;
@@ -309,7 +370,7 @@ function start(makeTheme) {
 		theme.update({
 			scale: cam.s,
 			centre: map.toGame(W / 2, H / 2),
-			position: { x: Math.floor(at.x), z: Math.floor(at.z) },
+			position: at && { x: Math.floor(at.x), z: Math.floor(at.z) },
 			width: W,
 			height: H,
 			left: origin.x,
@@ -434,9 +495,11 @@ function start(makeTheme) {
 	});
 
 	// The position lives in the address, as the game's x and z and the zoom as a scale of screen
-	// pixels to blocks (#512,-512,2:1 or #512,-512,1:8, or "fit" for the whole map at a step of its
-	// own, which depends on the screen), so reloading or sharing the link keeps the place. The
-	// address keeps two decimals, so a zoom between steps comes back as it was.
+	// pixels to level-0 pixels, which top-down are blocks (#512,-512,2:1 or #512,-512,1:8, or "fit"
+	// for the whole map at a step of its own, which depends on the screen), so reloading or sharing
+	// the link keeps the place. A view other than the first comes first, as in
+	// #isometric/512,-512,1:2. The address keeps two decimals, so a zoom between steps comes back
+	// as it was.
 	let saveTimer = 0;
 	function saveSoon() {
 		clearTimeout(saveTimer);
@@ -444,24 +507,52 @@ function start(makeTheme) {
 			const zoom = atOwnFit()
 				? "fit"
 				: cam.s >= 1 ? `${Number(cam.s.toFixed(2))}:1` : `1:${Number((1 / cam.s).toFixed(2))}`;
-			const hash = `#${Math.floor(cam.x) - offsetX},${Math.floor(cam.y) - offsetZ},${zoom}`;
+			const at = projection.toGame(cam.x, cam.y);
+			const prefix = view === views[0] ? "" : `${view.name}/`;
+			const hash = `#${prefix}${Math.floor(at.x)},${Math.floor(at.z)},${zoom}`;
 			if (hash !== location.hash) history.replaceState(null, "", hash);
 		}, 300);
 	}
 	function restore() {
-		const parts = location.hash.slice(1).split(",");
-		if (parts.length !== 3) return false;
+		const address = location.hash.slice(1);
+		const slash = address.indexOf("/");
+		const named = slash < 0 ? views[0] : views.find((v) => v.name === address.slice(0, slash));
+		const parts = address.slice(slash + 1).split(",");
+		if (!named || parts.length !== 3) return false;
 		const [x, z] = parts.slice(0, 2).map(Number);
 		const [pixels, blocks] = parts[2].split(":");
-		const s = parts[2] === "fit" ? fitScale() : Number(pixels) / Number(blocks);
-		if (![x, z, s].every(Number.isFinite) || s <= 0) return false;
-		cam.x = x + offsetX + 0.5;
-		cam.y = z + offsetZ + 0.5;
+		const ratio = Number(pixels) / Number(blocks);
+		if (![x, z].every(Number.isFinite) || (parts[2] !== "fit" && !(ratio > 0 && Number.isFinite(ratio)))) return false;
+		if (named !== view) useView(named);
+		const s = parts[2] === "fit" ? fitScale() : ratio;
+		const p = projection.toPixels(x + 0.5, z + 0.5);
+		cam.x = p.x;
+		cam.y = p.y;
 		cam.s = s;
 		settle();
 		return true;
 	}
 	window.addEventListener("hashchange", () => stopped || restore());
+
+	// Switching views keeps the place: the view of the whole map shows the whole of the other one,
+	// and otherwise the position at the centre stays, with blocks about the same size, at the
+	// nearest whole step.
+	function showView(name) {
+		const next = views.find((v) => v.name === name);
+		if (!next || next === view) return;
+		const wasFit = atFit();
+		const centre = projection.toGame(cam.x, cam.y);
+		const blockSize = cam.s * projection.span;
+		useView(next);
+		if (wasFit) return fit();
+		cancelAnimationFrame(animation);
+		heading = 0;
+		const p = projection.toPixels(centre.x, centre.z);
+		cam.x = p.x;
+		cam.y = p.y;
+		cam.s = 2 ** Math.round(Math.log2(blockSize / projection.span));
+		settle();
+	}
 
 	let started = false;
 	new ResizeObserver(() => {

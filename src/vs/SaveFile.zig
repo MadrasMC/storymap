@@ -111,6 +111,7 @@ pub fn describe(self: *const SaveFile) world.Description {
         .game = .{ .name = "Vintage Story", .version = self.gameData.gameVersion },
         .name = self.gameData.name,
         .origin = .{ .x = @intCast(self.gameData.worldWidth / 2), .z = @intCast(self.gameData.worldLength / 2) },
+        .seaLevel = @intCast(self.gameData.seaLevel()),
     };
 }
 
