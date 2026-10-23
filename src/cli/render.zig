@@ -4,6 +4,7 @@ const std = @import("std");
 const SaveFile = @import("vs").SaveFile;
 const Prepared = @import("vs").Prepared;
 const topdown = @import("renderer").topdown;
+const isometric = @import("renderer").isometric;
 const Style = @import("theme").Style;
 const viewer = @import("viewer");
 const Theme = @import("theme");
@@ -15,6 +16,7 @@ pub const spec: args.Spec = .{
     .options = &.{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
         .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
+        .{ .name = "isometric", .description = "Also draw the isometric view." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
@@ -87,13 +89,25 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     }
     const written = try topdown.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .style = theme.topdown });
     defer allocator.free(written);
+    var views: std.ArrayList(viewer.View) = .empty;
+    defer views.deinit(allocator);
+    try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .written = written });
 
-    // With more views, the page lists them all.
-    const views = [_]viewer.View{.{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .written = written }};
+    const palette = switch (theme.topdown) {
+        .relief => |colours| colours,
+        .game => Theme.defaultColours,
+    };
+    const writtenIsometric = if (parsed.flag("isometric"))
+        try isometric.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .palette = palette })
+    else
+        null;
+    defer if (writtenIsometric) |list| allocator.free(list);
+    if (writtenIsometric) |list| try views.append(allocator, .{ .name = isometric.folder, .title = isometric.title, .projection = isometric.projection, .written = list });
+
     const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
     var description = save.describe();
     if (parsed.value("name")) |name| description.name = name;
-    try viewer.write(allocator, init.io, out, description, now, &views, theme);
+    try viewer.write(allocator, init.io, out, description, now, views.items, theme);
 }
 
 const gameStyles = names: {
