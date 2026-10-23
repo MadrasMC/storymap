@@ -5,7 +5,11 @@ Storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 ## Top-down map
 
 1. **Closer season tint.** Grassland in `style game:coloured` is 15–20% darker than the game's map, forest about 10%: the game's season colour is brighter than the season map's columns average, and how it picks it is closed ([`docs/rendering.md`](docs/rendering.md#climate-and-season-tint)). Also not followed: frost, the southern hemisphere, and block classes with their own colour (forest floor, water lilies, leaves coloured by their shape).
-2. **Incremental rendering.** Re-render only the tiles whose chunks changed since the last render, and the zoomed-out tiles above them, instead of the whole world every time.
+2. **Incremental rendering.** Re-render only the tiles whose chunks changed since the last render, and the zoomed-out tiles above them, instead of the whole world every time. The save has no change times, so a render compares hashes:
+	- **Per tile:** a hash of the raw rows its pixels come from (the map chunks of its columns and their ring, the chunks holding its surface, its map region), with the style, the theme's colours, the prepared blocks and the season. A tile whose hash matches isn't decoded, drawn or encoded.
+	- **Interrupted renders:** each tile is written to a temporary file and renamed into place, and its hash is recorded at once, not at the end (perhaps in a text chunk of the PNG itself). The next render then resumes where the last one stopped.
+	- **Zoomed-out tiles:** a parent with skipped children reads them back from their PNGs, which needs a PNG decoder in the tile pipeline.
+	- **First:** measure what reading and hashing an unchanged world costs against a full render.
 3. **Measure on a large world.** The largest test world has 29,192 chunks (2.79 km²), and a render's fixed cost of about 60 ms is still a quarter of its time there ([`docs/performance.md`](docs/performance.md)); confirm the threading scales on a save with many more chunks.
 
 ## Memory
