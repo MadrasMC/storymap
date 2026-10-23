@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lines of sight</title>
+<style>
+	:root {
+		font-size: 16px;
+		--sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+		--mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+		--t-small: 0.8125rem;
+		--t-micro: 0.6875rem;
+		--s2: 0.5rem;
+		--s3: 0.75rem;
+		--s4: 1rem;
+		--s5: 1.5rem;
+		--s6: 2rem;
+		--bg: #fbfaf7;
+		--fg: #1d1f23;
+		--muted: #5f656e;
+		--panel: #ffffff;
+		--border: #e3e0d8;
+		--soft: #f2f0ea;
+		--accent: #2563eb;
+		--accent-fg: #ffffff;
+		color-scheme: light;
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--sans); }
+	main { max-width: 60rem; margin: 0 auto; padding: var(--s6) var(--s4) 4rem; }
+	h1 { font-size: clamp(1.75rem, 1.2rem + 2.5vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 var(--s3); }
+	h2 { font-size: 1.25rem; margin: var(--s6) 0 var(--s2); }
+	p, ol { max-width: 44rem; margin: 0 0 var(--s3); }
+	li { margin-bottom: var(--s2); }
+	code { font: 0.92em var(--mono); background: var(--soft); border-radius: 0.25rem; padding: 0.05rem 0.3rem; }
+	.panel { display: grid; gap: var(--s4); background: var(--panel); border: 1px solid var(--border); border-radius: 0.75rem; padding: var(--s5); margin: var(--s5) 0; }
+	.panel p { margin: 0; max-width: none; }
+	.controls { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+	.btn { font: var(--t-small)/1 var(--sans); color: var(--fg); background: var(--soft); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.6rem var(--s4); cursor: pointer; }
+	.btn:hover:not(:disabled) { border-color: var(--muted); }
+	.btn:disabled { opacity: 0.45; cursor: default; }
+	.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+	canvas { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 0.5rem; }
+	.status { font: var(--t-small)/1.6 var(--mono); min-height: 3.2em; }
+	.counts { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); padding-top: var(--s3); border-top: 1px solid var(--border); font: var(--t-small)/1.4 var(--mono); color: var(--muted); }
+	.counts b { color: var(--fg); font-weight: 600; }
+	.key { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--t-small); color: var(--muted); }
+	.key span::before { content: ""; display: inline-block; width: 0.8rem; height: 0.8rem; margin-right: 0.35rem; vertical-align: -0.1rem; border-radius: 2px; background: var(--swatch, transparent); border: var(--edge, none); }
+	@media (max-width: 44rem) { .panel { padding: var(--s4) var(--s3); } }
+</style>
+</head>
+<body>
+<main>
+	<h1>Lines of sight</h1>
+	<p>How the isometric view finds which block to draw on each square of a tile, and why it reads so few chunks. The code is <code>Worker.draw</code> and <code>nearestBlock</code> in <code>src/renderer/isometric.zig</code>.</p>
+
+	<h2>The slice</h2>
+	<p>The view looks at the world from the south-east, from above. All the blocks drawn on one square of the screen lie on one line, each a block west, north and down from the one before, further from the viewer: a line of sight. Only the first block on it can be seen.</p>
+	<p>Below is one slice through a made-up world: the blocks where x = z, seen from the side, with x across and the height up. In it, every line of sight is a diagonal going down to the left. The chunks here are 8 blocks on a side, where the game's are 32, and the world is 32 blocks high, where the game's is 256. The explored area is the middle; there are no chunks either side of it.</p>
+
+	<div class="panel">
+		<div class="controls">
+			<button type="button" class="btn" id="play">Play</button>
+			<button type="button" class="btn" id="step">Step</button>
+			<button type="button" class="btn" id="line">Finish the line</button>
+			<button type="button" class="btn" id="all">All lines</button>
+			<button type="button" class="btn" id="reset">Start over</button>
+		</div>
+		<canvas id="slice" width="1280" height="640" aria-describedby="status"></canvas>
+		<div class="key">
+			<span style="--swatch: #2563eb">drawn: the first block on a line</span>
+			<span style="--edge: 2px solid #2563eb">chunk read from the save, then kept</span>
+			<span style="--edge: 2px dashed #9aa0a8">chunk with nothing to draw, kept</span>
+			<span style="--edge: 2px solid #c2410c">the chunk being looked at</span>
+		</div>
+		<p class="status" id="status" aria-live="polite"></p>
+		<div class="counts" id="counts"></div>
+	</div>
+
+	<h2>The steps</h2>
+	<ol>
+		<li><b>Lines.</b> A tile lists the lines whose squares fall on it, about 1,150 at 32-pixel blocks.</li>
+		<li><b>From the top.</b> Each line starts at the top of the world and walks down it, a chunk at a time.</li>
+		<li><b>Chunks.</b> At each chunk it asks the worker's cache. A chunk not in it is read from the save, turned into one byte per block saying how it's drawn, and kept; a chunk the save doesn't have, or with nothing to draw, is kept as that. A chunk with nothing to draw is passed in one go.</li>
+		<li><b>Blocks.</b> In a chunk with blocks, the line checks its blocks one by one. The first one that's drawn is the one on its square; nothing behind it on the line can show, so the line stops there.</li>
+		<li><b>Drawing.</b> The block's picture goes on the line's square. Squares of neighbouring lines overlap a little, and the depth buffer keeps the nearer block where they do.</li>
+	</ol>
+	<p>Lines stop near the ground, so chunks deep underground are never read: only those along the explored area's east and south edges, where lines come in from outside and meet the walls. In the game's worlds that's about a fifth of the chunks reading every chunk under each tile took.</p>
+</main>
+<script>
+"use strict";
+// The made-up slice: x from 0 to 63 across, heights 0 to 31, chunks of 8.
+const S = 8;
+const W = 64;
+const H = 32;
+const exploredFrom = 8;
+const exploredTo = 56;
+const AIR = 0, GROUND = 1, WATER = 2, TRUNK = 3, LEAVES = 4, SAND = 5;
+const colours = { [GROUND]: "#a58a5c", [WATER]: "#7fa6c4", [TRUNK]: "#6b4f32", [LEAVES]: "#6f8f4e", [SAND]: "#d8c48f" };
+
+const world = Array.from({ length: W }, () => new Array(H).fill(AIR));
+function ground(x) {
+	if (x >= 29 && x <= 36) return 8;
+	if (x >= 43 && x <= 47) return 22;
+	return Math.round(12 + 3 * Math.sin(x / 5) + 2 * Math.sin(x / 2.3 + 1));
+}
+for (let x = exploredFrom; x < exploredTo; x++) {
+	const h = ground(x);
+	for (let y = 0; y <= h; y++) world[x][y] = GROUND;
+	if (x >= 29 && x <= 36) for (let y = h + 1; y <= 11; y++) world[x][y] = WATER;
+	if (x === 28 || x === 37) world[x][h] = SAND;
+}
+// A tree: a trunk with leaves above it, which lines meet before the ground.
+const treeX = 18;
+const treeBase = ground(treeX) + 1;
+for (let y = treeBase; y < treeBase + 5; y++) world[treeX][y] = TRUNK;
+for (let x = treeX - 2; x <= treeX + 2; x++) for (let y = treeBase + 4; y <= treeBase + 6; y++) if (world[x][y] === AIR) world[x][y] = LEAVES;
+
+// Which chunks the save has: those in the explored area with any block.
+const chunkKey = (cx, cy) => `${cx},${cy}`;
+const saved = new Set();
+for (let cx = 0; cx < W / S; cx++) for (let cy = 0; cy < H / S; cy++) {
+	if (cx * S < exploredFrom || cx * S >= exploredTo) continue;
+	let any = false;
+	for (let x = cx * S; x < cx * S + S; x++) for (let y = cy * S; y < cy * S + S; y++) if (world[x][y] !== AIR) any = true;
+	if (any) saved.add(chunkKey(cx, cy));
+}
+
+// Every step of every line, worked out up front, so the picture can be redrawn at any step.
+// Lines are numbered by x − y, the same all along each one; they start at the top, or at the
+// right edge for lines that come in from outside the picture.
+const events = [];
+(function walk() {
+	const cache = new Map();
+	for (let k = -(H - 1); k <= W - 1; k++) {
+		let x = k + H - 1;
+		let y = H - 1;
+		if (x > W - 1) {
+			y -= x - (W - 1);
+			x = W - 1;
+		}
+		events.push({ type: "line", k, x, y });
+		let found = null;
+		while (y >= 0 && x >= 0) {
+			const cx = Math.floor(x / S);
+			const cy = Math.floor(y / S);
+			const steps = Math.min(x - cx * S, y - cy * S) + 1;
+			const key = chunkKey(cx, cy);
+			let status;
+			if (cache.has(key)) status = cache.get(key) ? "hit" : "hitEmpty";
+			else {
+				const has = saved.has(key);
+				cache.set(key, has);
+				status = has ? "read" : "missing";
+			}
+			events.push({ type: "chunk", k, cx, cy, x, y, steps, status });
+			if (status === "read" || status === "hit") {
+				for (let i = 0; i < steps; i++) {
+					const kind = world[x - i][y - i];
+					events.push({ type: "block", k, x: x - i, y: y - i, kind });
+					if (kind !== AIR) {
+						found = { x: x - i, y: y - i, kind };
+						break;
+					}
+				}
+			}
+			if (found) break;
+			x -= steps;
+			y -= steps;
+		}
+		events.push({ type: "end", k, found });
+	}
+})();
+
+const canvas = document.querySelector("#slice");
+const ctx = canvas.getContext("2d");
+const statusEl = document.querySelector("#status");
+const countsEl = document.querySelector("#counts");
+const cell = canvas.width / W;
+const px = (x) => x * cell;
+const py = (y) => canvas.height - (y + 1) * cell;
+let at = -1;
+
+// What has happened by event `upTo`: chunks kept, blocks drawn, and the counts.
+function stateAt(upTo) {
+	const kept = new Map();
+	const drawn = [];
+	const counts = { lines: 0, read: 0, missing: 0, hits: 0, blocks: 0, drawn: 0 };
+	let line = null;
+	for (let i = 0; i <= upTo; i++) {
+		const e = events[i];
+		if (e.type === "line") {
+			line = { k: e.k, x: e.x, y: e.y, reached: { x: e.x, y: e.y } };
+			counts.lines++;
+		} else if (e.type === "chunk") {
+			const key = chunkKey(e.cx, e.cy);
+			if (e.status === "read") { kept.set(key, true); counts.read++; }
+			else if (e.status === "missing") { kept.set(key, false); counts.missing++; }
+			else counts.hits++;
+			line.chunk = { cx: e.cx, cy: e.cy, status: e.status, steps: e.steps };
+			line.reached = e.status === "read" || e.status === "hit" ? { x: e.x, y: e.y } : { x: e.x - e.steps + 1, y: e.y - e.steps + 1 };
+		} else if (e.type === "block") {
+			counts.blocks++;
+			line.block = e;
+			line.reached = { x: e.x, y: e.y };
+		} else if (e.type === "end") {
+			if (e.found) { drawn.push(e.found); counts.drawn++; }
+			line.done = true;
+			line.found = e.found;
+		}
+	}
+	return { kept, drawn, counts, line, event: events[upTo] };
+}
+
+function draw() {
+	const state = stateAt(at);
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	ctx.fillStyle = "#f5f2ea";
+	ctx.fillRect(0, 0, canvas.width, canvas.height);
+	// Outside the explored area there are no chunks.
+	ctx.fillStyle = "#ebe7dd";
+	ctx.fillRect(0, 0, px(exploredFrom), canvas.height);
+	ctx.fillRect(px(exploredTo), 0, canvas.width - px(exploredTo), canvas.height);
+	// The world, faint until a line meets it.
+	for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
+		const kind = world[x][y];
+		if (kind === AIR) continue;
+		ctx.globalAlpha = 0.28;
+		ctx.fillStyle = colours[kind];
+		ctx.fillRect(px(x), py(y), cell, cell);
+	}
+	ctx.globalAlpha = 1;
+	for (const block of state.drawn) {
+		ctx.fillStyle = colours[block.kind];
+		ctx.fillRect(px(block.x), py(block.y), cell, cell);
+		ctx.strokeStyle = "#2563eb";
+		ctx.lineWidth = 2;
+		ctx.strokeRect(px(block.x) + 1, py(block.y) + 1, cell - 2, cell - 2);
+	}
+	// The chunk grid, and what the cache keeps.
+	ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
+	ctx.lineWidth = 1;
+	for (let i = 0; i <= W; i += S) { ctx.beginPath(); ctx.moveTo(px(i) + 0.5, 0); ctx.lineTo(px(i) + 0.5, canvas.height); ctx.stroke(); }
+	for (let i = 0; i <= H; i += S) { ctx.beginPath(); ctx.moveTo(0, py(i - 1) + 0.5); ctx.lineTo(canvas.width, py(i - 1) + 0.5); ctx.stroke(); }
+	for (const [key, has] of state.kept) {
+		const [cx, cy] = key.split(",").map(Number);
+		ctx.setLineDash(has ? [] : [8, 6]);
+		ctx.strokeStyle = has ? "#2563eb" : "#9aa0a8";
+		ctx.lineWidth = 3;
+		ctx.strokeRect(px(cx * S) + 3, py(cy * S + S - 1) + 3, S * cell - 6, S * cell - 6);
+	}
+	ctx.setLineDash([]);
+	// The line being walked: solid as far as it's got, faint beyond, and its chunk.
+	const line = state.line;
+	if (line) {
+		const centre = (x, y) => [px(x) + cell / 2, py(y) + cell / 2];
+		const [sx, sy] = centre(line.x, line.y);
+		const end = line.found ?? line.reached;
+		const [ex, ey] = centre(end.x, end.y);
+		const bottom = Math.min(line.y, line.x);
+		const [fx, fy] = centre(line.x - bottom, line.y - bottom);
+		ctx.strokeStyle = "rgba(194, 65, 12, 0.25)";
+		ctx.lineWidth = 2;
+		ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(fx, fy); ctx.stroke();
+		ctx.strokeStyle = "#c2410c";
+		ctx.lineWidth = 4;
+		ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+		if (line.chunk && !line.done) {
+			ctx.strokeStyle = "#c2410c";
+			ctx.lineWidth = 4;
+			ctx.strokeRect(px(line.chunk.cx * S) + 2, py(line.chunk.cy * S + S - 1) + 2, S * cell - 4, S * cell - 4);
+		}
+		ctx.fillStyle = "#c2410c";
+		ctx.beginPath(); ctx.arc(ex, ey, cell * 0.28, 0, Math.PI * 2); ctx.fill();
+	}
+	describe(state);
+}
+
+const names = { [GROUND]: "ground", [WATER]: "water", [TRUNK]: "a trunk", [LEAVES]: "leaves", [SAND]: "sand" };
+function describe(state) {
+	const e = state.event;
+	let text = "Press Play or Step to follow the first line.";
+	if (e) {
+		const lineName = `Line ${e.k + H}`;
+		if (e.type === "line") text = `${lineName}: starts at x ${e.x}, height ${e.y}, and walks down to the left.`;
+		else if (e.type === "chunk") {
+			const chunk = `chunk (${e.cx}, ${e.cy})`;
+			text = {
+				read: `${lineName}: ${chunk} isn't in the cache: it's read from the save and kept. Its blocks along the line are checked next.`,
+				missing: `${lineName}: ${chunk} isn't in the save, or has nothing to draw: kept as that, and the line passes its ${e.steps} block${e.steps === 1 ? "" : "s"} in one go.`,
+				hit: `${lineName}: ${chunk} is in the cache already: no reading. Its blocks along the line are checked next.`,
+				hitEmpty: `${lineName}: ${chunk} is in the cache as having nothing to draw: passed in one go.`,
+			}[e.status];
+		} else if (e.type === "block") {
+			text = e.kind === AIR ? `${lineName}: block at x ${e.x}, height ${e.y}: air, so the line goes on.` : `${lineName}: block at x ${e.x}, height ${e.y}: ${names[e.kind]}. It's the first, so it's drawn, and the line stops.`;
+		} else if (e.type === "end") {
+			text = e.found ? `${lineName} is done: one block drawn, nothing behind it looked at.` : `${lineName} is done: it met no block, so its square stays empty.`;
+		}
+	}
+	statusEl.textContent = text;
+	const c = state.counts;
+	const everyChunk = saved.size;
+	countsEl.innerHTML = `<span>lines <b>${c.lines}</b> of ${W + H - 1}</span><span>chunks read <b>${c.read}</b> of the ${everyChunk} the save has</span><span>chunks the save doesn't have <b>${c.missing}</b></span><span>cache hits <b>${c.hits}</b></span><span>blocks checked <b>${c.blocks}</b></span><span>blocks drawn <b>${c.drawn}</b></span>`;
+}
+
+// Pauses on each event for a while that suits it: longer on chunks, short on single blocks.
+const pause = { line: 220, chunk: 650, block: 90, end: 260 };
+let timer = 0;
+let playing = false;
+const playButton = document.querySelector("#play");
+function setPlaying(on) {
+	playing = on;
+	playButton.textContent = on ? "Pause" : "Play";
+	clearTimeout(timer);
+	if (on) tick();
+}
+function tick() {
+	if (at >= events.length - 1) return setPlaying(false);
+	at++;
+	draw();
+	timer = setTimeout(tick, pause[events[at].type]);
+}
+playButton.addEventListener("click", () => setPlaying(!playing));
+document.querySelector("#step").addEventListener("click", () => {
+	setPlaying(false);
+	if (at < events.length - 1) at++;
+	draw();
+});
+document.querySelector("#line").addEventListener("click", () => {
+	setPlaying(false);
+	do at++; while (at < events.length - 1 && events[at].type !== "end");
+	at = Math.min(at, events.length - 1);
+	draw();
+});
+document.querySelector("#all").addEventListener("click", () => {
+	setPlaying(false);
+	at = events.length - 1;
+	draw();
+});
+document.querySelector("#reset").addEventListener("click", () => {
+	setPlaying(false);
+	at = -1;
+	draw();
+});
+draw();
+</script>
+</body>
+</html>
