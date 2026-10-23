@@ -30,6 +30,7 @@ Each tag is built by the Zig release its `build.zig.zon` names. The script looks
 | chunks/s | all the save's chunks per second, end to end, though only those holding the surface are read |
 | tiles | drawing, encoding and the zoomed-out levels of every tile |
 | open | opening the save: its block list and which tiles it has |
+| peak memory | the most memory `storymap bench` held at once (Windows' peak working set, elsewhere the peak resident set), including its decoding of every chunk for comparison |
 
 - **Runs:** each time is the median of 7 renders after one untimed one. On the world above, the median of 7 consecutive runs stays within 3% of the next 7; 9 runs is no closer, and 3 or 5 are 5–6% apart.
 - **Sittings:** the same build measures up to 8% apart at different times, with the machine's heat, power plan and background work. So a table is measured in one sitting, and a difference under about 5% between rows isn't a change.

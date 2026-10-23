@@ -31,6 +31,8 @@ const Result = struct {
     area: usize,
     seconds: struct { open: f64, tiles: f64, total: f64 },
     areaPerSecond: f64,
+    /// The bench process's peak memory, in bytes, from the operating system; not in the JSON.
+    peak: usize = 0,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -72,7 +74,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout = Io.File.stdout().writerStreaming(io, &buffer);
     const out = &stdout.interface;
     const saveHash = try hashFile(arena, io, save);
-    try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | open |\n| --- | --- | --- | --- | --- | --- | --- |\n");
+    try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
     try out.flush();
 
     var last: ?Result = null;
@@ -100,8 +102,9 @@ pub fn main(init: std.process.Init) !void {
 
 fn writeRow(out: *Io.Writer, result: Result, label: []const u8, saveHash: []const u8) !void {
     const chunksPerSecond = @as(f64, @floatFromInt(result.chunks)) / result.seconds.total;
-    try out.print("| {s}{s} | {s} | {d:.3} s | {d:.1} | {d:.0} | {d:.3} s | {d:.3} s |\n", .{
-        result.version, label, saveHash, result.seconds.total, result.areaPerSecond / 1e6, chunksPerSecond, result.seconds.tiles, result.seconds.open,
+    try out.print("| {s}{s} | {s} | {d:.3} s | {d:.1} | {d:.0} | {d:.3} s | {d:.3} s | {d:.0} MB |\n", .{
+        result.version,  label,                saveHash,            result.seconds.total,                       result.areaPerSecond / 1e6,
+        chunksPerSecond, result.seconds.tiles, result.seconds.open, @as(f64, @floatFromInt(result.peak)) / 1e6,
     });
     try out.flush();
 }
@@ -174,9 +177,15 @@ fn get(client: *std.http.Client, url: []const u8) ![]u8 {
 }
 
 fn bench(arena: std.mem.Allocator, io: Io, storymap: []const u8, save: []const u8, runs: []const u8) !Result {
-    const stdout = try run(arena, io, &.{ storymap, "bench", save, runs, "--json" }, ".");
+    var child = try std.process.spawn(io, .{ .argv = &.{ storymap, "bench", save, runs, "--json" }, .stdout = .pipe, .request_resource_usage_statistics = true });
+    var buffer: [4096]u8 = undefined;
+    var reader = child.stdout.?.reader(io, &buffer);
+    const stdout = try reader.interface.allocRemaining(arena, .unlimited);
+    if (!(try child.wait(io)).success()) return error.CommandFailed;
     const line = std.mem.trim(u8, stdout[(std.mem.lastIndexOfScalar(u8, std.mem.trimEnd(u8, stdout, "\r\n"), '\n') orelse 0)..], " \r\n");
-    return std.json.parseFromSliceLeaky(Result, arena, line, .{ .ignore_unknown_fields = true });
+    var result = try std.json.parseFromSliceLeaky(Result, arena, line, .{ .ignore_unknown_fields = true });
+    result.peak = child.resource_usage_statistics.getMaxRss() orelse 0;
+    return result;
 }
 
 fn git(arena: std.mem.Allocator, io: Io, argv: []const []const u8) ![]const u8 {
