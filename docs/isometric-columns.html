@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isometric columns</title>
+<style>
+	:root {
+		font-size: 16px;
+		--sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+		--mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+		--t-small: 0.8125rem;
+		--t-micro: 0.6875rem;
+		--s2: 0.5rem;
+		--s3: 0.75rem;
+		--s4: 1rem;
+		--s5: 1.5rem;
+		--s6: 2rem;
+		--bg: #fbfaf7;
+		--fg: #1d1f23;
+		--muted: #5f656e;
+		--panel: #ffffff;
+		--border: #e3e0d8;
+		--soft: #ece9e1;
+		--accent: #2563eb;
+		--column: #2563eb;
+		--column-soft: #bcd0fb;
+		--row: #c2410c;
+		--row-soft: #f6d3c2;
+		color-scheme: light;
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--sans); }
+	main { max-width: 60rem; margin: 0 auto; padding: var(--s6) var(--s4) 4rem; }
+	h1 { font-size: clamp(1.75rem, 1.2rem + 2.5vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 var(--s3); }
+	p { max-width: 42rem; margin: 0 0 var(--s3); }
+	code { font: 0.92em var(--mono); background: #f2f0ea; border-radius: 0.25rem; padding: 0.05rem 0.3rem; }
+	.panel { display: grid; gap: var(--s4); background: var(--panel); border: 1px solid var(--border); border-radius: 0.75rem; padding: var(--s5); margin: var(--s5) 0; }
+	.views { display: grid; grid-template-columns: 1fr 1.6fr; gap: var(--s5); align-items: end; }
+	.sub { font: 600 var(--t-micro)/1 var(--mono); color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 var(--s2); }
+	svg { display: block; width: 100%; height: auto; }
+	svg text { font-family: var(--mono); pointer-events: none; }
+	svg .tile { cursor: pointer; }
+	.readout { margin: 0; padding-top: var(--s3); border-top: 1px solid var(--border); font: var(--t-small)/1.6 var(--mono); min-height: 3.2em; }
+	@media (max-width: 44rem) {
+		.panel { padding: var(--s4) var(--s3); }
+		.views { grid-template-columns: 1fr; }
+	}
+</style>
+</head>
+<body>
+<main>
+	<h1>Isometric columns</h1>
+	<p>Turned 45° and squashed to half height, the map's square tiles become diamonds, and the diamonds line up in vertical columns and horizontal rows. Point at a tile to see its column and its row.</p>
+
+	<div class="panel">
+		<div class="views">
+			<div>
+				<p class="sub">Map</p>
+				<svg id="map" role="img" aria-label="Map tiles, x across, z down"></svg>
+			</div>
+			<div>
+				<p class="sub">Isometric</p>
+				<svg id="iso" role="img" aria-label="The same tiles as diamonds, with their columns numbered"></svg>
+			</div>
+		</div>
+		<p class="readout" id="readout" aria-live="polite"></p>
+	</div>
+
+	<p>A step east (x + 1) is one column to the right; a step south (z + 1) is one column to the left. From (0, 0) in column 0, a tile x steps east and z steps south is in column <code>x − z</code>.</p>
+	<p>Neighbouring columns are half a diamond apart. Storymap draws diamonds 16 pixels wide, so a tile is <code>(x − z) · 8</code> pixels across.</p>
+	<p>Rows work the same way, with a sum: a step east and a step south both go one row down, so a tile is in row <code>x + z</code>. Neighbouring rows are half a diamond's height apart, 4 pixels, so a tile is <code>(x + z) · 4</code> pixels down. A block one level higher is drawn 8 pixels higher, which makes it <code>(x + z) · 4 − y · 8</code>.</p>
+	<p>Column 0 holds the tiles where x = z. A world's spawn is on it, so the area explored around spawn has tiles on both sides: columns below 0 as well as above. Rows don't: x + z adds two large positive positions, about 1,024,000 around spawn, far more than the most a block's height takes off.</p>
+</main>
+<script>
+"use strict";
+const size = 7;
+const svgNS = "http://www.w3.org/2000/svg";
+const mapSvg = document.querySelector("#map");
+const isoSvg = document.querySelector("#iso");
+const readout = document.querySelector("#readout");
+const minus = (n) => String(n).replace("-", "−");
+const tiles = [];
+
+function el(name, attributes, parent) {
+	const node = document.createElementNS(svgNS, name);
+	for (const [k, v] of Object.entries(attributes)) node.setAttribute(k, v);
+	parent.append(node);
+	return node;
+}
+
+// The map: square tiles, x across, z down.
+const cell = 40;
+mapSvg.setAttribute("viewBox", `-24 -24 ${size * cell + 28} ${size * cell + 28}`);
+for (let i = 0; i < size; i++) {
+	el("text", { x: i * cell + cell / 2, y: -8, "font-size": 11, "text-anchor": "middle", fill: "var(--muted)" }, mapSvg).textContent = i;
+	el("text", { x: -8, y: i * cell + cell / 2 + 4, "font-size": 11, "text-anchor": "end", fill: "var(--muted)" }, mapSvg).textContent = i;
+}
+
+// Isometric: diamonds 64 wide and 32 high, tile (x, z) centred at ((x − z) · 32, (x + z) · 16).
+const w = 64;
+const h = 32;
+const reach = (size - 1) * (w / 2) + w / 2;
+isoSvg.setAttribute("viewBox", `${-reach - 36} -44 ${reach * 2 + 40} ${(size - 1) * h + h + 52}`);
+for (let column = -(size - 1); column <= size - 1; column++) {
+	el("text", { x: column * (w / 2), y: -28, "font-size": 12, "text-anchor": "middle", fill: "var(--muted)", "data-column": column }, isoSvg).textContent = minus(column);
+}
+for (let row = 0; row <= (size - 1) * 2; row++) {
+	el("text", { x: -reach - 10, y: row * (h / 2) + 4, "font-size": 12, "text-anchor": "end", fill: "var(--muted)", "data-row": row }, isoSvg).textContent = row;
+}
+
+for (let z = 0; z < size; z++) {
+	for (let x = 0; x < size; x++) {
+		const square = el("rect", { class: "tile", x: x * cell + 1, y: z * cell + 1, width: cell - 2, height: cell - 2, rx: 3 }, mapSvg);
+		const squareLabel = el("text", { x: x * cell + cell / 2, y: z * cell + cell / 2 + 4, "font-size": 10, "text-anchor": "middle" }, mapSvg);
+		squareLabel.textContent = `${x},${z}`;
+		const cx = (x - z) * (w / 2);
+		const cy = (x + z) * (h / 2);
+		const points = [[cx, cy - h / 2], [cx + w / 2, cy], [cx, cy + h / 2], [cx - w / 2, cy]].map((p) => p.join(",")).join(" ");
+		const diamond = el("polygon", { class: "tile", points, "stroke-width": 1.5 }, isoSvg);
+		const diamondLabel = el("text", { x: cx, y: cy + 4, "font-size": 10, "text-anchor": "middle" }, isoSvg);
+		diamondLabel.textContent = `${x},${z}`;
+		const tile = { x, z, square, diamond, squareLabel, diamondLabel };
+		tiles.push(tile);
+		for (const shape of [square, diamond]) shape.addEventListener("pointerenter", () => show(tile));
+	}
+}
+
+// Highlights the column and the row of `chosen` in both views, or none.
+function show(chosen) {
+	const column = chosen ? chosen.x - chosen.z : null;
+	const row = chosen ? chosen.x + chosen.z : null;
+	for (const tile of tiles) {
+		const inColumn = column !== null && tile.x - tile.z === column;
+		const inRow = row !== null && tile.x + tile.z === row;
+		const isChosen = chosen === tile;
+		for (const shape of [tile.square, tile.diamond]) {
+			shape.setAttribute("fill", isChosen ? "var(--fg)" : inColumn ? "var(--column-soft)" : inRow ? "var(--row-soft)" : "var(--soft)");
+			shape.setAttribute("stroke", isChosen ? "var(--fg)" : inColumn ? "var(--column)" : inRow ? "var(--row)" : "white");
+		}
+		for (const label of [tile.squareLabel, tile.diamondLabel]) label.setAttribute("fill", isChosen ? "white" : "var(--fg)");
+	}
+	for (const [attribute, value, colour] of [["column", column, "var(--column)"], ["row", row, "var(--row)"]]) {
+		for (const label of isoSvg.querySelectorAll(`[data-${attribute}]`)) {
+			const here = value !== null && Number(label.dataset[attribute]) === value;
+			label.setAttribute("fill", here ? colour : "var(--muted)");
+			label.setAttribute("font-weight", here ? 700 : 400);
+		}
+	}
+	readout.replaceChildren();
+	if (!chosen) {
+		readout.textContent = "Point at a tile in either view.";
+		return;
+	}
+	const list = (test) => tiles.filter(test).map((tile) => `${tile.x},${tile.z}`).join("  ");
+	const lines = [
+		[`column ${chosen.x} − ${chosen.z} = ${minus(column)}`, "var(--column)", list((tile) => tile.x - tile.z === column)],
+		[`row ${chosen.x} + ${chosen.z} = ${row}`, "var(--row)", list((tile) => tile.x + tile.z === row)],
+	];
+	for (const [text, colour, same] of lines) {
+		const line = document.createElement("div");
+		const b = document.createElement("b");
+		b.textContent = text;
+		b.style.color = colour;
+		line.append(`Tile ${chosen.x},${chosen.z}: `, b, `. Also in it: ${same}.`);
+		readout.append(line);
+	}
+}
+
+for (const svg of [mapSvg, isoSvg]) svg.addEventListener("pointerleave", () => show(null));
+show(null);
+</script>
+</body>
+</html>
