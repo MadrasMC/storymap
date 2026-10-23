@@ -10,8 +10,9 @@
 //! - `collect(view: *View, worker: *const Worker)`, adding a finished worker's counts to the
 //!   view's.
 //!
-//! A tile at level n covers 2 × 2 tiles at level n − 1, up to a single tile at the top. Each is
-//! built from its four children shrunk to half size, so nothing is read back from disk.
+//! A tile at level n covers 2 × 2 tiles at level n − 1, up to a single tile at the top, or up to
+//! 2 × 2 where tiles either side of 0 never meet (`Pyramid`). Each is built from its four
+//! children shrunk to half size, so nothing is read back from disk.
 const std = @import("std");
 const Io = std.Io;
 const png = @import("png");
@@ -193,7 +194,7 @@ const Above = struct {
     next: *std.atomic.Value(usize),
 };
 
-/// The tiles of every level, level 0 first, up to the first level with a single tile.
+/// The tiles of every level, level 0 first, up to the top level (`isTopLevel`).
 const Pyramid = struct {
     levels: []std.AutoArrayHashMapUnmanaged(Tile, void),
 
@@ -205,7 +206,7 @@ const Pyramid = struct {
         }
         try levels.append(allocator, .empty);
         for (list) |tile| try levels.items[0].put(allocator, tile, {});
-        while (levels.items[levels.items.len - 1].count() > 1) {
+        while (!isTopLevel(levels.items[levels.items.len - 1].keys())) {
             try levels.append(allocator, .empty);
             const below = &levels.items[levels.items.len - 2];
             const above = &levels.items[levels.items.len - 1];
@@ -217,6 +218,24 @@ const Pyramid = struct {
     fn deinit(self: *Pyramid, allocator: std.mem.Allocator) void {
         for (self.levels) |*level| level.deinit(allocator);
         allocator.free(self.levels);
+    }
+
+    /// Whether a level is the top: across and down, its tiles are at one position, or at exactly
+    /// -1 and 0, which halving brings no closer. A level with 2 × 2 tiles either side of 0 can
+    /// be the top, as tiles -1 and 0 never meet.
+    fn isTopLevel(level: []const Tile) bool {
+        if (level.len <= 1) return true;
+        var low = level[0];
+        var high = level[0];
+        for (level) |tile| {
+            low = .{ .x = @min(low.x, tile.x), .y = @min(low.y, tile.y) };
+            high = .{ .x = @max(high.x, tile.x), .y = @max(high.y, tile.y) };
+        }
+        return isSettled(low.x, high.x) and isSettled(low.y, high.y);
+    }
+
+    fn isSettled(low: i32, high: i32) bool {
+        return low == high or (low == -1 and high == 0);
     }
 };
 
@@ -412,6 +431,29 @@ test Pyramid {
     try std.testing.expectEqual(2, pyramid.levels[1].count());
     try std.testing.expectEqual(2, pyramid.levels[2].count());
     try std.testing.expectEqual(1, pyramid.levels[3].count());
+}
+
+test "a pyramid over tiles either side of 0 ends where they come no closer" {
+    // Across, -3 to 2 merge to -1 and 0 two levels up, and go no further.
+    var row: Pyramid = try .init(std.testing.allocator, &.{ .{ .x = -3, .y = 5 }, .{ .x = -2, .y = 5 }, .{ .x = 1, .y = 5 }, .{ .x = 2, .y = 5 } });
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expectEqual(3, row.levels.len);
+    try std.testing.expectEqual(2, row.levels[2].count());
+    // Down, 4 and 7 still come together two levels up, so the levels go on until they have.
+    var apart: Pyramid = try .init(std.testing.allocator, &.{ .{ .x = -1, .y = 4 }, .{ .x = 0, .y = 7 } });
+    defer apart.deinit(std.testing.allocator);
+    try std.testing.expectEqual(3, apart.levels.len);
+    try std.testing.expectEqual(2, apart.levels[2].count());
+}
+
+test "Pyramid.isTopLevel" {
+    try std.testing.expect(Pyramid.isTopLevel(&.{}));
+    try std.testing.expect(Pyramid.isTopLevel(&.{.{ .x = 3, .y = 3 }}));
+    try std.testing.expect(!Pyramid.isTopLevel(&.{ .{ .x = 1, .y = 3 }, .{ .x = 2, .y = 3 } }));
+    try std.testing.expect(Pyramid.isTopLevel(&.{ .{ .x = -1, .y = -1 }, .{ .x = 0, .y = -1 }, .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 } }));
+    try std.testing.expect(!Pyramid.isTopLevel(&.{ .{ .x = -2, .y = 0 }, .{ .x = 0, .y = 0 } }));
+    // Tiles that never meet, but still come closer down the screen.
+    try std.testing.expect(!Pyramid.isTopLevel(&.{ .{ .x = -1, .y = 4 }, .{ .x = 0, .y = 7 } }));
 }
 
 test shrink {

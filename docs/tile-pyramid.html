@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile pyramid top</title>
+<style>
+	:root {
+		font-size: 16px;
+		--sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+		--mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+		--t-micro: 0.6875rem;
+		--t-small: 0.8125rem;
+		--s1: 0.25rem;
+		--s2: 0.5rem;
+		--s3: 0.75rem;
+		--s4: 1rem;
+		--s5: 1.5rem;
+		--s6: 2rem;
+		--radius: 0.75rem;
+		--bg: #fbfaf7;
+		--fg: #1d1f23;
+		--muted: #5f656e;
+		--panel: #ffffff;
+		--border: #e3e0d8;
+		--soft: #f2f0ea;
+		--accent: #2563eb;
+		--accent-fg: #ffffff;
+		color-scheme: light;
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--sans); }
+	main { max-width: 60rem; margin: 0 auto; padding: var(--s6) var(--s4) 4rem; }
+	h1 { font-size: clamp(1.75rem, 1.2rem + 2.5vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 var(--s3); }
+	h2 { font-size: 1.25rem; margin: var(--s6) 0 var(--s2); }
+	p { max-width: 42rem; margin: 0 0 var(--s3); }
+	code { font: 0.92em var(--mono); background: var(--soft); border-radius: 0.25rem; padding: 0.05rem 0.3rem; }
+	.lead { color: var(--muted); font-size: 1.0625rem; }
+	.panel { display: grid; gap: var(--s4); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s5); margin: var(--s5) 0; }
+	.panel p { margin: 0; max-width: none; }
+	.controls { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: center; }
+	.btn { font: var(--t-small)/1 var(--sans); color: var(--fg); background: var(--soft); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.6rem var(--s4); cursor: pointer; }
+	.btn:hover:not(:disabled) { border-color: var(--muted); }
+	.btn:disabled { opacity: 0.45; cursor: default; }
+	.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 0.6rem; padding: 3px; gap: 3px; background: var(--soft); }
+	.seg span { font: 600 var(--t-micro)/1 var(--mono); color: var(--muted); padding: 0 var(--s2); align-self: center; }
+	.seg button { font: var(--t-small)/1 var(--sans); border: 0; border-radius: 0.4rem; padding: 0.45rem 0.7rem; background: transparent; color: var(--fg); cursor: pointer; }
+	.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+	.btn:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+	.stage { display: grid; grid-template-columns: minmax(0, 34rem) minmax(12rem, 1fr); gap: var(--s5); align-items: start; }
+	canvas { display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--border); border-radius: 0.5rem; touch-action: none; cursor: crosshair; }
+	.levels { display: grid; gap: 2px; font: var(--t-small)/1.5 var(--mono); }
+	.levels div { color: var(--muted); padding: 0 var(--s2); border-radius: 0.3rem; }
+	.levels div.current { color: var(--fg); background: var(--soft); }
+	.levels div.stop { color: var(--muted); font-style: italic; }
+	.status { padding-top: var(--s3); border-top: 1px solid var(--border); font: var(--t-small)/1.6 var(--mono); }
+	.status b { font-weight: 600; }
+	.note { font-size: var(--t-small); color: var(--muted); }
+	table { border-collapse: collapse; font-size: var(--t-small); margin: var(--s3) 0; }
+	th, td { text-align: left; padding: 0.4rem 0.9rem 0.4rem 0; border-bottom: 1px solid var(--border); }
+	th { font: 600 var(--t-micro)/1 var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+	td { font-family: var(--mono); }
+	@media (max-width: 44rem) {
+		.panel { padding: var(--s4) var(--s3); }
+		.stage { grid-template-columns: 1fr; }
+	}
+</style>
+</head>
+<body>
+<main>
+	<h1>The top of the tile pyramid</h1>
+	<p class="lead">Why tiles either side of 0 never end up in the same zoomed-out tile, and where the pipeline stops building levels. The code is <code>Pyramid.init</code> in <code>src/tiles/tiles.zig</code>; the pipeline as a whole is in <a href="tile-pipeline.html">tile-pipeline.html</a>.</p>
+
+	<h2>Parents</h2>
+	<p>Each zoomed-out level is built from the one below: a tile's parent is its position halved and rounded down, across and down separately. Tiles 0 and 1 share parent 0, tiles 2 and 3 share parent 1, and so on. Rounding down works the same below 0, so tiles −2 and −1 share parent −1.</p>
+	<table>
+		<thead><tr><th>tile</th><th>halved</th><th>parent</th></tr></thead>
+		<tbody>
+			<tr><td>3</td><td>1.5</td><td>1</td></tr>
+			<tr><td>1</td><td>0.5</td><td>0</td></tr>
+			<tr><td>0</td><td>0</td><td>0</td></tr>
+			<tr><td>−1</td><td>−0.5</td><td>−1</td></tr>
+			<tr><td>−2</td><td>−1</td><td>−1</td></tr>
+		</tbody>
+	</table>
+	<p>So 0 stays 0 and −1 stays −1 at every level. A tile on one side of 0 never shares a parent with a tile on the other: 0 is a wall all the way up. Every multiple of a power of two is a wall for a while: tiles either side of a multiple of 2ⁿ stay apart for n levels. Tiles 7 and 8 sit either side of 8, which is 2³, and meet 4 levels up. 0 is a multiple of every power of two, so its wall never ends.</p>
+	<p>Below, the level-0 tiles are a grid like the map's, 32 × 32 around position 0, 0, with the walls at 0 dashed. Play to watch each level's tiles grow into their parents. Click or drag on the grid to add or remove level-0 tiles.</p>
+
+	<div class="panel">
+		<div class="controls">
+			<div class="seg" role="group" aria-label="Level-0 tiles">
+				<span>TILES</span>
+				<button type="button" data-preset="positive" aria-pressed="false">Positive</button>
+				<button type="button" data-preset="column" aria-pressed="true">Across x = 0</button>
+				<button type="button" data-preset="corner" aria-pressed="false">Around 0, 0</button>
+				<button type="button" data-preset="eight" aria-pressed="false">Across x = 8</button>
+			</div>
+			<div class="seg" role="group" aria-label="Where levels stop">
+				<span>STOP</span>
+				<button type="button" data-rule="single" aria-pressed="false">At one tile</button>
+				<button type="button" data-rule="settled" aria-pressed="true">When tiles come no closer</button>
+			</div>
+		</div>
+		<div class="controls">
+			<button type="button" class="btn" id="play">Play</button>
+			<button type="button" class="btn" id="back">Back</button>
+			<button type="button" class="btn" id="step">Step</button>
+			<button type="button" class="btn" id="reset">Level 0</button>
+		</div>
+		<div class="stage">
+			<canvas id="grid" aria-describedby="status"></canvas>
+			<div class="levels" id="levels" aria-label="Levels"></div>
+		</div>
+		<p class="status" id="status" aria-live="polite"></p>
+	</div>
+
+	<h2>Where the levels stop</h2>
+	<p><b>Before:</b> levels were added until one had a single tile. For tiles either side of 0 that never happens, so the render kept adding levels of two tiles until it ran out of memory.</p>
+	<p><b>Now:</b> levels stop at the top level: across and down, the tiles are all at one position, or at exactly −1 and 0. Halving brings neither any closer; any other tiles still come closer further up, even ones on either side of 0 that never meet, such as (−1, 4) and (0, 7), which end side by side at (−1, 1) and (0, 1). Top-down maps, whose tiles are all positive, still end in a single tile; where tiles lie either side of 0, the top level has 2 or 4.</p>
+
+	<h2>Why the isometric view meets it</h2>
+	<p>Top-down tile numbers in Vintage Story are always positive, around 1,000. The walls the test worlds straddle are multiples of small powers of two, such as 1,000, which is 125 × 8, so their tiles meet a few levels up. The isometric view puts a block at screen x = (x − z) · 8. Vintage Story worlds lie around x = z, so the isometric tiles straddle screen x = 0: tile columns −1 and 0, like "Across x = 0".</p>
+</main>
+<script>
+"use strict";
+// The level-0 tiles shown: positions first to first + count − 1, across and down.
+const first = -16;
+const count = 32;
+// Levels shown before giving up on a pyramid that never ends.
+const shownLevels = 10;
+const stepMs = 700;
+const holdMs = 450;
+
+const canvas = document.querySelector("#grid");
+const ctx = canvas.getContext("2d");
+const levelsEl = document.querySelector("#levels");
+const statusEl = document.querySelector("#status");
+const playButton = document.querySelector("#play");
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const css = getComputedStyle(document.documentElement);
+const colour = (name) => css.getPropertyValue(name).trim();
+
+const key = (x, y) => `${x},${y}`;
+function rectangle(x0, y0, x1, y1) {
+	const out = [];
+	for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) out.push([x, y]);
+	return out;
+}
+const presets = {
+	positive: rectangle(2, 3, 9, 8),
+	column: rectangle(-4, 5, 3, 9),
+	corner: rectangle(-5, -4, 4, 3),
+	eight: rectangle(5, 1, 10, 6),
+};
+
+let tiles = new Map(presets.column.map(([x, y]) => [key(x, y), [x, y]]));
+let rule = "settled";
+let result = null;
+// Where the animation is: at `level`, and `t` of the way to the next one.
+let level = 0;
+let t = 0;
+let playing = false;
+let frame = 0;
+
+// As Pyramid.init, or with the rule before it: stopping only at a single tile.
+function pyramid(list, stop) {
+	const levels = [list];
+	let ended = true;
+	let reason = "single";
+	while (levels.at(-1).length > 1) {
+		const last = levels.at(-1);
+		if (stop === "settled" && settled(last)) { reason = "settled"; break; }
+		if (levels.length >= shownLevels) { ended = false; break; }
+		const parents = new Map();
+		for (const [x, y] of last) parents.set(key(x >> 1, y >> 1), [x >> 1, y >> 1]);
+		levels.push([...parents.values()]);
+	}
+	return { levels, ended, reason };
+}
+
+// As Pyramid.isTopLevel: across and down, one value, or exactly -1 and 0, which halving brings no
+// closer.
+function settled(list) {
+	for (const axis of [0, 1]) {
+		const values = list.map((tile) => tile[axis]);
+		const low = Math.min(...values);
+		const high = Math.max(...values);
+		if (low !== high && !(low === -1 && high === 0)) return false;
+	}
+	return true;
+}
+
+function recompute() {
+	result = pyramid([...tiles.values()], rule);
+	level = Math.min(level, result.levels.length - 1);
+	t = 0;
+	listLevels();
+	draw();
+}
+
+const minus = (n) => String(n).replace("-", "−");
+function listLevels() {
+	levelsEl.replaceChildren();
+	result.levels.forEach((tilesAt, n) => {
+		const row = document.createElement("div");
+		row.textContent = `level ${n}: ${tilesAt.length} tile${tilesAt.length === 1 ? "" : "s"}`;
+		row.classList.toggle("current", n === level);
+		levelsEl.append(row);
+	});
+	const end = document.createElement("div");
+	end.className = "stop";
+	end.textContent = !result.levels[0].length ? "no tiles"
+		: !result.ended ? "… never ends"
+		: result.reason === "settled" ? "stops: tiles come no closer"
+		: "ends at one tile";
+	levelsEl.append(end);
+}
+
+function describe() {
+	const list = result.levels[level];
+	statusEl.replaceChildren();
+	if (!result.levels[0].length) {
+		statusEl.textContent = "No tiles: click or drag on the grid.";
+		return;
+	}
+	const top = result.levels.length - 1;
+	const b = document.createElement("b");
+	b.textContent = `Level ${level}: ${list.length} tile${list.length === 1 ? "" : "s"}`;
+	let rest = "";
+	if (level === top) {
+		const names = list.length <= 4 ? `: ${list.map(([x, y]) => `(${minus(x)}, ${minus(y)})`).join(", ")}` : "";
+		rest = !result.ended ? ` · still not one tile at level ${top}, and never will be${names}`
+			: result.reason === "settled" ? ` · the top: halving brings the tiles no closer${names}`
+			: " · the top: a single tile";
+	}
+	statusEl.append(b, document.createTextNode(rest));
+}
+
+function resize() {
+	const ratio = window.devicePixelRatio || 1;
+	const size = canvas.clientWidth;
+	canvas.width = Math.round(size * ratio);
+	canvas.height = Math.round(size * ratio);
+	draw();
+}
+
+const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
+// A level-n tile's square, in level-0 cells from the grid's top-left corner.
+function square(x, y, n) {
+	const side = 2 ** n;
+	return { x: x * side - first, y: y * side - first, side };
+}
+
+function draw() {
+	if (!result) return;
+	const size = canvas.width;
+	const cell = size / count;
+	ctx.clearRect(0, 0, size, size);
+	ctx.fillStyle = colour("--soft");
+	ctx.fillRect(0, 0, size, size);
+	// The level-0 grid, and the tiles chosen there, faintly.
+	ctx.strokeStyle = colour("--border");
+	ctx.lineWidth = 1;
+	ctx.beginPath();
+	for (let i = 1; i < count; i++) {
+		const at = Math.round(i * cell) + 0.5;
+		ctx.moveTo(at, 0);
+		ctx.lineTo(at, size);
+		ctx.moveTo(0, at);
+		ctx.lineTo(size, at);
+	}
+	ctx.stroke();
+	ctx.fillStyle = "rgba(37, 99, 235, 0.12)";
+	for (const [x, y] of result.levels[0]) ctx.fillRect((x - first) * cell, (y - first) * cell, cell, cell);
+
+	// The current level's tiles, each moving towards its parent's square.
+	const progress = ease(t);
+	const n = level;
+	const ratio = window.devicePixelRatio || 1;
+	ctx.font = `${11 * ratio}px ${colour("--mono")}`;
+	ctx.textAlign = "center";
+	ctx.textBaseline = "middle";
+	for (const [x, y] of result.levels[n]) {
+		const from = square(x, y, n);
+		const to = square(x >> 1, y >> 1, n + 1);
+		const moving = t > 0 && n + 1 < result.levels.length;
+		const sx = moving ? from.x + (to.x - from.x) * progress : from.x;
+		const sy = moving ? from.y + (to.y - from.y) * progress : from.y;
+		const side = moving ? from.side + (to.side - from.side) * progress : from.side;
+		const inset = Math.min(2 * ratio, side * cell * 0.08);
+		ctx.fillStyle = "rgba(37, 99, 235, 0.35)";
+		ctx.strokeStyle = colour("--accent");
+		ctx.lineWidth = 1.5 * ratio;
+		ctx.fillRect(sx * cell + inset, sy * cell + inset, side * cell - 2 * inset, side * cell - 2 * inset);
+		ctx.strokeRect(sx * cell + inset, sy * cell + inset, side * cell - 2 * inset, side * cell - 2 * inset);
+		if (t === 0 && side * cell > 44 * ratio) {
+			const cx = Math.min(Math.max((sx + side / 2) * cell, 26 * ratio), size - 26 * ratio);
+			const cy = Math.min(Math.max((sy + side / 2) * cell, 12 * ratio), size - 12 * ratio);
+			ctx.fillStyle = colour("--fg");
+			ctx.fillText(`${minus(x)}, ${minus(y)}`, cx, cy);
+		}
+	}
+
+	// The walls at 0.
+	ctx.strokeStyle = "#c2410c";
+	ctx.lineWidth = 2 * ratio;
+	ctx.setLineDash([6 * ratio, 4 * ratio]);
+	const zero = -first * cell;
+	ctx.beginPath();
+	ctx.moveTo(zero, 0);
+	ctx.lineTo(zero, size);
+	ctx.moveTo(0, zero);
+	ctx.lineTo(size, zero);
+	ctx.stroke();
+	ctx.setLineDash([]);
+
+	for (const [i, row] of [...levelsEl.children].entries()) row.classList.toggle("current", i === level);
+	describe();
+	updateButtons();
+}
+
+function updateButtons() {
+	const top = result.levels.length - 1;
+	playButton.textContent = playing ? "Pause" : "Play";
+	document.querySelector("#step").disabled = playing || level >= top;
+	document.querySelector("#back").disabled = playing || level === 0;
+	document.querySelector("#reset").disabled = playing || level === 0;
+}
+
+// Moves to the next level, animated unless motion is reduced. Calls `done` when it's there.
+function advance(done) {
+	if (level >= result.levels.length - 1) return done?.();
+	if (reduceMotion.matches) {
+		level++;
+		draw();
+		return done?.();
+	}
+	const start = performance.now();
+	const tick = (now) => {
+		t = Math.min((now - start) / stepMs, 1);
+		if (t >= 1) {
+			level++;
+			t = 0;
+			draw();
+			frame = 0;
+			return done?.();
+		}
+		draw();
+		frame = requestAnimationFrame(tick);
+	};
+	frame = requestAnimationFrame(tick);
+}
+
+function stop() {
+	playing = false;
+	cancelAnimationFrame(frame);
+	clearTimeout(frame);
+	frame = 0;
+	t = 0;
+	draw();
+}
+
+function play() {
+	if (level >= result.levels.length - 1) level = 0;
+	playing = true;
+	draw();
+	const next = () => {
+		if (!playing) return;
+		if (level >= result.levels.length - 1) {
+			playing = false;
+			draw();
+			return;
+		}
+		frame = setTimeout(() => advance(next), holdMs);
+	};
+	next();
+}
+
+playButton.addEventListener("click", () => (playing ? stop() : play()));
+document.querySelector("#step").addEventListener("click", () => {
+	if (!frame) advance(() => draw());
+});
+document.querySelector("#back").addEventListener("click", () => {
+	if (level > 0) level--;
+	draw();
+});
+document.querySelector("#reset").addEventListener("click", () => {
+	level = 0;
+	draw();
+});
+
+for (const button of document.querySelectorAll("[data-preset]")) {
+	button.addEventListener("click", () => {
+		stop();
+		tiles = new Map(presets[button.dataset.preset].map(([x, y]) => [key(x, y), [x, y]]));
+		for (const other of document.querySelectorAll("[data-preset]")) other.setAttribute("aria-pressed", String(other === button));
+		level = 0;
+		recompute();
+	});
+}
+for (const button of document.querySelectorAll("[data-rule]")) {
+	button.addEventListener("click", () => {
+		stop();
+		rule = button.dataset.rule;
+		for (const other of document.querySelectorAll("[data-rule]")) other.setAttribute("aria-pressed", String(other === button));
+		recompute();
+	});
+}
+
+// Clicking or dragging on the grid adds or removes level-0 tiles: whichever the first tile
+// touched needs.
+let painting = null;
+function cellAt(e) {
+	const box = canvas.getBoundingClientRect();
+	const x = Math.floor(((e.clientX - box.left) / box.width) * count) + first;
+	const y = Math.floor(((e.clientY - box.top) / box.height) * count) + first;
+	return x >= first && x < first + count && y >= first && y < first + count ? [x, y] : null;
+}
+function paint(e) {
+	const at = cellAt(e);
+	if (!at) return;
+	const k = key(...at);
+	if (painting === "add" && !tiles.has(k)) tiles.set(k, at);
+	else if (painting === "remove" && tiles.has(k)) tiles.delete(k);
+	else return;
+	recompute();
+}
+canvas.addEventListener("pointerdown", (e) => {
+	const at = cellAt(e);
+	if (!at) return;
+	stop();
+	canvas.setPointerCapture(e.pointerId);
+	painting = tiles.has(key(...at)) ? "remove" : "add";
+	for (const button of document.querySelectorAll("[data-preset]")) button.setAttribute("aria-pressed", "false");
+	level = 0;
+	paint(e);
+});
+canvas.addEventListener("pointermove", (e) => painting && paint(e));
+const endPaint = () => (painting = null);
+canvas.addEventListener("pointerup", endPaint);
+canvas.addEventListener("pointercancel", endPaint);
+
+new ResizeObserver(resize).observe(canvas);
+recompute();
+</script>
+</body>
+</html>
