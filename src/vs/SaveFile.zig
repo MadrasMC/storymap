@@ -343,9 +343,9 @@ pub const Reader = struct {
     grainTint: []world.Rgb,
     /// Chunks read: those holding a surface block, in each tile and its ring.
     chunksRead: usize = 0,
-    /// The chunk column `readChunk` last looked up, and whether it's fully generated.
-    lastColumn: ?world.ChunkColumn = null,
-    lastColumnDone: bool = false,
+    /// Whether each chunk column `readChunk` has looked up is fully generated, so its map chunk
+    /// is read once. Room for every column the save has.
+    columnsDone: std.AutoHashMapUnmanaged(world.ChunkColumn, bool),
 
     /// `style` is one of the game's own, or null for another: it decides what's read beyond
     /// the surface, and how chiseled blocks show (`showChiseledBlocks`).
@@ -377,7 +377,11 @@ pub const Reader = struct {
         const grainBlock = try allocator.alloc(i32, if (style == .coloured) area else 0);
         errdefer allocator.free(grainBlock);
         const grainTint = try allocator.alloc(world.Rgb, if (style == .coloured) area else 0);
+        errdefer allocator.free(grainTint);
+        var columnsDone: std.AutoHashMapUnmanaged(world.ChunkColumn, bool) = .empty;
+        try columnsDone.ensureTotalCapacity(allocator, @intCast(save.chunkColumns.len));
         return .{
+            .columnsDone = columnsDone,
             .style = style,
             .under = under,
             .topTint = topTint,
@@ -397,6 +401,7 @@ pub const Reader = struct {
     }
 
     pub fn deinit(self: *Reader, allocator: std.mem.Allocator) void {
+        self.columnsDone.deinit(allocator);
         allocator.free(self.grainTint);
         allocator.free(self.grainBlock);
         allocator.free(self.liquidTint);
@@ -452,15 +457,15 @@ pub const Reader = struct {
 
     /// Whether a chunk column is fully generated. A column whose map chunk can't be read isn't.
     fn isDone(self: *Reader, column: world.ChunkColumn) bool {
-        if (self.lastColumn) |last| if (std.meta.eql(last, column)) return self.lastColumnDone;
-        self.lastColumn = column;
-        self.lastColumnDone = false;
+        if (self.columnsDone.get(column)) |done| return done;
         self.mapChunkRow.bind(1, (Chunk.Position{ .x = @intCast(column.x), .z = @intCast(column.z) }).position64());
         defer self.mapChunkRow.reset();
+        // A column without a map chunk isn't one of the save's, so there's no room to remember it.
         if (!self.mapChunkRow.step()) return false;
         self.mapChunk.decode(self.mapChunkRow.column([]const u8, 0)) catch {};
-        self.lastColumnDone = self.mapChunk.stage == .done;
-        return self.lastColumnDone;
+        const done = self.mapChunk.stage == .done;
+        self.columnsDone.putAssumeCapacity(column, done);
+        return done;
     }
 
     /// Tints the tile's own columns by the climate in its map region and the season. A tile

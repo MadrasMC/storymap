@@ -2,6 +2,11 @@
 //! type's relief colour (`relief.zig`), its top, south and east faces lit differently. Plants
 //! aren't drawn.
 //!
+//! Each tile follows its lines of sight (`Line`) from the top of the world, and draws the first
+//! block each meets, as Mapcrafter does. A chunk is read only when a line enters it, and each
+//! worker keeps the chunks it has read (`ChunkCache`), so chunks hidden underground are never
+//! read.
+//!
 //! A `Source` is a game's save, opened for reading, with:
 //! - `chunkColumns: []const world.ChunkColumn`, those that may have blocks;
 //! - `heights() world.Heights`;
@@ -96,17 +101,168 @@ const Box = struct {
             .bottom = (x1 + z1) * down - (y0 + 1) * below + blockWidth,
         };
     }
+};
 
-    fn ofChunk(x: i64, y: i64, z: i64) Box {
-        return .of(x * side, y * side, z * side, x * side + side - 1, y * side + side - 1, z * side + side - 1);
+/// A line of sight: the blocks drawn on one square, each one block west, north and down from
+/// the one before, further from the viewer. `u` is x − z and `v` is x + z − 2y, which stay the
+/// same along it; they're both even or both odd.
+const Line = struct {
+    u: i64,
+    v: i64,
+
+    /// The x and z of its block at height `y`.
+    fn at(self: Line, y: i64) [2]i64 {
+        const sum = self.v + 2 * y;
+        return .{ @divExact(sum + self.u, 2), @divExact(sum - self.u, 2) };
     }
 
-    fn overlaps(self: Box, tile: tiles.Tile) bool {
-        const x0 = @as(i64, tile.x) * tiles.size;
-        const y0 = @as(i64, tile.y) * tiles.size;
-        return self.left < x0 + tiles.size and self.right > x0 and self.top < y0 + tiles.size and self.bottom > y0;
+    /// Where its blocks are drawn, in level-0 pixels.
+    fn square(self: Line) Box {
+        const left = (self.u - 1) * across;
+        const top = (self.v - 2) * down;
+        return .{ .left = left, .top = top, .right = left + blockWidth, .bottom = top + blockWidth };
     }
 };
+
+test Line {
+    const line: Line = .{ .u = 3, .v = -7 };
+    for ([_]i64{ 0, 1, 40, 255 }) |y| {
+        const x, const z = line.at(y);
+        try std.testing.expectEqual(line.u, x - z);
+        try std.testing.expectEqual(line.v, x + z - 2 * y);
+        try std.testing.expectEqual(Box.of(x, y, z, x, y, z), line.square());
+    }
+}
+
+/// The chunks a worker has read: how each of their blocks is drawn (`View.kinds`), or that a
+/// chunk has nothing to draw, which takes no room. It holds a fixed number of each, set up once,
+/// and makes room by forgetting the one used longest ago.
+const ChunkCache = struct {
+    pub const Position = struct { x: i32, y: i32, z: i32 };
+    pub const Kinds = [world.Chunk.volume]u8;
+    pub const Lookup = union(enum) { uncached, empty, kinds: *const Kinds };
+
+    /// Chunks remembered, and how many of them can have blocks to draw: 32 KB each.
+    pub const defaultChunks = 4096;
+    pub const defaultChunksWithBlocks = 128;
+
+    const Entry = struct {
+        position: Position,
+        /// Where its kinds are in `kinds`, or null for a chunk with nothing to draw.
+        slot: ?u32,
+        /// When it was last used, by `clock`.
+        used: u64,
+    };
+
+    entries: []Entry,
+    count: usize = 0,
+    /// Each position's index in `entries`.
+    byPosition: std.AutoHashMapUnmanaged(Position, u32),
+    kinds: []Kinds,
+    /// Slots in `kinds` no entry holds, the first `freeCount` of them.
+    free: []u32,
+    freeCount: usize,
+    clock: u64 = 0,
+
+    fn init(allocator: std.mem.Allocator, chunks: u32, chunksWithBlocks: u32) !ChunkCache {
+        const entries = try allocator.alloc(Entry, chunks);
+        errdefer allocator.free(entries);
+        var byPosition: std.AutoHashMapUnmanaged(Position, u32) = .empty;
+        try byPosition.ensureTotalCapacity(allocator, chunks);
+        errdefer byPosition.deinit(allocator);
+        const kinds = try allocator.alloc(Kinds, chunksWithBlocks);
+        errdefer allocator.free(kinds);
+        const free = try allocator.alloc(u32, chunksWithBlocks);
+        for (free, 0..) |*slot, i| slot.* = @intCast(i);
+        return .{ .entries = entries, .byPosition = byPosition, .kinds = kinds, .free = free, .freeCount = free.len };
+    }
+
+    fn deinit(self: *ChunkCache, allocator: std.mem.Allocator) void {
+        allocator.free(self.free);
+        allocator.free(self.kinds);
+        self.byPosition.deinit(allocator);
+        allocator.free(self.entries);
+    }
+
+    fn get(self: *ChunkCache, position: Position) Lookup {
+        const index = self.byPosition.get(position) orelse return .uncached;
+        const entry = &self.entries[index];
+        self.clock += 1;
+        entry.used = self.clock;
+        return if (entry.slot) |slot| .{ .kinds = &self.kinds[slot] } else .empty;
+    }
+
+    /// Remembers `position`, which must not be cached yet, and returns where to write its kinds
+    /// if it has `blocks`, or null.
+    fn put(self: *ChunkCache, position: Position, blocks: bool) ?*Kinds {
+        var index: usize = undefined;
+        var slot: ?u32 = null;
+        if (blocks and self.freeCount == 0) {
+            // The chunk with blocks used longest ago makes room in both.
+            index = self.leastRecent(true);
+            slot = self.entries[index].slot;
+            _ = self.byPosition.remove(self.entries[index].position);
+        } else {
+            if (self.count < self.entries.len) {
+                index = self.count;
+                self.count += 1;
+            } else {
+                index = self.leastRecent(false);
+                _ = self.byPosition.remove(self.entries[index].position);
+                if (self.entries[index].slot) |freed| {
+                    self.free[self.freeCount] = freed;
+                    self.freeCount += 1;
+                }
+            }
+            if (blocks) {
+                self.freeCount -= 1;
+                slot = self.free[self.freeCount];
+            }
+        }
+        self.clock += 1;
+        self.entries[index] = .{ .position = position, .slot = slot, .used = self.clock };
+        self.byPosition.putAssumeCapacity(position, @intCast(index));
+        return if (slot) |s| &self.kinds[s] else null;
+    }
+
+    /// The entry used longest ago, of those with blocks if `withBlocks`.
+    fn leastRecent(self: *const ChunkCache, withBlocks: bool) usize {
+        var oldest: usize = 0;
+        var oldestUse: u64 = std.math.maxInt(u64);
+        for (self.entries[0..self.count], 0..) |entry, i| {
+            if (withBlocks and entry.slot == null) continue;
+            if (entry.used < oldestUse) {
+                oldest = i;
+                oldestUse = entry.used;
+            }
+        }
+        return oldest;
+    }
+};
+
+test ChunkCache {
+    var cache: ChunkCache = try .init(std.testing.allocator, 3, 2);
+    defer cache.deinit(std.testing.allocator);
+    const a: ChunkCache.Position = .{ .x = 1, .y = 0, .z = 0 };
+    const b: ChunkCache.Position = .{ .x = 2, .y = 0, .z = 0 };
+    const c: ChunkCache.Position = .{ .x = 3, .y = 0, .z = 0 };
+    const d: ChunkCache.Position = .{ .x = 4, .y = 0, .z = 0 };
+    try std.testing.expect(cache.get(a) == .uncached);
+    cache.put(a, true).?[0] = 7;
+    cache.put(b, true).?[0] = 8;
+    try std.testing.expect(cache.put(c, false) == null);
+    try std.testing.expectEqual(7, cache.get(a).kinds[0]);
+    try std.testing.expect(cache.get(c) == .empty);
+    // No slot is free for d's blocks: b, used longest ago of the chunks with blocks, makes room.
+    cache.put(d, true).?[0] = 9;
+    try std.testing.expect(cache.get(b) == .uncached);
+    try std.testing.expectEqual(9, cache.get(d).kinds[0]);
+    try std.testing.expectEqual(7, cache.get(a).kinds[0]);
+    // Every entry is taken: c, now used longest ago, makes room for an empty chunk.
+    try std.testing.expect(cache.put(b, false) == null);
+    try std.testing.expect(cache.get(c) == .uncached);
+    try std.testing.expect(cache.get(b) == .empty);
+}
 
 /// The tiles the chunk columns are drawn on, from the bottom of the world to its top.
 fn tileList(allocator: std.mem.Allocator, columns: []const world.ChunkColumn, height: u16) ![]tiles.Tile {
@@ -242,13 +398,13 @@ fn View(comptime Source: type) type {
             self.chunksRead += worker.reader.chunksRead;
         }
 
-        /// One thread's reader and buffers, reused for every tile it draws.
+        /// One thread's reader, chunk cache and buffers, reused for every tile it draws.
         pub const Worker = struct {
             view: *const Self,
             reader: Source.Reader,
+            /// Where a chunk is read into before its blocks' kinds go into the cache.
             chunk: *world.Chunk,
-            /// How each block of `chunk` is drawn, as `kinds`.
-            chunkKinds: *[world.Chunk.volume]u8,
+            cache: ChunkCache,
             /// The depth of what each pixel shows: x + y + z of its block, larger nearer.
             depth: *[tiles.size * tiles.size]i32,
 
@@ -257,78 +413,99 @@ fn View(comptime Source: type) type {
                 errdefer reader.deinit(allocator);
                 const chunk = try allocator.create(world.Chunk);
                 errdefer allocator.destroy(chunk);
-                const chunkKinds = try allocator.create([world.Chunk.volume]u8);
-                errdefer allocator.destroy(chunkKinds);
+                var cache: ChunkCache = try .init(allocator, ChunkCache.defaultChunks, ChunkCache.defaultChunksWithBlocks);
+                errdefer cache.deinit(allocator);
                 const depth = try allocator.create([tiles.size * tiles.size]i32);
-                return .{ .view = view, .reader = reader, .chunk = chunk, .chunkKinds = chunkKinds, .depth = depth };
+                return .{ .view = view, .reader = reader, .chunk = chunk, .cache = cache, .depth = depth };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
                 allocator.destroy(self.depth);
-                allocator.destroy(self.chunkKinds);
+                self.cache.deinit(allocator);
                 allocator.destroy(self.chunk);
                 self.reader.deinit(allocator);
             }
 
-            /// Draws every chunk whose blocks fall on the tile. Returns false if none do.
+            /// Draws the nearest block on each line of sight through the tile. Returns false if
+            /// none has one.
             pub fn draw(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) !bool {
                 @memset(pixels, tiles.transparent);
                 @memset(self.depth, std.math.minInt(i32));
                 const x0 = @as(i64, tile.x) * tiles.size;
                 const y0 = @as(i64, tile.y) * tiles.size;
-                const levels = std.math.divCeil(i64, self.view.height, side) catch unreachable;
                 var any = false;
-                // Chunks by u = x − z, across the screen, and s = x + z, down it.
-                var cy: i64 = 0;
-                while (cy < levels) : (cy += 1) {
-                    var u = @divFloor(x0, side * across) - 1;
-                    while (u <= @divFloor(x0 + tiles.size, side * across) + 1) : (u += 1) {
-                        var s = @divFloor(y0 + cy * side * below, side * down) - 3;
-                        while (s <= @divFloor(y0 + tiles.size + (cy + 1) * side * below, side * down) + 1) : (s += 1) {
-                            if (@mod(s + u, 2) != 0) continue;
-                            const cx = @divExact(s + u, 2);
-                            const cz = @divExact(s - u, 2);
-                            if (!Box.ofChunk(cx, cy, cz).overlaps(tile)) continue;
-                            if (cx < std.math.minInt(i32) or cx > std.math.maxInt(i32) or cz < std.math.minInt(i32) or cz > std.math.maxInt(i32)) continue;
-                            if (!try self.reader.readChunk(@intCast(cx), @intCast(cy), @intCast(cz), self.chunk)) continue;
-                            if (self.drawChunk(cx, cy, cz, x0, y0, pixels)) any = true;
-                        }
+                // The lines whose squares fall on the tile (`Line.square`).
+                var u = @divFloor(x0 - blockWidth, across) + 2;
+                while (u <= @divFloor(x0 + tiles.size - 1, across) + 1) : (u += 1) {
+                    var v = @divFloor(y0 - blockWidth, down) + 3;
+                    while (v <= @divFloor(y0 + tiles.size - 1, down) + 2) : (v += 1) {
+                        if (@mod(u + v, 2) != 0) continue;
+                        const line: Line = .{ .u = u, .v = v };
+                        const block = try self.nearestBlock(line) orelse continue;
+                        const at = ((@as(usize, block.kind) - 1) * self.view.height + @as(usize, @intCast(block.y))) * 3;
+                        const square = line.square();
+                        if (self.drawBlock(square.left - x0, square.top - y0, @intCast(block.x + block.y + block.z), self.view.colours[at..][0..3], pixels)) any = true;
                     }
                 }
                 return any;
             }
 
-            /// Draws the blocks of `chunk`, at (cx, cy, cz), that are seen: those with an east,
-            /// south or upper neighbour in it that isn't drawn, and those on its east, south and
-            /// upper sides. Returns whether it drew any pixel.
-            fn drawChunk(self: *Worker, cx: i64, cy: i64, cz: i64, x0: i64, y0: i64, pixels: *tiles.Pixels) bool {
-                const chunk = self.chunk;
-                const kinds = self.view.kinds;
-                for (self.chunkKinds, chunk.solid, chunk.liquid) |*kind, solid, liquid| {
-                    const solidKind = if (solid >= 0 and solid < kinds.len) kinds[@intCast(solid)] else 0;
-                    const liquidKind = if (liquid >= 0 and liquid < kinds.len) kinds[@intCast(liquid)] else 0;
+            const Block = struct { x: i64, y: i64, z: i64, kind: u8 };
+
+            /// The nearest drawn block on a line of sight: following it from the top of the world
+            /// down, the first one, or null if none is. A chunk without one is passed in one step.
+            fn nearestBlock(self: *Worker, line: Line) !?Block {
+                var y: i64 = @as(i64, self.view.height) - 1;
+                while (y >= 0) {
+                    const x, const z = line.at(y);
+                    const cx = @divFloor(x, side);
+                    const cy = @divFloor(y, side);
+                    const cz = @divFloor(z, side);
+                    var lx: usize = @intCast(x - cx * side);
+                    var ly: usize = @intCast(y - cy * side);
+                    var lz: usize = @intCast(z - cz * side);
+                    // The line's blocks in this chunk, from here until it leaves it.
+                    const steps = @min(lx, ly, lz) + 1;
+                    if (try self.chunkKinds(cx, cy, cz)) |kinds| {
+                        for (0..steps) |step| {
+                            const kind = kinds[(ly * side + lz) * side + lx];
+                            if (kind != 0) {
+                                const back: i64 = @intCast(step);
+                                return .{ .x = x - back, .y = y - back, .z = z - back, .kind = kind };
+                            }
+                            lx -%= 1;
+                            ly -%= 1;
+                            lz -%= 1;
+                        }
+                    }
+                    y -= @intCast(steps);
+                }
+                return null;
+            }
+
+            /// How each block of chunk (x, y, z) is drawn, from the cache or else read; null for a
+            /// chunk with nothing to draw.
+            fn chunkKinds(self: *Worker, x: i64, y: i64, z: i64) !?*const ChunkCache.Kinds {
+                const limit = std.math.maxInt(i32);
+                if (@abs(x) > limit or @abs(y) > limit or @abs(z) > limit) return null;
+                const position: ChunkCache.Position = .{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
+                switch (self.cache.get(position)) {
+                    .empty => return null,
+                    .kinds => |kinds| return kinds,
+                    .uncached => {},
+                }
+                if (!try self.reader.readChunk(position.x, position.y, position.z, self.chunk)) {
+                    _ = self.cache.put(position, false);
+                    return null;
+                }
+                const kinds = self.cache.put(position, true).?;
+                const byId = self.view.kinds;
+                for (kinds, self.chunk.solid, self.chunk.liquid) |*kind, solid, liquid| {
+                    const solidKind = if (solid >= 0 and solid < byId.len) byId[@intCast(solid)] else 0;
+                    const liquidKind = if (liquid >= 0 and liquid < byId.len) byId[@intCast(liquid)] else 0;
                     kind.* = if (solidKind != 0) solidKind else liquidKind;
                 }
-                const height = self.view.height;
-                var any = false;
-                for (0..side) |y| for (0..side) |z| for (0..side) |x| {
-                    const i = (y * side + z) * side + x;
-                    const kind = self.chunkKinds[i];
-                    if (kind == 0) continue;
-                    if (x + 1 < side and y + 1 < side and z + 1 < side and
-                        self.chunkKinds[i + 1] != 0 and self.chunkKinds[i + side] != 0 and self.chunkKinds[i + side * side] != 0) continue;
-                    const bx = cx * side + @as(i64, @intCast(x));
-                    const by = cy * side + @as(i64, @intCast(y));
-                    const bz = cz * side + @as(i64, @intCast(z));
-                    if (by >= height) continue;
-                    const left = (bx - bz - 1) * across - x0;
-                    const top = (bx + bz) * down - (by + 1) * below - y0;
-                    if (left >= tiles.size or left + blockWidth <= 0 or top >= tiles.size or top + blockWidth <= 0) continue;
-                    const at = ((@as(usize, kind) - 1) * height + @as(usize, @intCast(by))) * 3;
-                    const colours = self.view.colours[at..][0..3];
-                    if (self.drawBlock(left, top, @intCast(bx + by + bz), colours, pixels)) any = true;
-                };
-                return any;
+                return kinds;
             }
 
             fn drawBlock(self: *Worker, left: i64, top: i64, depth: i32, colours: *const [3]u32, pixels: *tiles.Pixels) bool {
