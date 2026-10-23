@@ -17,13 +17,12 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 ## Block entities
 
-6. **Chiseled blocks in the top-down map.** Top voxel per 16 × 16 sub-column, coloured by its material. The cuboids are already parsed (`BlockEntity.attributes`).
-7. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
+6. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
 
 ## Isometric render
 
-8. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
-9. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
+7. **Block models.** Resolve block-type variants, load shapes and textures from the extracted assets, apply climate tinting, render isometric tiles.
+8. **Block entities in 3D.** Chiseled blocks first (pure data), then ground storage (needs item stacks and item models), then containers, displays and decorations.
 
 ## Done
 
@@ -58,5 +57,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 - Each part of Storymap a module of its own, so `build.zig` enforces what each may import, and the renderer can't import the game's reader ([`CONVENTIONS.md`](CONVENTIONS.md#modules)).
 - The game's own map styles drawn by the game's reader (`src/vs/MapPainter.zig`), in the game's own colours: `game` for the game's default, or `game:shaded` and `game:coloured`. The renderer draws only Storymap's relief, in the theme's colours. `--style` picks another style than the theme's ([`docs/themes.md`](docs/themes.md#map-style)).
 - No allocation per tile (memory stage 2): PNGs written by an encoder of our own (`lib/png`) into buffers set up before any work starts, replacing stb_image_write; tiles 20% smaller and renders 14% faster ([`docs/rendering.md`](docs/rendering.md#memory-no-allocation-at-runtime-goal)).
+- Chiseled blocks in the top-down map, one colour per block: the relief shows the material covering most of the block's top, and the `game:` styles show them as the game does, the coloured one in their first material's colour and their majority material's grain (`src/vs/ChiseledBlock.zig`, [`docs/rendering.md`](docs/rendering.md#how-the-game-draws-its-own-world-map)).
 - Performance recorded per version, one table per save, by `scripts/benchmark.zig`, which builds each tag with the Zig release it names ([`docs/performance.md`](docs/performance.md)).
 - A modded world: the larger 1.22.7 test world was created with Primitive Survival. Mods' block and item codes carry their domain, and their IDs follow the game's ([save format §6](docs/save-format/README.md#block-and-item-ids)).

@@ -12,6 +12,7 @@ const MapChunk = @import("MapChunk.zig");
 const GameData = @import("GameData.zig");
 const Prepared = @import("Prepared.zig");
 const Tint = @import("Tint.zig");
+const ChiseledBlock = @import("ChiseledBlock.zig");
 const ProtoBuf = @import("protobuf");
 
 path: []const u8,
@@ -144,6 +145,10 @@ pub const palette: world.Palette = .{
 pub const BlockTint = struct {
     climate: ?*const Tint.ColourMap = null,
     season: ?*const Tint.ColourMap = null,
+
+    fn isNone(self: BlockTint) bool {
+        return self.climate == null and self.season == null;
+    }
 };
 
 fn blockTint(self: *const SaveFile, id: i32) BlockTint {
@@ -178,6 +183,9 @@ pub const Appearance = struct {
     lake: bool = false,
     /// A thin layer, such as snow, that the shaded map looks under to show the block beneath.
     cover: bool = false,
+    /// Not seen in play, such as the meta blocks world generation places: looked through in a
+    /// chiseled block.
+    invisible: bool = false,
     /// Its texture's average colour, or null if unknown.
     colour: ?world.Rgb = null,
     /// Colours sampled across its texture: each column mixes in one of them.
@@ -210,6 +218,7 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
             .mapType = std.meta.stringToEnum(world.MapType, block.colorCode) orelse .land,
             .lake = std.mem.eql(u8, block.material, "Water") or (ice and !std.mem.eql(u8, code, "glacierice")),
             .cover = std.mem.eql(u8, block.material, "Snow"),
+            .invisible = std.mem.eql(u8, block.material, "Meta"),
             .colour = block.colour,
             .grain = block.grain,
         };
@@ -255,6 +264,8 @@ fn appearancesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]Appear
             .{ .mapType = .lake, .lake = true }
         else if (std.mem.startsWith(u8, name, "snowlayer-"))
             .{ .mapType = .glacier, .cover = true }
+        else if (std.mem.startsWith(u8, name, "meta-"))
+            .{ .mapType = .land, .invisible = true }
         else
             .{ .mapType = .land };
     }
@@ -262,7 +273,7 @@ fn appearancesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]Appear
 }
 
 test appearancesByCode {
-    const codes = [_]?[]const u8{ "air", "water-still-7", "saltwater-n-3", "lava-still-7", "boilingwater-still-7", "snowlayer-1", null };
+    const codes = [_]?[]const u8{ "air", "water-still-7", "saltwater-n-3", "lava-still-7", "boilingwater-still-7", "snowlayer-1", "meta-filler", null };
     const gameData: GameData = .{ .arena = undefined, .blockCodes = &codes, .itemCodes = &.{}, .worldHeight = 256 };
     const appearances = try appearancesByCode(std.testing.allocator, gameData);
     defer std.testing.allocator.free(appearances);
@@ -273,6 +284,7 @@ test appearancesByCode {
         .{ .mapType = .lava },
         .{ .mapType = .lake, .lake = true },
         .{ .mapType = .glacier, .cover = true },
+        .{ .mapType = .land, .invisible = true },
         .{ .mapType = .land },
     };
     try std.testing.expectEqualSlices(Appearance, &expected, appearances);
@@ -281,6 +293,7 @@ test appearancesByCode {
 /// One thread's connection, decoder and buffers, reused for every tile it reads.
 pub const Reader = struct {
     save: *const SaveFile,
+    style: ?MapStyle,
     db: DB,
     mapChunkRow: DB.Stmt,
     chunkRow: DB.Stmt,
@@ -299,11 +312,17 @@ pub const Reader = struct {
     /// except for the coloured map.
     topTint: []world.Rgb,
     liquidTint: []world.Rgb,
+    /// The block whose grain (`Appearance.grain`) each column's highest solid block shows, if
+    /// not its own, and that block's tint; 0 for its own. The coloured map shows a chiseled
+    /// block in its first material's colour and its majority material's grain, as the game
+    /// does. Indexed like the surface; empty for other styles.
+    grainBlock: []i32,
+    grainTint: []world.Rgb,
     /// Chunks read: those holding a surface block, in each tile and its ring.
     chunksRead: usize = 0,
 
     /// `style` is one of the game's own, or null for another: it decides what's read beyond
-    /// the surface.
+    /// the surface, and how chiseled blocks show (`showChiseledBlocks`).
     pub fn init(save: *const SaveFile, allocator: std.mem.Allocator, style: ?MapStyle) !Reader {
         const db = try DB.initImmutable(allocator, save.path);
         errdefer db.deinit();
@@ -328,10 +347,17 @@ pub const Reader = struct {
         const topTint = try allocator.alloc(world.Rgb, if (style == .coloured) area else 0);
         errdefer allocator.free(topTint);
         const liquidTint = try allocator.alloc(world.Rgb, if (style == .coloured) area else 0);
+        errdefer allocator.free(liquidTint);
+        const grainBlock = try allocator.alloc(i32, if (style == .coloured) area else 0);
+        errdefer allocator.free(grainBlock);
+        const grainTint = try allocator.alloc(world.Rgb, if (style == .coloured) area else 0);
         return .{
+            .style = style,
             .under = under,
             .topTint = topTint,
             .liquidTint = liquidTint,
+            .grainBlock = grainBlock,
+            .grainTint = grainTint,
             .save = save,
             .db = db,
             .mapChunkRow = mapChunkRow,
@@ -345,6 +371,8 @@ pub const Reader = struct {
     }
 
     pub fn deinit(self: *Reader, allocator: std.mem.Allocator) void {
+        allocator.free(self.grainTint);
+        allocator.free(self.grainBlock);
         allocator.free(self.liquidTint);
         allocator.free(self.topTint);
         allocator.free(self.under);
@@ -364,6 +392,8 @@ pub const Reader = struct {
         @memset(self.under, 0);
         @memset(self.topTint, Tint.none);
         @memset(self.liquidTint, Tint.none);
+        @memset(self.grainBlock, 0);
+        @memset(self.grainTint, Tint.none);
         // The surface's north-west corner, in blocks, and the chunk column holding it.
         const x0 = @as(i64, tile.x) * tiles.size - 1;
         const z0 = @as(i64, tile.y) * tiles.size - 1;
@@ -399,10 +429,12 @@ pub const Reader = struct {
             const i = (pz + 1) * side + px + 1;
             const top = if (surface.top[i] != null) save.blockTint(surface.topBlock[i]) else BlockTint{};
             const liquid = if (surface.liquidTop[i] != null) save.blockTint(surface.liquidBlock[i]) else BlockTint{};
-            if (top.climate == null and top.season == null and liquid.climate == null and liquid.season == null) continue;
+            const grain = if (surface.top[i] != null and self.grainBlock[i] != 0) save.blockTint(self.grainBlock[i]) else BlockTint{};
+            if (top.isNone() and liquid.isNone() and grain.isNone()) continue;
             const here = self.climate.at(@as(f32, @floatFromInt(px)) / tiles.size, @as(f32, @floatFromInt(pz)) / tiles.size);
-            if (top.climate != null or top.season != null) self.topTint[i] = Tint.tint(top.climate, top.season, here, surface.top[i].?, sea, save.seasonProgress);
-            if (liquid.climate != null or liquid.season != null) self.liquidTint[i] = Tint.tint(liquid.climate, liquid.season, here, surface.liquidTop[i].?, sea, save.seasonProgress);
+            if (!top.isNone()) self.topTint[i] = Tint.tint(top.climate, top.season, here, surface.top[i].?, sea, save.seasonProgress);
+            if (!liquid.isNone()) self.liquidTint[i] = Tint.tint(liquid.climate, liquid.season, here, surface.liquidTop[i].?, sea, save.seasonProgress);
+            if (!grain.isNone()) self.grainTint[i] = Tint.tint(grain.climate, grain.season, here, surface.top[i].?, sea, save.seasonProgress);
         };
     }
 
@@ -473,6 +505,38 @@ pub const Reader = struct {
             self.chunksRead += 1;
             decodeOrWarn(&self.decoder, self.chunk, position, self.chunkRow.column([]const u8, 0)) catch continue;
             if (recordChunk(surface, self.under, self.chunk, stored, span)) scanFrom = @max(scanFrom orelse level, level);
+            self.showChiseledBlocks(surface, span);
+        }
+    }
+
+    /// Shows each chiseled block on top of a column in `span`, in the chunk just recorded, by
+    /// its materials: the one most of its top shows (`ChiseledBlock.topMaterial`), or for the
+    /// coloured map, those the game shows. The shaded map shows the chiseled block itself, as
+    /// the game does.
+    fn showChiseledBlocks(self: *Reader, surface: world.Surface, span: Span) void {
+        if (self.style == .shaded) return;
+        const chunk = self.chunk;
+        for (chunk.blockEntities) |entity| {
+            const block = ChiseledBlock.of(entity.attributes) orelse continue;
+            const x = entity.position.x - @as(i64, @intCast(span.chunkX * 32));
+            const z = entity.position.z - @as(i64, @intCast(span.chunkZ * 32));
+            const y = entity.position.y - @as(i64, chunk.position.y) * 32;
+            if (x < span.x0 or x >= span.x1 or z < span.z0 or z >= span.z1 or y < 0 or y >= 32) continue;
+            const index = span.index(@intCast(x), @intCast(z));
+            const top = surface.top[index] orelse continue;
+            if (top != entity.position.y or surface.topBlock[index] != chunk.getBlock(@intCast(x), @intCast(y), @intCast(z))) continue;
+
+            var visible: ChiseledBlock.MaterialSet = .empty;
+            for (block.materials[0..@min(block.materials.len, ChiseledBlock.MaterialSet.bit_length)], 0..) |id, m| {
+                if (!self.save.appearance(id).invisible) visible.set(m);
+            }
+            if (self.style == .coloured) {
+                // As `BlockMicroBlock.GetColorWithoutTint` and `GetRandomColor`.
+                if (block.materials.len > 0) surface.topBlock[index] = block.materials[0];
+                self.grainBlock[index] = block.majorityMaterial(visible) orelse 0;
+            } else {
+                surface.topBlock[index] = block.topMaterial(visible) orelse continue;
+            }
         }
     }
 };

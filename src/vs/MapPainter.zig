@@ -114,7 +114,10 @@ fn paintColoured(self: *MapPainter, reader: *const SaveFile.Reader, tile: tiles.
         const x = tile.x * tiles.size + @as(i32, @intCast(px));
         const z = tile.y * tiles.size + @as(i32, @intCast(py));
         const tint = if (here == .liquid) reader.liquidTint[i] else reader.topTint[i];
-        pixels[p] = rgb(textureColour(appearance, palette.colours.get(appearance.mapType), tint, x, y, z));
+        const ownGrain = here == .liquid or reader.grainBlock[i] == 0;
+        const grain = if (ownGrain) appearance.grain else save.appearance(reader.grainBlock[i]).grain;
+        const grainTint = if (ownGrain) tint else reader.grainTint[i];
+        pixels[p] = rgb(textureColour(appearance.colour, tint, grain, grainTint, palette.colours.get(appearance.mapType), x, y, z));
         self.shade[p] = hillShade(surface, i, y);
     };
 }
@@ -181,12 +184,12 @@ fn hillShade(surface: *const world.Surface, i: usize, y: u16) u8 {
 /// setting `colorRandomizationWeight` has it by default.
 const grainWeight: f32 = 0.6;
 
-/// The texture's average colour mixed with a grain colour picked by position (`grainIndex`),
-/// both tinted by `tint`; `fallback` without a texture.
-fn textureColour(appearance: SaveFile.Appearance, fallback: Rgb, tint: Rgb, x: i32, y: u16, z: i32) Rgb {
-    const average = tinted(appearance.colour orelse return fallback, tint);
-    if (appearance.grain.len == 0) return average;
-    const sample = tinted(appearance.grain[grainIndex(x, y, z, appearance.grain.len)], tint);
+/// A texture's average colour mixed with one of `grain` picked by position (`grainIndex`), each
+/// tinted by its own tint; `fallback` without a texture.
+fn textureColour(colour: ?Rgb, tint: Rgb, grain: []const Rgb, grainTint: Rgb, fallback: Rgb, x: i32, y: u16, z: i32) Rgb {
+    const average = tinted(colour orelse return fallback, tint);
+    if (grain.len == 0) return average;
+    const sample = tinted(grain[grainIndex(x, y, z, grain.len)], grainTint);
     var out: Rgb = undefined;
     // As `ColorUtil.ColorOverlay`, rounding down.
     for (&out, average, sample) |*channel, a, s| channel.* = @intFromFloat(@as(f32, @floatFromInt(a)) * (1 - grainWeight) + grainWeight * @as(f32, @floatFromInt(s)));
@@ -203,14 +206,17 @@ fn tinted(colour: Rgb, tint: Rgb) Rgb {
 
 test textureColour {
     const grain = [_]Rgb{ .{ 0, 0, 0 }, .{ 200, 100, 50 } };
-    const appearance: SaveFile.Appearance = .{ .mapType = .land, .colour = .{ 100, 100, 100 }, .grain = &grain };
-    const colour = textureColour(appearance, .{ 1, 2, 3 }, Tint.none, 409, 111, -304);
+    const grey: Rgb = .{ 100, 100, 100 };
+    const colour = textureColour(grey, Tint.none, &grain, Tint.none, .{ 1, 2, 3 }, 409, 111, -304);
     try std.testing.expect(std.meta.eql(colour, Rgb{ 40, 40, 40 }) or std.meta.eql(colour, Rgb{ 160, 100, 70 }));
-    try std.testing.expectEqual(colour, textureColour(appearance, .{ 1, 2, 3 }, Tint.none, 409, 111, -304));
-    try std.testing.expectEqual(Rgb{ 1, 2, 3 }, textureColour(.{ .mapType = .land }, .{ 1, 2, 3 }, .{ 0, 0, 0 }, 0, 0, 0));
+    try std.testing.expectEqual(colour, textureColour(grey, Tint.none, &grain, Tint.none, .{ 1, 2, 3 }, 409, 111, -304));
+    try std.testing.expectEqual(Rgb{ 1, 2, 3 }, textureColour(null, .{ 0, 0, 0 }, &.{}, .{ 0, 0, 0 }, .{ 1, 2, 3 }, 0, 0, 0));
     // Half green: the average and the grain are both tinted.
-    const half = textureColour(appearance, .{ 1, 2, 3 }, .{ 0, 128, 0 }, 409, 111, -304);
+    const half = textureColour(grey, .{ 0, 128, 0 }, &grain, .{ 0, 128, 0 }, .{ 1, 2, 3 }, 409, 111, -304);
     try std.testing.expect(std.meta.eql(half, Rgb{ 0, 20, 0 }) or std.meta.eql(half, Rgb{ 0, 50, 0 }));
+    // Only the grain tinted, as for a chiseled block whose grain is another material's.
+    const grainOnly = textureColour(grey, Tint.none, &grain, .{ 0, 128, 0 }, .{ 1, 2, 3 }, 409, 111, -304);
+    try std.testing.expectEqual(Rgb{ 39, 70, 39 }, grainOnly);
 }
 
 /// The game's position hash (vsapi `GameMath.MurmurHash3`): MurmurHash3's mixing of the three

@@ -5,6 +5,7 @@ const std = @import("std");
 pub const Assets = @import("Assets.zig");
 pub const BlockEntity = @import("BlockEntity.zig");
 pub const BlockTypes = @import("BlockTypes.zig");
+pub const ChiseledBlock = @import("ChiseledBlock.zig");
 pub const Chunk = @import("Chunk.zig");
 pub const Compression = @import("Compression.zig");
 pub const GameData = @import("GameData.zig");

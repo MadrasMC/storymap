@@ -19,7 +19,7 @@ The game's map cache keeps every pixel it drew, so it's a reference for drawing 
 
 Storymap's `game:coloured` style draws accurate mode, with the tint as below ([Climate and season tint](#climate-and-season-tint)). Against the map cache of a 1.22.7 world in accurate mode, the shading matches, as do untinted blocks such as sand, gravel, rock, snow and glacier ice, and water within 2 levels of 255 on average. Grassland comes out 15–20% darker than the game's, and forest about 10%. Grain can't match pixel for pixel, as the game's 30 colours are picked at random, but averaged over 4 × 4 blocks, 97% of the map is within 25 levels of the game's. *(Measured (1.22.7): the cache against Storymap's tiles, by map type.)*
 
-The game's map doesn't treat block entities specially: a chiseled block is coloured as whatever block sits at that position.
+Chiseled blocks ([save format §5](save-format/README.md#chiseled-blocks-microblock-chisel)): in default mode, the game's map colours one as the chiseled block itself, by the chiseled block type's colour code (`land`). In accurate mode, the chiseled block passes both colours on to its materials: the average colour is its first material's, and the grain its majority material's, the one filling the most voxels, leaving out meta blocks such as colliders. Each is tinted as its own material. *(Source: vssurvivalmod [`BlockMicroBlock.cs`](https://github.com/anegostudios/vssurvivalmod/blob/849fa8cad9e392368566efc7474e73db6404a145/Systems/Microblock/BlockMicroBlock.cs), `GetColorWithoutTint` and `GetRandomColor`, and `BEMicroBlock.cs`, `getMajorityMaterial`.)* Storymap's `game:` styles do the same. Its relief shows each chiseled block as the material covering most of its top: of the top voxels of its 16 × 16 columns of voxels, the material most of them have, looking through meta blocks. In the ruins of the larger 1.22.7 world, a sixth of the chiseled blocks on the surface have a meta block, `meta-selectablecollider`, as their first material, and a tenth have a different majority material from their first. *(Verified (1.22.7).)*
 
 The game's map only shows chunk columns the client has received, all of them fully generated: in a 1.22.7 test world, every piece in its cache was a stage-6 (Done) column, and none were partly generated columns ([save format §7](save-format/README.md#the-games-map-cache)).
 
@@ -150,7 +150,7 @@ Preparing 1.22.7 with Primitive Survival takes about 2 s, for 14,781 blocks, mos
 
 From the sample save (class counts in [`save-format/README.md` §5](save-format/README.md#5-block-entities-field-8)):
 
-- **Chiseled blocks** (`MicroBlock`, `Chisel`): the shape is fully in the save as 16³-voxel cuboids with block-ID materials. Top-down: take the top voxel of each 16 × 16 sub-column. Isometric: draw the boxes with each material's texture. No model files needed.
+- **Chiseled blocks** (`MicroBlock`, `Chisel`): the shape is fully in the save as 16³-voxel cuboids with block-ID materials. Top-down: one colour per block, from its materials ([How the game draws its own world map](#how-the-game-draws-its-own-world-map)). Isometric: draw the boxes with each material's texture. No model files needed.
 - **Ground storage** (`GroundStorage`): item stacks placed on the ground (firewood, planks, ingots…). Needs item stack parsing and item models.
 - **Containers, displays and decorations** (`GenericTypedContainer`, `Crate`, `DisplayCase`, `Tapestry`, `TorchHolder`, …): the base look comes from the block's own shape; contents and variants come from the block entity.
 
