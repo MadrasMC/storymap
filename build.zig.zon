@@ -1,7 +1,7 @@
 .{
     .name = .storymap,
     .fingerprint = 0x5fb12fbd82e2c8a3,
-    .version = "0.1.0",
+    .version = "0.2.0",
     .minimum_zig_version = "0.17.0",
     .paths = .{ "src", "lib", "build.zig", "README.md", "LICENSE" },
     .dependencies = .{
