@@ -68,8 +68,8 @@
 	</div>
 
 	<p>A step east (x + 1) is one column to the right; a step south (z + 1) is one column to the left. From (0, 0) in column 0, a tile x steps east and z steps south is in column <code>x − z</code>.</p>
-	<p>Neighbouring columns are half a diamond apart. Storymap draws diamonds 16 pixels wide, so a tile is <code>(x − z) · 8</code> pixels across.</p>
-	<p>Rows work the same way, with a sum: a step east and a step south both go one row down, so a tile is in row <code>x + z</code>. Neighbouring rows are half a diamond's height apart, 4 pixels, so a tile is <code>(x + z) · 4</code> pixels down. A block one level higher is drawn 8 pixels higher, which makes it <code>(x + z) · 4 − y · 8</code>.</p>
+	<p>Neighbouring columns are half a diamond apart. Storymap draws diamonds 32 pixels wide, so a tile is <code>(x − z) · 16</code> pixels across.</p>
+	<p>Rows work the same way, with a sum: a step east and a step south both go one row down, so a tile is in row <code>x + z</code>. Neighbouring rows are half a diamond's height apart, 8 pixels, so a tile is <code>(x + z) · 8</code> pixels down. A block one level higher is drawn 16 pixels higher, which makes it <code>(x + z) · 8 − y · 16</code>.</p>
 	<p>Column 0 holds the tiles where x = z. A world's spawn is on it, so the area explored around spawn has tiles on both sides: columns below 0 as well as above. Rows don't: x + z adds two large positive positions, about 1,024,000 around spawn, far more than the most a block's height takes off.</p>
 </main>
 <script>

@@ -23,7 +23,7 @@ pub const projection = "isometric";
 
 /// A block's width in level-0 pixels. Its top is a diamond this wide and half as tall, over
 /// sides half as tall again, so it fills a square this size.
-pub const blockWidth = 16;
+pub const blockWidth = 32;
 /// How far a block east or west is across the screen, and how far a block east or south is
 /// down it, or a block below.
 const across = blockWidth / 2;
@@ -128,12 +128,15 @@ fn tileList(allocator: std.mem.Allocator, columns: []const world.ChunkColumn, he
 }
 
 test tileList {
-    // One chunk column 256 blocks high, drawn 512 pixels wide and 2,304 high.
-    try std.testing.expectEqual(Box{ .left = -256, .top = -2048, .right = 256, .bottom = 256 }, Box.of(0, 0, 0, 31, 255, 31));
+    // One chunk column 256 blocks high: 64 blocks of x − z wide, and 64 of x + z plus 256 high,
+    // around screen x 0, from 256 blocks up down to its bottom corner.
+    const box = Box.of(0, 0, 0, 31, 255, 31);
+    try std.testing.expectEqual(Box{ .left = -32 * across, .top = -256 * below, .right = 32 * across, .bottom = 62 * down - below + blockWidth }, box);
     const list = try tileList(std.testing.allocator, &.{.{ .x = 0, .z = 0 }}, 256);
     defer std.testing.allocator.free(list);
-    // Tile columns -1 and 0, rows -4 to 0.
-    try std.testing.expectEqual(10, list.len);
+    const columns = @divFloor(box.right - 1, tiles.size) - @divFloor(box.left, tiles.size) + 1;
+    const rows = @divFloor(box.bottom - 1, tiles.size) - @divFloor(box.top, tiles.size) + 1;
+    try std.testing.expectEqual(@as(usize, @intCast(columns * rows)), list.len);
 }
 
 /// How each face of a block's square is lit, by pixel.
@@ -161,12 +164,14 @@ const faces: [blockWidth][blockWidth]Face = faces: {
 };
 
 test faces {
-    // The top face's corners are at the middle of each edge of the top half.
-    try std.testing.expectEqual(Face.top, faces[3][8]);
+    // The top face fills the middle of the top half, the south face the left of the bottom
+    // half and the east face its right; the corners are empty.
+    const w = blockWidth;
+    try std.testing.expectEqual(Face.top, faces[w / 4][w / 2]);
     try std.testing.expectEqual(Face.none, faces[0][0]);
-    try std.testing.expectEqual(Face.south, faces[10][3]);
-    try std.testing.expectEqual(Face.east, faces[10][12]);
-    try std.testing.expectEqual(Face.none, faces[15][0]);
+    try std.testing.expectEqual(Face.south, faces[w * 5 / 8][w / 4]);
+    try std.testing.expectEqual(Face.east, faces[w * 5 / 8][w * 3 / 4]);
+    try std.testing.expectEqual(Face.none, faces[w - 1][0]);
     // Each face is a quarter of the square.
     var counts: std.EnumArray(Face, usize) = .initFill(0);
     for (faces) |row| for (row) |face| {
