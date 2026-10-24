@@ -6,9 +6,10 @@
 //! colour maps with their padding and flags, each image beside it as `colormaps/<code>.png`.
 //! Blocks name their two textures and their climate and season colour maps by number from 0,
 //! or `-` for none, then, for a block drawn as a cube, the images of its faces' plain and
-//! tinted layers (`world.CubeFaces`), top, south and east, by number in `textures.bin`:
+//! tinted layers (`world.CubeFaces`), top, south and east, by number in `textures.bin`, a
+//! texture's variants separated by commas:
 //!
-//!     storymap blocks 5
+//!     storymap blocks 6
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
@@ -17,7 +18,7 @@
 //!     …
 //!     colormap climatePlantTint 4 0
 //!     …
-//!     block rock-granite Stone land 0 0 - - 0 - 0 - 0 -
+//!     block rock-granite Stone land 0 0 - - 0,1,2,3 - 0,1,2,3 - 0,1,2,3 -
 //!     …
 //!
 //! `textures.bin` holds the face images one after another, each its width and height as
@@ -65,7 +66,7 @@ const Image = world.Image;
 
 /// The format of `blocks.txt` and `textures.bin`, and of what goes into them: raise it when
 /// any changes, so sets prepared before are prepared again.
-const formatVersion = 5;
+const formatVersion = 6;
 const fileName = "blocks.txt";
 const imageFileName = "textures.bin";
 const colourMapFolder = "colormaps";
@@ -109,25 +110,28 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
     var textures: Textures = .{ .arena = arena, .io = io, .assets = assets };
     var images: Images = .{ .textures = &textures };
     const colourMaps = try prepareColourMaps(arena, io, assets, folder);
-    const numbers = try arena.alloc([10]?usize, blocks.len);
-    for (numbers, blocks) |*number, block| {
-        number.* = @splat(null);
-        number[0..4].* = .{
+    const numbers = try arena.alloc([4]?usize, blocks.len);
+    // Each cube's layers, top, south and east, plain and tinted: their images' numbers, one for
+    // each variant.
+    const cubes = try arena.alloc(?[6]?[]const usize, blocks.len);
+    for (numbers, cubes, blocks) |*number, *layers, block| {
+        number.* = .{
             try textures.number(block.textures.colour),
             try textures.number(block.textures.grain),
             colourMapNumber(colourMaps, block.climateColorMap),
             colourMapNumber(colourMaps, block.seasonColorMap),
         };
+        layers.* = null;
         const cube = block.cube orelse continue;
         const faces = [_]BlockTypes.Face{ cube.up, cube.south, cube.east };
-        var faceNumbers: [6]?usize = undefined;
+        var found: [6]?[]const usize = undefined;
         // A cube with a face that can't be read isn't one: it's drawn in its colour instead.
         const whole = for (faces, 0..) |face, i| {
-            faceNumbers[2 * i] = try images.number(face.plain);
-            faceNumbers[2 * i + 1] = try images.number(face.tinted);
-            if ((face.plain != null and faceNumbers[2 * i] == null) or (face.tinted != null and faceNumbers[2 * i + 1] == null)) break false;
+            found[2 * i] = try images.variants(face.plain);
+            found[2 * i + 1] = try images.variants(face.tinted);
+            if ((face.plain != null and found[2 * i] == null) or (face.tinted != null and found[2 * i + 1] == null)) break false;
         } else true;
-        if (whole) number[4..10].* = faceNumbers;
+        if (whole) layers.* = found;
     }
 
     var text: std.Io.Writer.Allocating = .init(arena);
@@ -141,9 +145,17 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
         try w.writeByte('\n');
     }
     for (colourMaps) |map| try w.print("colormap {s} {} {}\n", .{ map.code, map.padding, map.extraFlags });
-    for (blocks, numbers) |block, number| {
+    for (blocks, numbers, cubes) |block, number, cube| {
         try w.print("block {s} {s} {s}", .{ block.code, block.material, block.colorCode });
         for (number) |n| if (n) |i| try w.print(" {}", .{i}) else try w.writeAll(" -");
+        const layers: [6]?[]const usize = cube orelse @splat(null);
+        for (layers) |layer| {
+            const variants = layer orelse {
+                try w.writeAll(" -");
+                continue;
+            };
+            for (variants, 0..) |n, i| try w.print("{s}{}", .{ if (i == 0) " " else ",", n });
+        }
         try w.writeByte('\n');
     }
     var imageBytes: std.Io.Writer.Allocating = .init(arena);
@@ -172,26 +184,38 @@ const Images = struct {
     numbers: std.StringHashMapUnmanaged(?usize) = .empty,
     made: std.ArrayList(Image) = .empty,
 
-    /// Makes the layer's image the first time; null without a layer or if it can't be made.
-    fn number(self: *Images, layer: ?BlockTypes.Layer) !?usize {
+    /// The numbers of the layer's images, one for each variant of its base texture that can be
+    /// made, each made the first time; null without a layer or if none can be made.
+    fn variants(self: *Images, layer: ?BlockTypes.Layer) !?[]const usize {
         const wanted = layer orelse return null;
+        var found: std.ArrayList(usize) = .empty;
+        for (try self.textures.paths(wanted.base)) |path| {
+            if (try self.number(wanted, path)) |n| try found.append(self.textures.arena, n);
+        }
+        return if (found.items.len == 0) null else found.items;
+    }
+
+    /// The number of the layer's image with `path` as its base, made the first time, or null if
+    /// it can't be made.
+    fn number(self: *Images, layer: BlockTypes.Layer, path: []const u8) !?usize {
         const arena = self.textures.arena;
         var name: std.Io.Writer.Allocating = .init(arena);
-        try name.writer.print("{s}", .{wanted.base});
-        for (wanted.overlays) |overlay| try name.writer.print("+{s}", .{overlay});
-        if (wanted.half) |half| try name.writer.print("#{t}", .{half});
+        try name.writer.print("{s}:{s}", .{ domainOf(layer.base), path });
+        for (layer.overlays) |overlay| try name.writer.print("+{s}", .{overlay});
+        if (layer.half) |half| try name.writer.print("#{t}", .{half});
         const entry = try self.numbers.getOrPut(arena, name.written());
         if (entry.found_existing) return entry.value_ptr.*;
         entry.value_ptr.* = null;
-        const image = try self.make(wanted) orelse return null;
+        const image = try self.make(layer, path) orelse return null;
         try self.made.append(arena, image);
         entry.value_ptr.* = self.made.items.len - 1;
         return entry.value_ptr.*;
     }
 
-    fn make(self: *Images, layer: BlockTypes.Layer) !?Image {
+    fn make(self: *Images, layer: BlockTypes.Layer, path: []const u8) !?Image {
         const arena = self.textures.arena;
-        var image = try decode(arena, try self.textures.readPng(layer.base) orelse return null) orelse return null;
+        const png = try self.textures.assets.read(arena, self.textures.io, domainOf(layer.base), path) orelse return null;
+        var image = try decode(arena, png) orelse return null;
         if (layer.half) |half| image = halfOf(arena, image, half) orelse return null;
         // An overlay that can't be read is left out, as the game leaves out a missing texture.
         for (layer.overlays) |location| {
@@ -329,21 +353,33 @@ const Textures = struct {
     /// The texture's file, or for a location ending in `*`, the first file it starts; null if
     /// there's none.
     fn readPng(self: *Textures, location: []const u8) !?[]const u8 {
-        const colon = std.mem.indexOfScalar(u8, location, ':').?;
-        const domain = location[0..colon];
-        var path = try std.fmt.allocPrint(self.arena, "textures/{s}.png", .{location[colon + 1 ..]});
-        if (std.mem.endsWith(u8, location, "*")) {
-            // The first file it starts, by name (vsapi `CompositeTexture.Bake`).
-            const start = path[0 .. path.len - "*.png".len];
-            const files = self.files orelse try self.assets.list(self.arena, self.io, "textures");
-            self.files = files;
-            path = for (files) |file| {
-                if (std.mem.eql(u8, file.domain, domain) and std.mem.startsWith(u8, file.path, start) and std.mem.endsWith(u8, file.path, ".png")) break @constCast(file.path);
-            } else return null;
+        const files = try self.paths(location);
+        if (files.len == 0) return null;
+        return self.assets.read(self.arena, self.io, domainOf(location), files[0]);
+    }
+
+    /// The texture's file, in its location's domain; or for a location ending in `*`, every file
+    /// it starts, by name: the first is the texture and the others its variants (vsapi
+    /// `CompositeTexture.Bake`).
+    fn paths(self: *Textures, location: []const u8) ![]const []const u8 {
+        const domain = domainOf(location);
+        const path = try std.fmt.allocPrint(self.arena, "textures/{s}.png", .{location[domain.len + 1 ..]});
+        if (!std.mem.endsWith(u8, location, "*")) return self.arena.dupe([]const u8, &.{path});
+        const start = path[0 .. path.len - "*.png".len];
+        const files = self.files orelse try self.assets.list(self.arena, self.io, "textures");
+        self.files = files;
+        var found: std.ArrayList([]const u8) = .empty;
+        for (files) |file| {
+            if (std.mem.eql(u8, file.domain, domain) and std.mem.startsWith(u8, file.path, start) and std.mem.endsWith(u8, file.path, ".png")) try found.append(self.arena, file.path);
         }
-        return self.assets.read(self.arena, self.io, domain, path);
+        return found.items;
     }
 };
+
+/// The domain of a location such as `game:block/stone/granite1`.
+fn domainOf(location: []const u8) []const u8 {
+    return location[0..std.mem.indexOfScalar(u8, location, ':').?];
+}
 
 pub fn exists(io: Io, folder: Dir) bool {
     folder.access(io, fileName, .{}) catch return false;
@@ -362,6 +398,9 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
     var textures: std.ArrayList(*const TextureColours) = .empty;
     // Null where a colour map's image can't be read, so the numbers still count.
     var colourMaps: std.ArrayList(?*const Tint.ColourMap) = .empty;
+    // The same list of variants, written the same, is one slice, so blocks with the same faces
+    // can be told apart by their slices alone.
+    var variantLists: std.StringHashMapUnmanaged([]const *const Image) = .empty;
     while (lines.next()) |line| {
         var words = std.mem.tokenizeScalar(u8, std.mem.trimEnd(u8, line, "\r"), ' ');
         const kind = words.next() orelse continue;
@@ -390,11 +429,11 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
             const season = try numbered(?*const Tint.ColourMap, colourMaps.items, words.next());
             var faces: [3]world.CubeFaces.Face = undefined;
             for (&faces) |*face| face.* = .{
-                .plain = try numbered(*const Image, images, words.next()),
-                .tinted = try numbered(*const Image, images, words.next()),
+                .plain = try variantsOf(arena, &variantLists, images, words.next()),
+                .tinted = try variantsOf(arena, &variantLists, images, words.next()),
             };
             const cube = for (faces) |face| {
-                if (face.plain == null and face.tinted == null) break null;
+                if (face.plain.len == 0 and face.tinted.len == 0) break null;
             } else world.CubeFaces{ .up = faces[0], .south = faces[1], .east = faces[2] };
             try self.blocks.put(arena, first, .{
                 .material = material,
@@ -444,6 +483,19 @@ fn parseRgb(word: ?[]const u8) !world.Rgb {
     if (hex.len != 6) return error.NotPreparedBlocks;
     _ = std.fmt.hexToBytes(&rgb, hex) catch return error.NotPreparedBlocks;
     return rgb;
+}
+
+/// The images of a layer's variants, numbered and separated by commas, or none for `-`.
+fn variantsOf(arena: std.mem.Allocator, lists: *std.StringHashMapUnmanaged([]const *const Image), images: []const *const Image, word: ?[]const u8) ![]const *const Image {
+    const text = word orelse return error.NotPreparedBlocks;
+    if (std.mem.eql(u8, text, "-")) return &.{};
+    const entry = try lists.getOrPut(arena, text);
+    if (entry.found_existing) return entry.value_ptr.*;
+    var found: std.ArrayList(*const Image) = .empty;
+    var numbers = std.mem.splitScalar(u8, text, ',');
+    while (numbers.next()) |n| try found.append(arena, (try numbered(*const Image, images, n)) orelse return error.NotPreparedBlocks);
+    entry.value_ptr.* = found.items;
+    return found.items;
 }
 
 /// The texture or colour map a block names by its number, or null for `-`.
@@ -518,7 +570,8 @@ test "prepare, load and compare with a save" {
         .{ "game/assets/survival/textures/block/stone/granite1.png", @embedFile("testdata/red.png") },
         .{ "game/assets/survival/config/colormaps.json", "[ { code: 'climateTest', texture: { base: 'environment/test' } }, { code: 'missing', texture: { base: 'environment/none' } } ]" },
         .{ "game/assets/game/textures/environment/test.png", @embedFile("testdata/red.png") },
-        .{ "game/assets/survival/textures/block/stone/granite2.png", "not read: granite1 comes first" },
+        .{ "game/assets/survival/textures/block/stone/granite2.png", "not a PNG: a variant that can't be read is left out" },
+        .{ "game/assets/survival/textures/block/stone/granite3.png", @embedFile("testdata/red.png") },
         .{ "game/assets/survival/blocktypes/soil.json", "{ code: 'soil', drawtype: 'TopSoil', textures: { all: { base: 'block/stone/granite*' }, specialSecondTexture: { base: 'block/grass' } } }" },
         .{ "game/assets/survival/textures/block/grass.png", @embedFile("testdata/red.png") },
         .{ "data/Mods/testmod.zip", @embedFile("testdata/testmod.zip") },
@@ -564,19 +617,22 @@ test "prepare, load and compare with a save" {
     try std.testing.expect(prepared.blocks.contains("testmod:thing"));
     try std.testing.expectEqual(null, prepared.blocks.get("testmod:thing").?.colour);
 
-    // With a colour map, the rock's faces are its whole texture, tinted.
+    // With a colour map, the rock's faces are its whole texture, tinted: granite1 and granite3,
+    // its variants that can be read, the same list on every face.
     const rock = prepared.blocks.get("rock-granite").?.cube.?;
-    try std.testing.expectEqual(null, rock.up.plain);
-    try std.testing.expectEqual(2, rock.up.tinted.?.width);
-    try std.testing.expectEqual(rock.up.tinted.?, rock.south.tinted.?);
+    try std.testing.expectEqual(0, rock.up.plain.len);
+    try std.testing.expectEqual(2, rock.up.tinted.len);
+    try std.testing.expectEqual(2, rock.up.tinted[0].width);
+    try std.testing.expect(rock.up.tinted[0] != rock.up.tinted[1]);
+    try std.testing.expectEqual(rock.up.tinted.ptr, rock.south.tinted.ptr);
     // The soil's grass is half its second texture, the right on top and the left on the sides.
     const soil = prepared.blocks.get("soil").?.cube.?;
-    try std.testing.expectEqual(rock.up.tinted.?, soil.up.plain.?);
-    try std.testing.expectEqual(1, soil.up.tinted.?.width);
-    try std.testing.expectEqual(1, soil.south.tinted.?.width);
-    try std.testing.expectEqual(soil.south.tinted.?, soil.east.tinted.?);
-    try std.testing.expectEqual(rock.up.tinted.?.pixels[1], soil.up.tinted.?.pixels[0]);
-    try std.testing.expectEqual(rock.up.tinted.?.pixels[0], soil.south.tinted.?.pixels[0]);
+    try std.testing.expectEqual(rock.up.tinted.ptr, soil.up.plain.ptr);
+    try std.testing.expectEqual(1, soil.up.tinted[0].width);
+    try std.testing.expectEqual(1, soil.south.tinted[0].width);
+    try std.testing.expectEqual(soil.south.tinted.ptr, soil.east.tinted.ptr);
+    try std.testing.expectEqual(rock.up.tinted[0].pixels[1], soil.up.tinted[0].pixels[0]);
+    try std.testing.expectEqual(rock.up.tinted[0].pixels[0], soil.south.tinted[0].pixels[0]);
 
     const codes = [_]?[]const u8{ "air", "rock-granite", "rock-basalt", null, "testmod:thing", "othermod:x", "othermod:y" };
     const missing = try prepared.unknown(std.testing.allocator, &codes);

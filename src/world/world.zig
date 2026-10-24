@@ -89,10 +89,12 @@ pub const CubeFaces = struct {
     south: Face,
     east: Face,
 
-    /// What's never tinted, and what the block's tint colours, drawn over it.
+    /// What's never tinted, and what the block's tint colours, drawn over it: each a texture's
+    /// variants, of which a block shows the one its position picks (the game reader's
+    /// `variant`), and none for a face without the layer.
     pub const Face = struct {
-        plain: ?*const Image = null,
-        tinted: ?*const Image = null,
+        plain: []const *const Image = &.{},
+        tinted: []const *const Image = &.{},
     };
 };
 

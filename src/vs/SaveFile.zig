@@ -228,6 +228,40 @@ pub fn cubeFaces(self: *const SaveFile, id: i32) ?*const world.CubeFaces {
     return self.appearance(id).cube;
 }
 
+/// Which of a texture's `count` variants the block at (x, y, z) shows, by vsapi's
+/// `GameMath.MurmurHash3Mod`. The game picks variants in closed code; that it hashes the
+/// position this way isn't checked.
+pub fn variant(self: *const SaveFile, x: i64, y: i64, z: i64, count: u32) u32 {
+    _ = self;
+    const hash = murmurHash3(@truncate(x), @truncate(y), @truncate(z));
+    return @intCast(@mod(hash, @as(i32, @intCast(count))));
+}
+
+/// vsapi `GameMath.MurmurHash3`, of three integers: MurmurHash3's 32-bit mixing with seed 144,
+/// but finished with the count of integers, 3, where MurmurHash3 takes the length in bytes.
+fn murmurHash3(x: i32, y: i32, z: i32) i32 {
+    const c1: u32 = 0xcc9e2d51;
+    const c2: u32 = 0x1b873593;
+    var h: u32 = 144;
+    for ([_]i32{ x, y, z }) |value| {
+        h ^= std.math.rotl(u32, @as(u32, @bitCast(value)) *% c1, 15) *% c2;
+        h = std.math.rotl(u32, h, 13) *% 5 +% 0xe6546b64;
+    }
+    h ^= 3;
+    h = (h ^ h >> 16) *% 0x85ebca6b;
+    h = (h ^ h >> 13) *% 0xc2b2ae35;
+    return @bitCast(h ^ h >> 16);
+}
+
+test variant {
+    // Every variant comes up, and the same place always shows the same one.
+    var seen: [4]bool = @splat(false);
+    var z: i64 = -50;
+    while (z < 50) : (z += 1) seen[variant(undefined, 25000, 110, z, 4)] = true;
+    try std.testing.expectEqual([4]bool{ true, true, true, true }, seen);
+    try std.testing.expectEqual(variant(undefined, 3, -7, 11, 4), variant(undefined, 3, -7, 11, 4));
+}
+
 /// Whether the climate or the season colours the block (`Reader.tint`).
 pub fn isTinted(self: *const SaveFile, id: i32) bool {
     return !self.blockTint(id).isNone();
