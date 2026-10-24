@@ -4,20 +4,14 @@ How code in this project is written. Applies to everyone and every tool working 
 
 ## Modules
 
-Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a root file of the folder's name (`src/vs/vs.zig`), imported by name (`@import("vs")`). A module can import only the modules `build.zig` gives it, and no file outside its folder, so the compiler checks the rules below. Within a module, files import each other by path.
+Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a root file of the folder's name (`src/vs/vs.zig`), imported by name (`@import("vs")`). A module can import only the modules `build.zig` gives it, and no file outside its folder, so the compiler holds each module to its imports. Within a module, files import each other by path.
 
-| module | imports |
-| --- | --- |
-| `tiles` | `png` |
-| `world` | `tiles` |
-| `theme` | `world` |
-| `viewer` | `tiles`, `theme`, `world` |
-| `console` | – |
-| `renderer` | `world`, `tiles`, `theme` |
-| `vs` | `world`, `tiles`, `sqlite`, `protobuf`, `console` |
-| `cli` | `vs`, `renderer`, `viewer`, `theme`, `tiles`, `console`, `sqlite`, `args` |
+`build.zig` lists each module's imports. Before giving a module another, check it against these rules:
 
-`main.zig` only imports `cli`, `console` and `args`.
+- **Each module does its own part:** `vs` reads the game, `world` holds what it tells the others about a world, `renderer` draws the views, `tiles` cuts and encodes tiles, `viewer` writes the page, `theme` loads themes, `console` writes messages, and `cli` puts them together into commands. A module that needs another's part done hands over what it has instead of importing that module to do it: the renderers return their stats, and `cli` prints them.
+- **The game at arm's length:** only `vs`, and `cli` putting the program together, know the game ([Keeping the game apart](#keeping-the-game-apart)).
+- **Libraries know nothing of Storymap** ([Libraries](#libraries)), so they import no module of `src/`.
+- **`main.zig`** only picks the command from the command line and runs it from `cli`.
 
 ## Keeping the game apart
 
