@@ -1,25 +1,34 @@
 //! Benchmarks tagged versions of Storymap on one save file, for docs/performance.md. Each `v*` tag
 //! is checked out into its own worktree in `.benchmark/`, built with -Doptimize=ReleaseFast by the
-//! Zig release its build.zig.zon names, and run as `storymap bench <save-file> <runs> --json`.
-//! From the project's folder:
+//! Zig release its build.zig.zon names, and run `--runs` times after one untimed run, taking the
+//! median of each time. From the project's folder:
 //!
 //!     zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current]
-//!         [--zigs <folder>]
+//!         [--isometric] [--write] [--zigs <folder>]
+//!
+//! Each run is `storymap <save-file> --no-write --json` in the slowest styles, the Plain theme's
+//! with `game:coloured` top-down (`styles`). `--isometric` adds the isometric view, and `--write`
+//! writes the tiles into `.benchmark/out`, so writing them is timed too. Versions up to 0.2.0
+//! have their own `storymap bench`, which draws the Printed theme's relief and takes the medians
+//! itself; they're run with that, without the isometric view.
 //!
 //! Zig releases are looked for in `--zigs` (`.benchmark/zig` by default) as their archives unpack,
 //! e.g. `zig-x86_64-windows-0.17.0/`, and downloaded there from ziglang.org if missing.
 //!
-//! Prints a Markdown table, a row per version as it's measured, then the save, the world and the
-//! machine.
+//! Prints a Markdown table, a row per version as it's measured, then the save, the world, the
+//! machine and each version's time per part of the tile pipeline.
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 
 const exe = if (builtin.os.tag == .windows) ".exe" else "";
 
-const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--zigs <folder>]\n";
+const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--isometric] [--write] [--zigs <folder>]\n";
 
-/// The keys of `storymap bench --json` this reads.
+const styles = [_][]const u8{ "--theme", "plain", "--style", "game:coloured" };
+const outFolder = ".benchmark/out";
+
+/// One version's medians.
 const Result = struct {
     version: []const u8,
     build: []const u8,
@@ -30,9 +39,54 @@ const Result = struct {
     levels: usize,
     area: usize,
     seconds: struct { open: f64, tiles: f64, total: f64 },
-    areaPerSecond: f64,
-    /// The bench process's peak memory, in bytes, from the operating system; not in the JSON.
+    /// The isometric view's tiles; null without it.
+    isometric: ?f64 = null,
+    /// The peak memory of a run, in bytes, from the operating system.
     peak: usize = 0,
+    /// Each view's time per part of the tile pipeline, summed over all workers; null from
+    /// `storymap bench`.
+    work: ?struct { topdown: WorkerSeconds, isometric: ?WorkerSeconds } = null,
+};
+
+/// The keys of `storymap <save-file> --json` this reads.
+const Report = struct {
+    version: []const u8,
+    build: []const u8,
+    threads: usize,
+    chunks: usize,
+    seconds: struct { open: f64, total: f64 },
+    topdown: View,
+    isometric: ?View = null,
+
+    const View = struct {
+        tiles: usize,
+        levels: usize,
+        area: usize = 0,
+        seconds: f64,
+        workerSeconds: WorkerSeconds,
+    };
+};
+
+const WorkerSeconds = struct { draw: f64, filter: f64, compress: f64, write: f64, shrink: f64 };
+
+/// The keys of `storymap bench --json`, in versions up to 0.2.0, this reads.
+const BenchReport = struct {
+    version: []const u8,
+    build: []const u8,
+    threads: usize,
+    runs: usize,
+    chunks: usize,
+    tiles: usize,
+    levels: usize,
+    area: usize,
+    seconds: struct { open: f64, tiles: f64, total: f64 },
+};
+
+/// How each run is made.
+const Runs = struct {
+    count: usize,
+    isometric: bool,
+    write: bool,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -41,7 +95,7 @@ pub fn main(init: std.process.Init) !void {
     const given = try init.minimal.args.toSlice(arena);
 
     var savePath: ?[]const u8 = null;
-    var runs: []const u8 = "7";
+    var runs: Runs = .{ .count = 7, .isometric = false, .write = false };
     var tags: std.ArrayList([]const u8) = .empty;
     var current = false;
     var zigsPath: []const u8 = ".benchmark/zig";
@@ -50,10 +104,17 @@ pub fn main(init: std.process.Init) !void {
         const arg = given[i];
         if (std.mem.eql(u8, arg, "--current")) {
             current = true;
+        } else if (std.mem.eql(u8, arg, "--isometric")) {
+            runs.isometric = true;
+        } else if (std.mem.eql(u8, arg, "--write")) {
+            runs.write = true;
         } else if (std.mem.eql(u8, arg, "--runs") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--zigs")) {
             i += 1;
             if (i == given.len) fail("{s} needs a value\n" ++ usage, .{arg});
-            if (std.mem.eql(u8, arg, "--runs")) runs = given[i];
+            if (std.mem.eql(u8, arg, "--runs")) {
+                runs.count = std.fmt.parseInt(usize, given[i], 10) catch 0;
+                if (runs.count == 0) fail("--runs: expected a whole number above 0, not {s}\n", .{given[i]});
+            }
             if (std.mem.eql(u8, arg, "--tag")) try tags.append(arena, given[i]);
             if (std.mem.eql(u8, arg, "--zigs")) zigsPath = given[i];
         } else if (savePath == null and !std.mem.startsWith(u8, arg, "--")) {
@@ -74,44 +135,66 @@ pub fn main(init: std.process.Init) !void {
     var stdout = Io.File.stdout().writerStreaming(io, &buffer);
     const out = &stdout.interface;
     const saveHash = try hashFile(arena, io, save);
-    try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    if (runs.isometric) {
+        try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | isometric | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    } else {
+        try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    }
     try out.flush();
 
     // Newest first, as the table lists them.
-    var last: ?Result = null;
+    var results: std.ArrayList(Result) = .empty;
     if (current) {
         std.debug.print("measuring the working tree\n", .{});
-        last = try bench(arena, io, try build(arena, io, ".", zigs), save, runs);
-        try writeRow(out, last.?, " (working tree)", saveHash);
+        var result = try measureBuild(arena, io, try build(arena, io, ".", zigs), save, runs);
+        result.version = try std.fmt.allocPrint(arena, "{s} (working tree)", .{result.version});
+        try results.append(arena, result);
+        try writeRow(out, result, runs, saveHash);
     }
     for (tags.items) |tag| {
         std.debug.print("measuring {s}\n", .{tag});
-        last = try measure(arena, io, tag, save, runs, zigs);
-        try writeRow(out, last.?, "", saveHash);
+        const result = try measure(arena, io, tag, save, runs, zigs);
+        try results.append(arena, result);
+        try writeRow(out, result, runs, saveHash);
     }
 
-    const result = last.?;
+    const last = results.items[results.items.len - 1];
     var date: [10]u8 = undefined;
     try out.print("\nsave: {s} ({s})\nworld: {} chunks, {d:.2} km², {} tiles in {} levels\n", .{
-        std.fs.path.basename(save), saveHash, result.chunks, @as(f64, @floatFromInt(result.area)) / 1e6, result.tiles, result.levels,
+        std.fs.path.basename(save), saveHash, last.chunks, @as(f64, @floatFromInt(last.area)) / 1e6, last.tiles, last.levels,
     });
-    try out.print("machine: {s}, {} threads, {s}; {s} build, median of {} runs, measured {s} UTC\n", .{
-        processorName(arena, io), result.threads, @tagName(builtin.os.tag), result.build, result.runs, today(io, &date),
+    try out.print("machine: {s}, {} threads, {s}; {s} build, median of {} runs{s}, measured {s} UTC\n", .{
+        processorName(arena, io), last.threads, @tagName(builtin.os.tag), last.build, runs.count, if (runs.write) ", tiles written" else "", today(io, &date),
     });
+    for (results.items) |result| {
+        const work = result.work orelse continue;
+        try writeWork(out, result.version, "top-down", work.topdown);
+        if (work.isometric) |isometric| try writeWork(out, result.version, "isometric", isometric);
+    }
     try out.flush();
 }
 
-fn writeRow(out: *Io.Writer, result: Result, label: []const u8, saveHash: []const u8) !void {
+fn writeRow(out: *Io.Writer, result: Result, runs: Runs, saveHash: []const u8) !void {
+    const area = @as(f64, @floatFromInt(result.area)) / 1e6;
     const chunksPerSecond = @as(f64, @floatFromInt(result.chunks)) / result.seconds.total;
-    try out.print("| {s}{s} | {s} | {d:.3} s | {d:.1} | {d:.0} | {d:.3} s | {d:.3} s | {d:.0} MB |\n", .{
-        result.version,  label,                saveHash,            result.seconds.total,                       result.areaPerSecond / 1e6,
-        chunksPerSecond, result.seconds.tiles, result.seconds.open, @as(f64, @floatFromInt(result.peak)) / 1e6,
+    try out.print("| {s} | {s} | {d:.3} s | {d:.1} | {d:.0} | {d:.3} s |", .{
+        result.version, saveHash, result.seconds.total, area / result.seconds.total, chunksPerSecond, result.seconds.tiles,
     });
+    if (runs.isometric) {
+        if (result.isometric) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
+    }
+    try out.print(" {d:.3} s | {d:.0} MB |\n", .{ result.seconds.open, @as(f64, @floatFromInt(result.peak)) / 1e6 });
     try out.flush();
+}
+
+fn writeWork(out: *Io.Writer, version: []const u8, view: []const u8, work: WorkerSeconds) !void {
+    try out.print("{s}, {s}, workers' time: draw {d:.2} s, filter {d:.2} s, compress {d:.2} s, write {d:.2} s, shrink {d:.2} s\n", .{
+        version, view, work.draw, work.filter, work.compress, work.write, work.shrink,
+    });
 }
 
 /// Checks `tag` out into `.benchmark/<tag>`, builds and benchmarks it, and removes the worktree.
-fn measure(arena: std.mem.Allocator, io: Io, tag: []const u8, save: []const u8, runs: []const u8, zigs: []const u8) !Result {
+fn measure(arena: std.mem.Allocator, io: Io, tag: []const u8, save: []const u8, runs: Runs, zigs: []const u8) !Result {
     const folder = try std.fs.path.join(arena, &.{ ".benchmark", tag });
     // Left over from a run that stopped.
     if (Io.Dir.cwd().access(io, folder, .{})) |_| {
@@ -119,7 +202,92 @@ fn measure(arena: std.mem.Allocator, io: Io, tag: []const u8, save: []const u8, 
     } else |_| {}
     _ = try git(arena, io, &.{ "worktree", "add", "--detach", folder, tag });
     defer _ = git(arena, io, &.{ "worktree", "remove", "--force", folder }) catch {};
-    return bench(arena, io, try build(arena, io, folder, zigs), save, runs);
+    return measureBuild(arena, io, try build(arena, io, folder, zigs), save, runs);
+}
+
+/// Runs `storymap`, its own `bench` if it has one.
+fn measureBuild(arena: std.mem.Allocator, io: Io, storymap: []const u8, save: []const u8, runs: Runs) !Result {
+    const help = try run(arena, io, &.{ storymap, "--help" }, ".");
+    if (std.mem.indexOf(u8, help, "storymap bench ") != null) return bench(arena, io, storymap, save, runs);
+
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(arena, &.{ storymap, save });
+    try argv.appendSlice(arena, &styles);
+    if (runs.write) try argv.append(arena, outFolder) else try argv.append(arena, "--no-write");
+    if (runs.isometric) try argv.append(arena, "--isometric");
+    try argv.append(arena, "--json");
+
+    // The first warms the file cache, and prepares the blocks if they aren't yet.
+    _ = try runJson(Report, arena, io, argv.items);
+    const reports = try arena.alloc(Report, runs.count);
+    const peaks = try arena.alloc(usize, runs.count);
+    for (reports, peaks) |*report, *peak| report.*, peak.* = try runJson(Report, arena, io, argv.items);
+
+    const first = reports[0];
+    var result: Result = .{
+        .version = first.version,
+        .build = first.build,
+        .threads = first.threads,
+        .runs = runs.count,
+        .chunks = first.chunks,
+        .tiles = first.topdown.tiles,
+        .levels = first.topdown.levels,
+        .area = first.topdown.area,
+        .seconds = .{
+            .open = try median(arena, reports, struct {
+                fn pick(r: Report) f64 {
+                    return r.seconds.open;
+                }
+            }.pick),
+            .tiles = try median(arena, reports, struct {
+                fn pick(r: Report) f64 {
+                    return r.topdown.seconds;
+                }
+            }.pick),
+            .total = try median(arena, reports, struct {
+                fn pick(r: Report) f64 {
+                    return r.seconds.total;
+                }
+            }.pick),
+        },
+        .work = .{ .topdown = try medianWork(arena, reports, .topdown), .isometric = null },
+    };
+    std.mem.sort(usize, peaks, {}, std.sort.asc(usize));
+    result.peak = peaks[peaks.len / 2];
+    if (first.isometric != null) {
+        result.isometric = try median(arena, reports, struct {
+            fn pick(r: Report) f64 {
+                return r.isometric.?.seconds;
+            }
+        }.pick);
+        result.work.?.isometric = try medianWork(arena, reports, .isometric);
+    }
+    return result;
+}
+
+/// The median of the times `pick` picks from `reports`.
+fn median(arena: std.mem.Allocator, reports: []const Report, comptime pick: fn (Report) f64) !f64 {
+    const values = try arena.alloc(f64, reports.len);
+    for (values, reports) |*value, report| value.* = pick(report);
+    std.mem.sort(f64, values, {}, std.sort.asc(f64));
+    return values[values.len / 2];
+}
+
+/// The median of each part of a view's time.
+fn medianWork(arena: std.mem.Allocator, reports: []const Report, comptime view: enum { topdown, isometric }) !WorkerSeconds {
+    var work: WorkerSeconds = undefined;
+    inline for (@typeInfo(WorkerSeconds).@"struct".field_names) |name| {
+        @field(work, name) = try median(arena, reports, struct {
+            fn pick(r: Report) f64 {
+                const seconds = switch (view) {
+                    .topdown => r.topdown.workerSeconds,
+                    .isometric => r.isometric.?.workerSeconds,
+                };
+                return @field(seconds, name);
+            }
+        }.pick);
+    }
+    return work;
 }
 
 fn build(arena: std.mem.Allocator, io: Io, folder: []const u8, zigs: []const u8) ![]const u8 {
@@ -177,16 +345,40 @@ fn get(client: *std.http.Client, url: []const u8) ![]u8 {
     return body.written();
 }
 
-fn bench(arena: std.mem.Allocator, io: Io, storymap: []const u8, save: []const u8, runs: []const u8) !Result {
-    var child = try std.process.spawn(io, .{ .argv = &.{ storymap, "bench", save, runs, "--json" }, .stdout = .pipe, .request_resource_usage_statistics = true });
+/// Versions up to 0.2.0: their `storymap bench` renders `runs.count` times and takes the medians.
+fn bench(arena: std.mem.Allocator, io: Io, storymap: []const u8, save: []const u8, runs: Runs) !Result {
+    const count = try std.fmt.allocPrint(arena, "{}", .{runs.count});
+    const report, const peak = try runJson(BenchReport, arena, io, &.{ storymap, "bench", save, count, "--json" });
+    return .{
+        .version = report.version,
+        .build = report.build,
+        .threads = report.threads,
+        .runs = report.runs,
+        .chunks = report.chunks,
+        .tiles = report.tiles,
+        .levels = report.levels,
+        .area = report.area,
+        .seconds = .{ .open = report.seconds.open, .tiles = report.seconds.tiles, .total = report.seconds.total },
+        .peak = peak,
+    };
+}
+
+/// Runs `argv` and reads the last line it prints as `T`, with the run's peak memory in bytes.
+fn runJson(comptime T: type, arena: std.mem.Allocator, io: Io, argv: []const []const u8) !struct { T, usize } {
+    var child = try std.process.spawn(io, .{ .argv = argv, .stdout = .pipe, .stderr = .pipe, .request_resource_usage_statistics = true });
     var buffer: [4096]u8 = undefined;
     var reader = child.stdout.?.reader(io, &buffer);
     const stdout = try reader.interface.allocRemaining(arena, .unlimited);
-    if (!(try child.wait(io)).success()) return error.CommandFailed;
+    // A render's messages are a few lines, so they fit the pipe while stdout is read first.
+    var errorReader = child.stderr.?.reader(io, &buffer);
+    const stderr = try errorReader.interface.allocRemaining(arena, .unlimited);
+    if (!(try child.wait(io)).success()) {
+        std.debug.print("{s}", .{stderr});
+        return error.CommandFailed;
+    }
     const line = std.mem.trim(u8, stdout[(std.mem.lastIndexOfScalar(u8, std.mem.trimEnd(u8, stdout, "\r\n"), '\n') orelse 0)..], " \r\n");
-    var result = try std.json.parseFromSliceLeaky(Result, arena, line, .{ .ignore_unknown_fields = true });
-    result.peak = child.resource_usage_statistics.getMaxRss() orelse 0;
-    return result;
+    const value = try std.json.parseFromSliceLeaky(T, arena, line, .{ .ignore_unknown_fields = true });
+    return .{ value, child.resource_usage_statistics.getMaxRss() orelse 0 };
 }
 
 fn git(arena: std.mem.Allocator, io: Io, argv: []const []const u8) ![]const u8 {

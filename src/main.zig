@@ -8,7 +8,6 @@ const args = @import("args");
 
 const render = cli.render;
 const prepare = cli.prepare;
-const bench = cli.bench;
 
 pub const std_options: std.Options = .{ .logFn = console.logFn };
 
@@ -17,7 +16,6 @@ const program: args.Program = .{ .name = "storymap", .header = "storymap " ++ bu
 const commands = .{
     args.Command(null, render.spec, render.run),
     args.Command("prepare", prepare.spec, prepare.run),
-    args.Command("bench", bench.spec, bench.run),
     args.Action(.{ .name = "version", .description = "Show Storymap's version." }, printVersion),
 };
 

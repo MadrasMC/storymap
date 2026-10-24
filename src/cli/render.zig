@@ -227,7 +227,7 @@ fn logTopdown(save: *const SaveFile, stats: topdown.Stats) void {
 
 /// The theme `themeName`, with its top-down style replaced by `styleText`, `--style`'s value, if
 /// given. A theme or style that can't be used stops the program with a message saying why.
-pub fn loadTheme(init: std.process.Init, themeName: []const u8, styleText: ?[]const u8) Theme {
+fn loadTheme(init: std.process.Init, themeName: []const u8, styleText: ?[]const u8) Theme {
     const style: ?Style.Name = if (styleText) |text|
         Style.parseName(text) orelse console.fail("`--style`: unknown style {s}. expected: {s}", .{ text, styleNames })
     else
@@ -268,10 +268,10 @@ const gameStyles = names: {
     break :names text;
 };
 
-pub const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
+const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
 
 /// A save that can't be read stops the program with a message saying why.
-pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !SaveFile {
+fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !SaveFile {
     var problem: SaveFile.Problem = .{};
     const save = SaveFile.open(allocator, io, path, &problem) catch |err| switch (err) {
         error.InvalidSaveFile => switch (problem.kind) {

@@ -19,21 +19,30 @@ From the project's folder:
 zig run scripts/benchmark.zig -- <save-file>
 ```
 
-[`scripts/benchmark.zig`](../scripts/benchmark.zig) checks out each `v*` tag into its own worktree in `.benchmark/`, builds it with `-Doptimize=ReleaseFast` and runs `storymap bench <save-file> 7 --json`. It prints a table row for each, newest first, then the save, the world and the machine. `--tag v0.1.0` (repeatable) measures only the tags given, and `--current` adds the working tree.
+[`scripts/benchmark.zig`](../scripts/benchmark.zig) checks out each `v*` tag into its own worktree in `.benchmark/`, builds it with `-Doptimize=ReleaseFast` and renders the save 7 times after one untimed run, as `storymap <save-file> --no-write --json`, taking the median of each time. It prints a table row for each version, newest first, then the save, the world, the machine and each version's time per part of the tile pipeline, summed over all workers: drawing, filtering and compressing the PNGs, writing them and shrinking tiles for the levels above.
+
+| option | effect |
+| --- | --- |
+| `--tag v0.1.0` | measures only the tags given; repeatable |
+| `--current` | adds the working tree |
+| `--runs <n>` | renders each version n times, 7 by default |
+| `--isometric` | adds the isometric view, in an isometric column |
+| `--write` | writes the tiles into `.benchmark/out`, so writing them is timed too |
 
 Each tag is built by the Zig release its `build.zig.zon` names. The script looks for it in `.benchmark/zig/`, or in `--zigs <folder>`, as its archive unpacks (`zig-x86_64-windows-0.17.0/`), and downloads it there from ziglang.org if it's missing.
 
 | column | contents |
 | --- | --- |
 | save | the first 12 hex digits of the save file's SHA-256 |
-| end to end | a whole render: opening the save, then every tile, with the PNGs encoded but not written |
+| end to end | a whole render: loading the prepared blocks, opening the save, then every tile, with the PNGs encoded but not written |
 | km²/s | the map's area drawn per second, end to end |
 | chunks/s | all the save's chunks per second, end to end, though only those holding the surface are read |
-| tiles | drawing, encoding and the zoomed-out levels of every tile |
-| open | opening the save: its block list and which tiles it has |
-| peak memory | the most memory `storymap bench` held at once (Windows' peak working set, elsewhere the peak resident set), including its decoding of every chunk for comparison |
+| tiles | the top-down view: drawing, encoding and the zoomed-out levels of every tile |
+| isometric | the same for the isometric view, with `--isometric` |
+| open | opening the save, its block list and which tiles it has, and giving it the prepared blocks |
+| peak memory | the most memory a render held at once (Windows' peak working set, elsewhere the peak resident set) |
 
-- **Styles:** `storymap bench` draws the slowest styles, the Plain theme's with `game:coloured` top-down, in versions after 0.2.0. 0.2.0 and earlier draw the Printed theme's relief, so their rows measure a different style from later ones.
+- **Styles:** renders draw the slowest styles, the Plain theme's with `game:coloured` top-down. 0.2.0 and earlier are measured with their own `storymap bench`, which draws the Printed theme's relief, without loading the prepared blocks, and with the decoding of every chunk in its peak memory; so their rows measure less than later ones, and have no isometric view.
 - **Runs:** each time is the median of 7 renders after one untimed one. On the world above, the median of 7 consecutive runs stays within 3% of the next 7; 9 runs is no closer, and 3 or 5 are 5–6% apart.
 - **Sittings:** the same build measures up to 8% apart at different times, with the machine's heat, power plan and background work. So a table is measured in one sitting, and a difference under about 5% between rows isn't a change.
 - **Small maps:** a render's fixed startup cost of about 60 ms is most of a very small map's time, so its km²/s and chunks/s come out low, and a few milliseconds of noise move them a lot. A table's save should be a large world.

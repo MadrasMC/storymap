@@ -54,13 +54,13 @@ Each version's numbers are in [docs/performance.md](docs/performance.md).
 
 Storymap reads only the chunks that hold the surface, so drawing the whole map takes less time than decoding the save.
 
-To measure your own save:
+Every render prints how long it took. To measure your own save, the median of several renders of each version:
 
 ```bash
-zig build bench -Doptimize=ReleaseFast -- path/to/save.vcdbs [runs]
+zig run scripts/benchmark.zig -- path/to/save.vcdbs --current
 ```
 
-`--isometric` adds the isometric view, and `--folder <folder>` writes the tiles there, so writing them is timed too. Each view's time is broken down into drawing, encoding, writing and shrinking tiles for the levels above. It draws the slowest styles, the Plain theme's with `game:coloured` top-down, unless `--theme` or `--style` choose others, as when rendering.
+[docs/performance.md](docs/performance.md#measuring) has its options, such as `--isometric`. A render's `--json` prints its times and counts as one line, for scripts, and `--no-write` draws and encodes every tile without writing anything.
 
 More numbers and what they mean: [`docs/rendering.md`](docs/rendering.md#performance).
 

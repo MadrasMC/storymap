@@ -69,7 +69,7 @@ Storymap writes everything through `console`. Libraries in `lib/` don't import i
 | `console.warn` | something skipped or missing from the map, as the program carries on | stderr, after `storymap: ` |
 | `console.err` | an error the program carries on from | stderr, after `storymap: ` |
 | `console.fail` | an error that stops the program, with exit status 1 | stderr, after `storymap: ` |
-| `console.print` | a command's results, such as `bench`'s and `--version`'s | stdout, as is |
+| `console.print` | a command's results, such as `--json`'s and `--version`'s | stdout, as is |
 
 Write a message without the `storymap: ` prefix or a trailing newline: `console.logFn`, the program's `std_options.logFn` in `main.zig`, adds them.
 

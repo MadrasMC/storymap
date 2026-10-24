@@ -42,7 +42,7 @@ pub const Tile = struct {
 
 pub const Output = union(enum) {
     folder: Io.Dir,
-    /// Encode the PNGs and drop them, so a benchmark doesn't time the disk.
+    /// Encode the PNGs and drop them (`--no-write`), so a benchmark doesn't time the disk.
     discard,
 };
 

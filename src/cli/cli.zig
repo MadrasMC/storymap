@@ -2,7 +2,6 @@
 //! renderers.
 const std = @import("std");
 
-pub const bench = @import("bench.zig");
 pub const prepare = @import("prepare.zig");
 pub const render = @import("render.zig");
 

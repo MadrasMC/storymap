@@ -187,7 +187,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "theme", .module = theme_mod },
             .{ .name = "tiles", .module = tiles_mod },
             .{ .name = "console", .module = console_mod },
-            .{ .name = "sqlite", .module = sqlite_mod },
             .{ .name = "args", .module = args_mod },
             .{ .name = "build_options", .module = options_mod },
         },
@@ -218,14 +217,6 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
-
-    const bench_cmd = b.addRunArtifact(exe);
-    bench_cmd.step.dependOn(b.getInstallStep());
-    bench_cmd.addArg("bench");
-    bench_cmd.addPassthruArgs();
-
-    const bench_step = b.step("bench", "Time each stage of a render (use -Doptimize=ReleaseFast)");
-    bench_step.dependOn(&bench_cmd.step);
 
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
