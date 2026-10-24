@@ -1,15 +1,24 @@
 //! A deflate compressor for PNG's filtered rows that looks for a match only where a pixel
-//! starts, and only where those 4 bytes were last seen, as fpng does: much faster than a general
-//! compressor, and nearly as good on images that repeat whole pixels. It writes one block with
-//! its own Huffman codes, in a zlib stream, or the data stored if that's smaller.
+//! starts, and only in the last few places those 4 bytes were seen, as fpng does: much faster
+//! than a general compressor, and nearly as good on images that repeat whole pixels. It writes
+//! one block with its own Huffman codes, in a zlib stream, or the data stored if that's smaller.
 const PixelDeflate = @This();
 
 const std = @import("std");
 
-/// Where each 4-byte value was last seen, by its hash, as its position + 1; 0 for nowhere.
+options: Options,
+/// Where each 4-byte value was last seen, by its hash, `options.ways` places each, the latest
+/// first, as positions + 1; 0 for nowhere.
 table: []u32,
 /// The data as literals and matches (`Token`), between the two passes.
 tokens: []Token,
+
+pub const Options = struct {
+    /// Places remembered for each hash; the longest match among them is taken. On textured
+    /// isometric tiles, 8 makes them 6% larger than std's flate in about half its time; 1 22%
+    /// larger in 40%, and 32 as long as std's flate for 3% larger.
+    ways: u8 = 8,
+};
 
 const hashBits = 15;
 const window = 32768;
@@ -28,10 +37,11 @@ const Token = packed struct(u32) {
 };
 
 /// A compressor for data of up to `maxBytes` bytes.
-pub fn init(allocator: std.mem.Allocator, maxBytes: usize) !PixelDeflate {
-    const table = try allocator.alloc(u32, 1 << hashBits);
+pub fn init(allocator: std.mem.Allocator, maxBytes: usize, options: Options) !PixelDeflate {
+    std.debug.assert(options.ways >= 1);
+    const table = try allocator.alloc(u32, (1 << hashBits) * @as(usize, options.ways));
     errdefer allocator.free(table);
-    return .{ .table = table, .tokens = try allocator.alloc(Token, maxBytes) };
+    return .{ .options = options, .table = table, .tokens = try allocator.alloc(Token, maxBytes) };
 }
 
 pub fn deinit(self: PixelDeflate, allocator: std.mem.Allocator) void {
@@ -72,42 +82,76 @@ pub fn compress(self: *PixelDeflate, data: []const u8, rowBytes: usize, out: []u
 /// The first pass: `data` as tokens, counting their symbols.
 fn match(self: *PixelDeflate, data: []const u8, rowBytes: usize, lengths: *Frequencies(286), distances: *Frequencies(30)) []const Token {
     @memset(self.table, 0);
-    var count: usize = 0;
+    var tokens: Tokens = .{ .items = self.tokens, .lengths = lengths, .distances = distances };
     var position: usize = 0;
-    var rowStart: usize = 0;
     while (position < data.len) {
-        while (position >= rowStart + rowBytes) rowStart += rowBytes;
-        const column = position - rowStart;
-        // A pixel starts after the filter type, every 4 bytes.
-        if (column == 0 or (column - 1) % 4 != 0 or position + minLength > data.len) {
-            self.tokens[count] = .{ .value = data[position] };
-            lengths.counts[data[position]] += 1;
-            count += 1;
+        if (!startsMatch(data, rowBytes, position)) {
+            tokens.literal(data[position]);
             position += 1;
             continue;
         }
-        const value = std.mem.readInt(u32, data[position..][0..4], .little);
-        const slot = &self.table[hash(value)];
-        const seen = slot.*;
-        slot.* = @intCast(position + 1);
-        if (seen != 0 and position + 1 - seen <= window and std.mem.readInt(u32, data[seen - 1 ..][0..4], .little) == value) {
-            const from = seen - 1;
-            const length = matchLength(data, from, position);
-            const distance = position - from;
-            self.tokens[count] = .{ .value = @intCast(distance), .length = @intCast(length - 3), .isMatch = true };
-            lengths.counts[257 + lengthCode(length)] += 1;
-            distances.counts[distanceCode(distance)] += 1;
-            count += 1;
-            position += length;
+        const found = self.find(data, position);
+        if (found.length == 0) {
+            tokens.literal(data[position]);
+            position += 1;
             continue;
         }
-        self.tokens[count] = .{ .value = data[position] };
-        lengths.counts[data[position]] += 1;
-        count += 1;
-        position += 1;
+        tokens.match(found);
+        position += found.length;
     }
-    return self.tokens[0..count];
+    return self.tokens[0..tokens.count];
 }
+
+/// Whether a match may start at `position`: where a pixel starts, after the filter type, every
+/// 4 bytes, with 4 bytes left at least. Starting anywhere, or checking whether the next pixel
+/// starts a longer match, made tiles no smaller.
+fn startsMatch(data: []const u8, rowBytes: usize, position: usize) bool {
+    if (position + minLength > data.len) return false;
+    const column = position % rowBytes;
+    return column != 0 and (column - 1) % 4 == 0;
+}
+
+const Match = struct { length: usize = 0, distance: usize = 0 };
+
+/// The longest match for the bytes at `position` among the places their hash remembers, and
+/// remembers this one.
+fn find(self: *PixelDeflate, data: []const u8, position: usize) Match {
+    const value = std.mem.readInt(u32, data[position..][0..4], .little);
+    const ways = self.options.ways;
+    const bucket = self.table[hash(value) * @as(usize, ways) ..][0..ways];
+    var best: Match = .{};
+    for (bucket) |seen| {
+        if (seen == 0 or seen - 1 >= position or position + 1 - seen > window) continue;
+        const from = seen - 1;
+        if (std.mem.readInt(u32, data[from..][0..4], .little) != value) continue;
+        const length = matchLength(data, from, position);
+        if (length > best.length) best = .{ .length = length, .distance = position - from };
+    }
+    std.mem.copyBackwards(u32, bucket[1..], bucket[0 .. ways - 1]);
+    bucket[0] = @intCast(position + 1);
+    return best;
+}
+
+/// The tokens written so far, and their symbols counted.
+const Tokens = struct {
+    items: []Token,
+    count: usize = 0,
+    lengths: *Frequencies(286),
+    distances: *Frequencies(30),
+
+    fn literal(self: *Tokens, byte: u8) void {
+        self.items[self.count] = .{ .value = byte };
+        self.lengths.counts[byte] += 1;
+        self.count += 1;
+    }
+
+    fn match(self: *Tokens, found: Match) void {
+        self.items[self.count] = .{ .value = @intCast(found.distance), .length = @intCast(found.length - 3), .isMatch = true };
+        self.lengths.counts[257 + lengthCode(found.length)] += 1;
+        self.distances.counts[distanceCode(found.distance)] += 1;
+        self.count += 1;
+    }
+};
 
 fn hash(value: u32) u32 {
     return (value *% 2654435761) >> (32 - hashBits);
@@ -517,8 +561,8 @@ const BitWriter = struct {
 };
 
 /// Compresses `data` and decompresses it again with std's inflate.
-fn roundTrip(data: []const u8, rowBytes: usize) !usize {
-    var compressor: PixelDeflate = try .init(std.testing.allocator, data.len);
+fn roundTrip(data: []const u8, rowBytes: usize, options: Options) !usize {
+    var compressor: PixelDeflate = try .init(std.testing.allocator, data.len, options);
     defer compressor.deinit(std.testing.allocator);
     const out = try std.testing.allocator.alloc(u8, bound(data.len));
     defer std.testing.allocator.free(out);
@@ -536,6 +580,10 @@ fn roundTrip(data: []const u8, rowBytes: usize) !usize {
 }
 
 test compress {
+    for ([_]u8{ 1, 2, 8 }) |ways| try expectRoundTrips(.{ .ways = ways });
+}
+
+fn expectRoundTrips(options: Options) !void {
     var prng: std.Random.DefaultPrng = .init(7);
     const random = prng.random();
     const rowBytes = 1 + 64 * 4;
@@ -546,18 +594,18 @@ test compress {
         const column = i % rowBytes;
         byte.* = if (column == 0) 2 else if ((i / rowBytes) % 7 == 3) random.int(u8) else @intCast((column / 4 % 9) * 17);
     }
-    const repeating = try roundTrip(&data, rowBytes);
+    const repeating = try roundTrip(&data, rowBytes, options);
     try std.testing.expect(repeating < data.len / 4);
 
     // Noise is stored, a little larger than it is.
     random.bytes(&data);
-    try std.testing.expect(try roundTrip(&data, rowBytes) <= bound(data.len));
+    try std.testing.expect(try roundTrip(&data, rowBytes, options) <= bound(data.len));
 
     // One byte all over, and a few bytes.
     @memset(&data, 9);
-    try std.testing.expect(try roundTrip(&data, rowBytes) < 100);
-    _ = try roundTrip(data[0..3], rowBytes);
-    _ = try roundTrip(data[0..1], rowBytes);
+    try std.testing.expect(try roundTrip(&data, rowBytes, options) < 100);
+    _ = try roundTrip(data[0..3], rowBytes, options);
+    _ = try roundTrip(data[0..1], rowBytes, options);
 }
 
 test distanceCode {

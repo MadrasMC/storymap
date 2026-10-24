@@ -26,4 +26,5 @@ try dir.writeFile(io, .{ .sub_path = "tile.png", .data = file });
 | `Encoder.compress()` | the PNG of the image `filter` last filtered, the second half of `encode` |
 | `Encoder.deinit(allocator)` | frees the buffers |
 | `Options.compressor` | `.flate`, `std.compress.flate` (the default), or `.pixels`, a deflate that looks for a match only where a pixel starts, as fpng does: faster, and larger |
+| `Options.pixels.ways` | for `.pixels`, how many places it remembers for each 4 bytes, the longest match among them taken (8 by default): more makes smaller files, more slowly |
 | `Options.level` | for `.flate`, deflate's trade between speed and size, one of `std.compress.flate.Compress.Options` (`.level_4` by default) |

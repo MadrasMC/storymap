@@ -8,6 +8,8 @@ pub const Options = struct {
     compressor: Compressor = .flate,
     /// For `flate`, deflate's trade between speed and size.
     level: flate.Compress.Options = .level_4,
+    /// For `pixels`, where it looks for matches.
+    pixels: PixelDeflate.Options = .{},
 };
 
 /// How the filtered rows are compressed.
@@ -55,7 +57,7 @@ pub const Encoder = struct {
         errdefer allocator.free(filtered);
         const deflate = try allocator.create(flate.Compress);
         errdefer allocator.destroy(deflate);
-        const pixelDeflate: ?PixelDeflate = if (options.compressor == .pixels) try .init(allocator, raw) else null;
+        const pixelDeflate: ?PixelDeflate = if (options.compressor == .pixels) try .init(allocator, raw, options.pixels) else null;
         return .{
             .width = width,
             .height = height,
