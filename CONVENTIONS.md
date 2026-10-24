@@ -13,8 +13,8 @@ Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a r
 | `theme` | `world` |
 | `viewer` | `tiles`, `theme`, `world` |
 | `console` | – |
-| `renderer` | `world`, `tiles`, `theme` |
-| `vs` | `world`, `tiles`, `sqlite`, `protobuf` |
+| `renderer` | `world`, `tiles`, `theme`, `console` |
+| `vs` | `world`, `tiles`, `sqlite`, `protobuf`, `console` |
 | `cli` | `vs`, `renderer`, `viewer`, `theme`, `console`, `sqlite`, `args` |
 
 `main.zig` only imports `cli`, `console` and `args`.
@@ -67,12 +67,16 @@ Whether the caller happens to pass an arena doesn't matter; the name describes w
 
 ### Messages
 
-| message | written with |
-| --- | --- |
-| a warning: something is skipped or missing from the map, and the program carries on | `std.log.warn` |
-| a problem that stops the program | `console.fail` |
-| the program's own output: status lines (`blocks: …`), render summaries, bench results | `std.debug.print` |
+Storymap writes everything through `console`. Libraries in `lib/` don't import it (see "Libraries").
 
-Write a warning without the `storymap: ` prefix or a trailing newline: `console.log`, the program's `std_options.logFn` in `main.zig`, adds both. Don't use `std.log.err` for warnings: the test runner fails any test that logs an error.
+| function | use | output |
+| --- | --- | --- |
+| `console.log` | what the program did: status lines (`blocks: …`), render summaries | stderr |
+| `console.warn` | something skipped or missing from the map, as the program carries on | stderr, after `storymap: ` |
+| `console.err` | an error the program carries on from | stderr, after `storymap: ` |
+| `console.fail` | an error that stops the program, with exit status 1 | stderr, after `storymap: ` |
+| `console.print` | a command's results, such as `bench`'s and `--version`'s | stdout, as is |
 
-`zig build test` prints whatever a passing test writes to stderr under its step, the way it prints a failure. A test that causes a warning on purpose sets `std.testing.log_level = .err` and restores `.warn` with `defer`, since the test runner doesn't reset it between tests.
+Write a message without the `storymap: ` prefix or a trailing newline: `console.logFn`, the program's `std_options.logFn` in `main.zig`, adds them.
+
+`log`, `warn`, `err` and `fail` go through `std.log`, so in tests they reach the test runner instead. It fails a test that logs an error, holds back `log`'s messages, and prints warnings. `zig build test` shows whatever a passing test writes to stderr under its step, the way it shows a failure, so a test that causes a warning on purpose sets `std.testing.log_level = .err` and restores `.warn` with `defer`. The test runner doesn't reset it between tests.
