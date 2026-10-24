@@ -2,7 +2,7 @@
 
 A PNG encoder for 8-bit RGBA images, for Zig 0.17, that allocates nothing while encoding. An `Encoder` sets up its buffers once, for the largest image it will take; each `encode` writes the PNG into them and returns it.
 
-Rows are filtered per row with the filter whose output adds up to the least as signed bytes (the usual heuristic), and compressed with `std.compress.flate`.
+Rows are filtered per row with the filter whose output adds up to the least as signed bytes (the usual heuristic), all five filters worked out together with vector instructions, and compressed with `std.compress.flate`.
 
 ## Example
 

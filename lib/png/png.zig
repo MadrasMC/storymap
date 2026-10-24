@@ -16,8 +16,9 @@ pub const Encoder = struct {
     out: []u8,
     /// Deflate's history.
     window: []u8,
-    /// Each filter's output for the row being filtered, with its filter type first.
-    rows: [5][]u8,
+    /// The row being filtered and the one above it, each after 4 zero bytes, the pixel left of
+    /// its first: `filter` reads a pixel's neighbours from them without checking for edges.
+    padded: [2][]u8,
     /// The image `filter` last filtered, row by row, each with its filter type first, and its
     /// size in pixels.
     filtered: []u8,
@@ -34,20 +35,29 @@ pub const Encoder = struct {
         errdefer allocator.free(out);
         const window = try allocator.alloc(u8, flate.max_window_len);
         errdefer allocator.free(window);
-        const rows = try allocator.alloc(u8, 5 * rowBytes);
-        errdefer allocator.free(rows);
+        // The two padded rows, one allocation.
+        const paddedBytes = 4 + @as(usize, width) * 4;
+        const padded = try allocator.alloc(u8, 2 * paddedBytes);
+        errdefer allocator.free(padded);
         const filtered = try allocator.alloc(u8, raw);
         errdefer allocator.free(filtered);
         const deflate = try allocator.create(flate.Compress);
-        var encoder: Encoder = .{ .width = width, .height = height, .options = options, .out = out, .window = window, .rows = undefined, .filtered = filtered, .deflate = deflate };
-        for (&encoder.rows, 0..) |*row, i| row.* = rows[i * rowBytes ..][0..rowBytes];
-        return encoder;
+        return .{
+            .width = width,
+            .height = height,
+            .options = options,
+            .out = out,
+            .window = window,
+            .padded = .{ padded[0..paddedBytes], padded[paddedBytes..] },
+            .filtered = filtered,
+            .deflate = deflate,
+        };
     }
 
     pub fn deinit(self: Encoder, allocator: std.mem.Allocator) void {
         allocator.destroy(self.deflate);
         allocator.free(self.filtered);
-        allocator.free(self.rows[0].ptr[0 .. 5 * self.rows[0].len]);
+        allocator.free(self.padded[0].ptr[0 .. 2 * self.padded[0].len]);
         allocator.free(self.window);
         allocator.free(self.out);
     }
@@ -64,11 +74,15 @@ pub const Encoder = struct {
     pub fn filter(self: *Encoder, pixels: []const u8, width: u32, height: u32) void {
         std.debug.assert(width <= self.width and height <= self.height and pixels.len == @as(usize, width) * height * 4);
         const rowBytes = @as(usize, width) * 4;
-        var previous: []const u8 = &.{};
+        var row = self.padded[0][0 .. 4 + rowBytes];
+        var above = self.padded[1][0 .. 4 + rowBytes];
+        // The row above the first is all zero, and so is the pixel left of every row.
+        @memset(above, 0);
+        @memset(row[0..4], 0);
         for (0..height) |y| {
-            const row = pixels[y * rowBytes ..][0..rowBytes];
-            @memcpy(self.filtered[y * (1 + rowBytes) ..][0 .. 1 + rowBytes], self.filterRow(row, previous));
-            previous = row;
+            @memcpy(row[4..], pixels[y * rowBytes ..][0..rowBytes]);
+            filterRow(row, above, self.filtered[y * (1 + rowBytes) ..][0 .. 1 + rowBytes]);
+            std.mem.swap([]u8, &row, &above);
         }
         self.filteredWidth = width;
         self.filteredHeight = height;
@@ -102,38 +116,98 @@ pub const Encoder = struct {
         return self.out[0..end];
     }
 
-    /// `row` filtered as each PNG filter does it, and the one whose bytes, as signed numbers, add
-    /// up to the least: the usual guess at which compresses best. `previous` is the row above,
-    /// empty for the first.
-    fn filterRow(self: *Encoder, row: []const u8, previous: []const u8) []const u8 {
-        var best: usize = 0;
-        var bestSum: usize = std.math.maxInt(usize);
-        for (&self.rows, 0..) |out, kind| {
-            out[0] = @intCast(kind);
-            var sum: usize = 0;
-            for (row, 0..) |x, i| {
-                const a: u8 = if (i >= 4) row[i - 4] else 0;
-                const b: u8 = if (previous.len > 0) previous[i] else 0;
-                const c: u8 = if (i >= 4 and previous.len > 0) previous[i - 4] else 0;
-                const predicted: u8 = switch (kind) {
-                    0 => 0,
-                    1 => a,
-                    2 => b,
-                    3 => @intCast((@as(u16, a) + b) / 2),
-                    else => paeth(a, b, c),
-                };
-                const filtered = x -% predicted;
-                out[1 + i] = filtered;
-                sum += @abs(@as(i8, @bitCast(filtered)));
-            }
-            if (sum < bestSum) {
-                best = kind;
-                bestSum = sum;
-            }
-        }
-        return self.rows[best][0 .. 1 + row.len];
-    }
 };
+
+/// Bytes a filter works on at once.
+const lanes = std.simd.suggestVectorLength(u8) orelse 16;
+const Bytes = @Vector(lanes, u8);
+/// Vectors summed per lane before the sums move to `usize`: each adds at most 128, so 256 of
+/// them fit a `u16`.
+const vectorsPerSum = 256;
+
+/// Writes `row` into `out` filtered by the PNG filter whose bytes, as signed numbers, add up to
+/// the least, the usual guess at which compresses best, after its filter type. `row` and `above`
+/// are the row and the one above it, each after 4 zero bytes, the pixel left of its first.
+fn filterRow(row: []const u8, above: []const u8, out: []u8) void {
+    const length = row.len - 4;
+    var sums: [5]usize = @splat(0);
+    var i: usize = 0;
+    while (i + lanes <= length) {
+        var laneSums: [5]@Vector(lanes, u16) = @splat(@splat(0));
+        var vectors: usize = 0;
+        while (vectors < vectorsPerSum and i + lanes <= length) : ({
+            vectors += 1;
+            i += lanes;
+        }) {
+            const filtered = filtersAt(row, above, i);
+            inline for (&laneSums, filtered) |*sum, bytes| sum.* += @abs(@as(@Vector(lanes, i8), @bitCast(bytes)));
+        }
+        for (&sums, laneSums) |*sum, laneSum| sum.* += @reduce(.Add, @as(@Vector(lanes, u32), laneSum));
+    }
+    for (i..length) |j| {
+        inline for (&sums, 0..) |*sum, kind| sum.* += @abs(@as(i8, @bitCast(filterByte(kind, row, above, j))));
+    }
+    // The first with the least, as ties go to the simpler filter.
+    var best: u8 = 0;
+    for (sums, 0..) |sum, kind| {
+        if (sum < sums[best]) best = @intCast(kind);
+    }
+    out[0] = best;
+    switch (best) {
+        inline 0...4 => |kind| writeFiltered(kind, row, above, out[1..]),
+        else => unreachable,
+    }
+}
+
+/// Writes `row` filtered by filter `kind` into `out`.
+fn writeFiltered(comptime kind: u8, row: []const u8, above: []const u8, out: []u8) void {
+    const length = row.len - 4;
+    var i: usize = 0;
+    while (i + lanes <= length) : (i += lanes) out[i..][0..lanes].* = filtersAt(row, above, i)[kind];
+    for (i..length) |j| out[j] = filterByte(kind, row, above, j);
+}
+
+/// The `lanes` bytes from byte `i` of the row as each of the five PNG filters gives them.
+fn filtersAt(row: []const u8, above: []const u8, i: usize) [5]Bytes {
+    const x: Bytes = row[4 + i ..][0..lanes].*;
+    const a: Bytes = row[i..][0..lanes].*;
+    const b: Bytes = above[4 + i ..][0..lanes].*;
+    const c: Bytes = above[i..][0..lanes].*;
+    // The average rounded down, without overflowing a byte.
+    const average = (a & b) +% ((a ^ b) >> @splat(1));
+    return .{ x, x -% a, x -% b, x -% average, x -% paethVector(a, b, c) };
+}
+
+/// `paeth` on each lane.
+fn paethVector(a: Bytes, b: Bytes, c: Bytes) Bytes {
+    const Wide = @Vector(lanes, i16);
+    const wa: Wide = a;
+    const wb: Wide = b;
+    const wc: Wide = c;
+    // The distances from a + b - c to a, b and c.
+    const pa = @abs(wb - wc);
+    const pb = @abs(wa - wc);
+    const pc = @abs(wa + wb - wc - wc);
+    const none: @Vector(lanes, bool) = @splat(false);
+    const useA = @select(bool, pa <= pb, pa <= pc, none);
+    return @select(u8, useA, a, @select(u8, pb <= pc, b, c));
+}
+
+/// Byte `i` of the row filtered by filter `kind`.
+fn filterByte(comptime kind: u8, row: []const u8, above: []const u8, i: usize) u8 {
+    const x = row[4 + i];
+    const a = row[i];
+    const b = above[4 + i];
+    const c = above[i];
+    const predicted: u8 = switch (kind) {
+        0 => 0,
+        1 => a,
+        2 => b,
+        3 => @intCast((@as(u16, a) + b) / 2),
+        else => paeth(a, b, c),
+    };
+    return x -% predicted;
+}
 
 /// Of `a` (left), `b` (above) and `c` (above left), the one closest to a + b - c.
 fn paeth(a: u8, b: u8, c: u8) u8 {
@@ -190,5 +264,47 @@ test Encoder {
         }
         try std.testing.expectEqualSlices(u8, pixels[y * 16 ..][0..16], &line);
         previous = line;
+    }
+}
+
+test filterRow {
+    // Rows wide enough for the vectors and a few bytes over, flat in parts and noisy in others,
+    // filtered as each filter is written out byte by byte: the same filter, and the same bytes.
+    const width = 2 * lanes + 3;
+    const height = 6;
+    var prng: std.Random.DefaultPrng = .init(1);
+    const random = prng.random();
+    var pixels: [width * height * 4]u8 = undefined;
+    for (&pixels, 0..) |*byte, i| byte.* = if ((i / 64) % 2 == 0) @intCast(i % 7) else random.int(u8);
+    var encoder: Encoder = try .init(std.testing.allocator, width, height, .{});
+    defer encoder.deinit(std.testing.allocator);
+    encoder.filter(&pixels, width, height);
+
+    const rowBytes = width * 4;
+    var previous: [rowBytes]u8 = @splat(0);
+    for (0..height) |y| {
+        const row = pixels[y * rowBytes ..][0..rowBytes];
+        var expected: [5][1 + rowBytes]u8 = undefined;
+        var sums: [5]usize = @splat(0);
+        for (&expected, &sums, 0..) |*out, *sum, kind| {
+            out[0] = @intCast(kind);
+            for (row, 0..) |x, i| {
+                const a: u8 = if (i >= 4) row[i - 4] else 0;
+                const b = previous[i];
+                const c: u8 = if (i >= 4) previous[i - 4] else 0;
+                const predicted: u8 = switch (kind) {
+                    0 => 0,
+                    1 => a,
+                    2 => b,
+                    3 => @intCast((@as(u16, a) + b) / 2),
+                    else => paeth(a, b, c),
+                };
+                out[1 + i] = x -% predicted;
+                sum.* += @abs(@as(i8, @bitCast(out[1 + i])));
+            }
+        }
+        const best = std.mem.indexOfMin(usize, &sums);
+        try std.testing.expectEqualSlices(u8, &expected[best], encoder.filtered[y * (1 + rowBytes) ..][0 .. 1 + rowBytes]);
+        previous = row.*;
     }
 }
