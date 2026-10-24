@@ -1,6 +1,6 @@
 //! The tile pipeline every view shares: draws full-detail tiles on every core, builds the
-//! zoomed-out levels above them, and writes each tile to `<output>/<view>/<level>/<x>/<y>.png`
-//! (docs/rendering.md#output-tiles-and-levels-of-detail).
+//! zoomed-out levels above them, and writes each tile to `<output>/<view>/<level>/<x>/<y>.png`,
+//! or `.jxl` in JPEG XL (docs/rendering.md#output-tiles-and-levels-of-detail).
 //!
 //! A view is a type with:
 //! - `name`, its folder in the output, e.g. "topdown";
@@ -16,6 +16,7 @@
 const std = @import("std");
 const Io = std.Io;
 const png = @import("png");
+const jxl = @import("jxl");
 
 /// A tile's side in pixels, in every view and level.
 pub const size = 512;
@@ -40,10 +41,38 @@ pub const Tile = struct {
     }
 };
 
-pub const Output = union(enum) {
-    folder: Io.Dir,
-    /// Encode the PNGs and drop them (`--no-write`), so a benchmark doesn't time the disk.
-    discard,
+/// Where tiles go, and what they're encoded as.
+pub const Output = struct {
+    /// Null to encode the tiles and drop them (`--no-write`), so a benchmark doesn't time the
+    /// disk.
+    folder: ?Io.Dir,
+    format: Format = .png,
+};
+
+pub const Format = enum {
+    png,
+    /// Lossless JPEG XL (`lib/jxl`).
+    jpegxl,
+
+    /// The tiles' file extension.
+    pub fn extension(self: Format) []const u8 {
+        return switch (self) {
+            .png => "png",
+            .jpegxl => "jxl",
+        };
+    }
+};
+
+/// A worker's encoder, for its output's format.
+const Encoder = union(Format) {
+    png: png.Encoder,
+    jpegxl: jxl.Encoder,
+
+    fn deinit(self: Encoder, allocator: std.mem.Allocator) void {
+        switch (self) {
+            inline else => |encoder| encoder.deinit(allocator),
+        }
+    }
 };
 
 /// Times are summed over all workers, so they can exceed the render's wall time.
@@ -53,10 +82,11 @@ pub const Stats = struct {
     levels: usize = 0,
     /// Drawing full-detail tiles (`Worker.draw`).
     draw: Io.Duration = .zero,
-    /// Encoding the PNGs: filtering their rows, then compressing them.
+    /// Encoding the tiles: for PNG, filtering their rows, then compressing them; JPEG XL's is
+    /// all compressing.
     filter: Io.Duration = .zero,
     compress: Io.Duration = .zero,
-    /// Creating the tiles' folders and writing their files; nothing with `Output.discard`.
+    /// Creating the tiles' folders and writing their files; nothing without a folder.
     write: Io.Duration = .zero,
     /// Shrinking tiles to half size for the level above.
     shrink: Io.Duration = .zero,
@@ -293,7 +323,7 @@ fn Job(comptime View: type) type {
         worker: View.Worker,
         /// One tile's pixels per level of a subtree: level 0's are drawn, the others built.
         pixels: []Pixels,
-        encoder: png.Encoder,
+        encoder: Encoder,
         slots: *Slots,
         stats: Stats = .{},
         err: ?anyerror = null,
@@ -302,7 +332,10 @@ fn Job(comptime View: type) type {
         fn init(view: *const View, allocator: std.mem.Allocator, io: Io, pyramid: *const Pyramid, split: usize, items: []const Tile, halves: []u32, drawn: []bool, next: *std.atomic.Value(usize), output: Output, slots: *Slots) !Self {
             const pixels = try allocator.alloc(Pixels, split + 1);
             errdefer allocator.free(pixels);
-            const encoder: png.Encoder = try .init(allocator, size, size, .{});
+            const encoder: Encoder = switch (output.format) {
+                .png => .{ .png = try .init(allocator, size, size, .{}) },
+                .jpegxl => .{ .jpegxl = try .init(allocator, size, size, .{}) },
+            };
             errdefer encoder.deinit(allocator);
             return .{
                 .encoder = encoder,
@@ -403,27 +436,34 @@ fn Job(comptime View: type) type {
             }
         }
 
-        /// Encodes a tile as PNG and writes it to `<view>/<level>/<x>/<y>.png`.
+        /// Encodes a tile and writes it to `<view>/<level>/<x>/<y>.png`, or `.jxl`.
         fn write(self: *Self, level: usize, tile: Tile, pixels: *const Pixels) !void {
-            const filtering: Io.Timestamp = .now(self.io, .awake);
-            self.encoder.filter(std.mem.sliceAsBytes(pixels), size, size);
-            timeSince(self.io, &self.stats.filter, filtering);
-            const compressing: Io.Timestamp = .now(self.io, .awake);
-            const data = try self.encoder.compress();
-            timeSince(self.io, &self.stats.compress, compressing);
+            const bytes = std.mem.sliceAsBytes(pixels);
+            const data = switch (self.encoder) {
+                .png => |*encoder| png: {
+                    const filtering: Io.Timestamp = .now(self.io, .awake);
+                    encoder.filter(bytes, size, size);
+                    timeSince(self.io, &self.stats.filter, filtering);
+                    const compressing: Io.Timestamp = .now(self.io, .awake);
+                    defer timeSince(self.io, &self.stats.compress, compressing);
+                    break :png try encoder.compress();
+                },
+                .jpegxl => |*encoder| jpegxl: {
+                    const compressing: Io.Timestamp = .now(self.io, .awake);
+                    defer timeSince(self.io, &self.stats.compress, compressing);
+                    break :jpegxl try encoder.encode(bytes, size, size);
+                },
+            };
             self.stats.tiles += 1;
 
-            const folder = switch (self.output) {
-                .folder => |folder| folder,
-                .discard => return,
-            };
+            const folder = self.output.folder orelse return;
             const writing: Io.Timestamp = .now(self.io, .awake);
             defer timeSince(self.io, &self.stats.write, writing);
             var buffer: [64]u8 = undefined;
             const dir = try std.fmt.bufPrint(&buffer, "{s}/{d}/{d}", .{ View.name, level, tile.x });
             try folder.createDirPath(self.io, dir);
             var pathBuffer: [80]u8 = undefined;
-            const path = try std.fmt.bufPrint(&pathBuffer, "{s}/{d}.png", .{ dir, tile.y });
+            const path = try std.fmt.bufPrint(&pathBuffer, "{s}/{d}.{s}", .{ dir, tile.y, self.output.format.extension() });
             try folder.writeFile(self.io, .{ .sub_path = path, .data = data });
             self.slots.written[self.slots.taken.fetchAdd(1, .monotonic)] = .{ .level = @intCast(level), .tile = tile };
         }

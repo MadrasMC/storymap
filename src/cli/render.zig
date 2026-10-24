@@ -22,6 +22,7 @@ pub const spec: args.Spec = .{
         .{ .name = "isometric", .description = "Also draw the isometric view." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
+        .{ .name = "jpegxl", .description = "Encode the tiles as lossless JPEG XL instead of PNG, which not every browser shows." },
         .{ .name = "no-write", .description = "Draw and encode the tiles without writing anything, to time the rest." },
         .{ .name = "json", .description = "Print the render's times and counts on stdout as one line of JSON, for scripts." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
@@ -64,7 +65,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const out: ?std.Io.Dir = if (write) std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err|
         console.fail("{s}: could not create ({s})", .{ outPath, @errorName(err) }) else null;
     defer if (out) |dir| dir.close(init.io);
-    const output: tiles.Output = if (out) |dir| .{ .folder = dir } else .discard;
+    const output: tiles.Output = .{ .folder = out, .format = if (parsed.flag("jpegxl")) .jpegxl else .png };
 
     const loading: std.Io.Timestamp = .now(init.io, .awake);
     var prepared = prepare.blocks(init, folders, force);
@@ -87,7 +88,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     logTopdown(&save, topdownStats);
     var views: std.ArrayList(viewer.View) = .empty;
     defer views.deinit(allocator);
-    try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .written = written });
+    try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .format = output.format, .written = written });
 
     var isometricStats: ?isometric.Stats = null;
     const writtenIsometric = if (parsed.flag("isometric")) list: {
@@ -96,7 +97,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     } else null;
     defer if (writtenIsometric) |list| allocator.free(list);
     if (isometricStats) |stats| console.log("isometric: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });
-    if (writtenIsometric) |list| try views.append(allocator, .{ .name = isometric.folder, .title = isometric.title, .projection = isometric.projection, .blockWidth = isometric.blockWidth, .written = list });
+    if (writtenIsometric) |list| try views.append(allocator, .{ .name = isometric.folder, .title = isometric.title, .projection = isometric.projection, .blockWidth = isometric.blockWidth, .format = output.format, .written = list });
 
     if (out) |dir| {
         const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
@@ -119,6 +120,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .build = @tagName(builtin.mode),
         .threads = std.Thread.getCpuCount() catch 1,
         .written = write,
+        .format = @tagName(output.format),
         .chunks = try save.countChunks(),
         .seconds = .{ .blocks = seconds(blocksTime), .open = seconds(openTime), .total = seconds(total) },
         .topdown = .{
@@ -153,6 +155,8 @@ const Report = struct {
     threads: usize,
     /// Whether anything was written: not with `--no-write`.
     written: bool,
+    /// What the tiles are encoded as: "png" or "jpegxl".
+    format: []const u8,
     /// Every chunk in the save, though a render reads only those it needs.
     chunks: usize,
     seconds: struct {

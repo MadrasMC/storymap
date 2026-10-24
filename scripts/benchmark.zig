@@ -4,13 +4,14 @@
 //! median of each time. From the project's folder:
 //!
 //!     zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current]
-//!         [--isometric] [--write] [--zigs <folder>]
+//!         [--isometric] [--write] [--jpegxl] [--zigs <folder>]
 //!
 //! Each run is `storymap <save-file> --no-write --json` in the slowest styles, the Plain theme's
-//! with `game:coloured` top-down (`styles`). `--isometric` adds the isometric view, and `--write`
-//! writes the tiles into `.benchmark/out`, so writing them is timed too. Versions up to 0.2.0
-//! have their own `storymap bench`, which draws the Printed theme's relief and takes the medians
-//! itself; they're run with that, without the isometric view.
+//! with `game:coloured` top-down (`styles`). `--isometric` adds the isometric view, `--write`
+//! writes the tiles into `.benchmark/out`, so writing them is timed too, and `--jpegxl` encodes
+//! them as JPEG XL. Versions up to 0.2.0 have their own `storymap bench`, which draws the Printed
+//! theme's relief in PNG and takes the medians itself; they're run with that, without the
+//! isometric view.
 //!
 //! Zig releases are looked for in `--zigs` (`.benchmark/zig` by default) as their archives unpack,
 //! e.g. `zig-x86_64-windows-0.17.0/`, and downloaded there from ziglang.org if missing.
@@ -23,7 +24,7 @@ const Io = std.Io;
 
 const exe = if (builtin.os.tag == .windows) ".exe" else "";
 
-const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--isometric] [--write] [--zigs <folder>]\n";
+const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--isometric] [--write] [--jpegxl] [--zigs <folder>]\n";
 
 const styles = [_][]const u8{ "--theme", "plain", "--style", "game:coloured" };
 const outFolder = ".benchmark/out";
@@ -87,6 +88,7 @@ const Runs = struct {
     count: usize,
     isometric: bool,
     write: bool,
+    jpegxl: bool,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -95,7 +97,7 @@ pub fn main(init: std.process.Init) !void {
     const given = try init.minimal.args.toSlice(arena);
 
     var savePath: ?[]const u8 = null;
-    var runs: Runs = .{ .count = 7, .isometric = false, .write = false };
+    var runs: Runs = .{ .count = 7, .isometric = false, .write = false, .jpegxl = false };
     var tags: std.ArrayList([]const u8) = .empty;
     var current = false;
     var zigsPath: []const u8 = ".benchmark/zig";
@@ -108,6 +110,8 @@ pub fn main(init: std.process.Init) !void {
             runs.isometric = true;
         } else if (std.mem.eql(u8, arg, "--write")) {
             runs.write = true;
+        } else if (std.mem.eql(u8, arg, "--jpegxl")) {
+            runs.jpegxl = true;
         } else if (std.mem.eql(u8, arg, "--runs") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--zigs")) {
             i += 1;
             if (i == given.len) fail("{s} needs a value\n" ++ usage, .{arg});
@@ -163,8 +167,8 @@ pub fn main(init: std.process.Init) !void {
     try out.print("\nsave: {s} ({s})\nworld: {} chunks, {d:.2} km², {} tiles in {} levels\n", .{
         std.fs.path.basename(save), saveHash, last.chunks, @as(f64, @floatFromInt(last.area)) / 1e6, last.tiles, last.levels,
     });
-    try out.print("machine: {s}, {} threads, {s}; {s} build, median of {} runs{s}, measured {s} UTC\n", .{
-        processorName(arena, io), last.threads, @tagName(builtin.os.tag), last.build, runs.count, if (runs.write) ", tiles written" else "", today(io, &date),
+    try out.print("machine: {s}, {} threads, {s}; {s} build, median of {} runs{s}{s}, measured {s} UTC\n", .{
+        processorName(arena, io), last.threads, @tagName(builtin.os.tag), last.build, runs.count, if (runs.jpegxl) ", JPEG XL tiles" else "", if (runs.write) ", tiles written" else "", today(io, &date),
     });
     for (results.items) |result| {
         const work = result.work orelse continue;
@@ -215,6 +219,7 @@ fn measureBuild(arena: std.mem.Allocator, io: Io, storymap: []const u8, save: []
     try argv.appendSlice(arena, &styles);
     if (runs.write) try argv.append(arena, outFolder) else try argv.append(arena, "--no-write");
     if (runs.isometric) try argv.append(arena, "--isometric");
+    if (runs.jpegxl) try argv.append(arena, "--jpegxl");
     try argv.append(arena, "--json");
 
     // The first warms the file cache, and prepares the blocks if they aren't yet.

@@ -23,6 +23,8 @@ pub const View = struct {
     projection: []const u8,
     /// For an isometric view, a block's width in level-0 pixels.
     blockWidth: ?u16 = null,
+    /// What its tiles are encoded as.
+    format: tiles.Format = .png,
     written: []const tiles.Written,
 };
 
@@ -87,6 +89,8 @@ fn describe(allocator: std.mem.Allocator, description: world.Description, render
         projection: []const u8,
         blockWidth: ?u16,
         tileSize: usize,
+        /// The tiles' file extension, e.g. "png".
+        extension: []const u8,
         tiles: []const []const i32,
     };
     var arena: std.heap.ArenaAllocator = .init(allocator);
@@ -100,7 +104,7 @@ fn describe(allocator: std.mem.Allocator, description: world.Description, render
         for (view.written) |w| try perLevel[w.level].appendSlice(arena.allocator(), &.{ w.tile.x, w.tile.y });
         const flat = try arena.allocator().alloc([]const i32, levels);
         for (flat, perLevel) |*level, list| level.* = list.items;
-        out.* = .{ .name = view.name, .title = view.title, .projection = view.projection, .blockWidth = view.blockWidth, .tileSize = tiles.size, .tiles = flat };
+        out.* = .{ .name = view.name, .title = view.title, .projection = view.projection, .blockWidth = view.blockWidth, .tileSize = tiles.size, .extension = view.format.extension(), .tiles = flat };
     }
     return std.json.Stringify.valueAlloc(allocator, .{
         .game = description.game,
@@ -118,11 +122,11 @@ test describe {
     };
     const json = try describe(std.testing.allocator, .{ .game = .{ .name = "Vintage Story", .version = "1.22.7" }, .name = "A </script> world", .origin = .{ .x = 512000, .z = 512000 }, .seaLevel = 110 }, "2026-10-17T09:05:07Z", &.{
         .{ .name = "topdown", .title = "Top-down", .projection = "topdown", .written = &written },
-        .{ .name = "isometric", .title = "Isometric", .projection = "isometric", .blockWidth = 16, .written = written[0..1] },
+        .{ .name = "isometric", .title = "Isometric", .projection = "isometric", .blockWidth = 16, .format = .jpegxl, .written = written[0..1] },
     });
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        \\{"game":{"name":"Vintage Story","version":"1.22.7"},"world":{"name":"A </script> world","origin":{"x":512000,"z":512000},"seaLevel":110},"rendered":"2026-10-17T09:05:07Z","views":[{"name":"topdown","title":"Top-down","projection":"topdown","tileSize":512,"tiles":[[1000,999,1000,1000],[500,499]]},{"name":"isometric","title":"Isometric","projection":"isometric","blockWidth":16,"tileSize":512,"tiles":[[1000,999]]}]}
+        \\{"game":{"name":"Vintage Story","version":"1.22.7"},"world":{"name":"A </script> world","origin":{"x":512000,"z":512000},"seaLevel":110},"rendered":"2026-10-17T09:05:07Z","views":[{"name":"topdown","title":"Top-down","projection":"topdown","tileSize":512,"extension":"png","tiles":[[1000,999,1000,1000],[500,499]]},{"name":"isometric","title":"Isometric","projection":"isometric","blockWidth":16,"tileSize":512,"extension":"jxl","tiles":[[1000,999]]}]}
     , json);
 }
 

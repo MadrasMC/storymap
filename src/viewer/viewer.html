@@ -249,7 +249,7 @@ function start(makeTheme) {
 				console.warn(`storymap: couldn't load ${img.src}`);
 				redraw();
 			};
-			img.src = `${view.name}/${key}.png`;
+			img.src = `${view.name}/${key}.${view.extension}`;
 			cache.set(key, entry);
 		}
 		return entry;

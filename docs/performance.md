@@ -28,6 +28,7 @@ zig run scripts/benchmark.zig -- <save-file>
 | `--runs <n>` | renders each version n times, 7 by default |
 | `--isometric` | adds the isometric view, in an isometric column |
 | `--write` | writes the tiles into `.benchmark/out`, so writing them is timed too |
+| `--jpegxl` | encodes the tiles as JPEG XL instead of PNG |
 
 Each tag is built by the Zig release its `build.zig.zon` names. The script looks for it in `.benchmark/zig/`, or in `--zigs <folder>`, as its archive unpacks (`zig-x86_64-windows-0.17.0/`), and downloads it there from ziglang.org if it's missing.
 

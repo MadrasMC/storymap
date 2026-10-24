@@ -135,7 +135,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/tiles/tiles.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "png", .module = png_mod }},
+        .imports = &.{
+            .{ .name = "png", .module = png_mod },
+            .{ .name = "jxl", .module = jxl_mod },
+        },
     });
 
     const world_mod = b.createModule(.{
