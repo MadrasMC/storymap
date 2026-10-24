@@ -154,7 +154,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "world", .module = world_mod },
             .{ .name = "tiles", .module = tiles_mod },
             .{ .name = "theme", .module = theme_mod },
-            .{ .name = "console", .module = console_mod },
         },
     });
 
@@ -186,6 +185,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "renderer", .module = renderer_mod },
             .{ .name = "viewer", .module = viewer_mod },
             .{ .name = "theme", .module = theme_mod },
+            .{ .name = "tiles", .module = tiles_mod },
             .{ .name = "console", .module = console_mod },
             .{ .name = "sqlite", .module = sqlite_mod },
             .{ .name = "args", .module = args_mod },

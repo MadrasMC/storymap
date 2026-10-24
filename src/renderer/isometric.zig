@@ -21,7 +21,6 @@ const std = @import("std");
 const Io = std.Io;
 const world = @import("world");
 const tiles = @import("tiles");
-const console = @import("console");
 const Style = @import("theme").Style;
 const relief = @import("relief.zig");
 
@@ -56,14 +55,12 @@ pub const Stats = struct {
 pub const Options = struct {
     /// How blocks are drawn: a theme's `isometric/style.txt`. The game has one style, `game`.
     style: Style,
-    /// Where to record stats instead of printing a summary.
-    stats: ?*Stats = null,
 };
 
 /// Renders `source` into `output` and returns the tiles written, at every level, owned by the
 /// caller. A game style other than `game` is error.UnknownStyle, and more different looks
 /// than a chunk can number error.TooManyLooks.
-pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options) ![]tiles.Written {
+pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options, stats: *Stats) ![]tiles.Written {
     const start: Io.Timestamp = .now(io, .awake);
     var view: View(Source) = try .init(allocator, source, options.style);
     defer view.deinit(allocator);
@@ -75,17 +72,13 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
     const rendered = try tiles.render(View(Source), allocator, io, &view, list, output, &written);
     const result = try written.toOwnedSlice(allocator);
 
-    if (options.stats) |out| {
-        out.* = .{
-            .tiles = rendered.tiles,
-            .levels = rendered.levels,
-            .chunksRead = view.chunksRead,
-            .duration = start.untilNow(io, .awake),
-            .pipeline = rendered,
-        };
-        return result;
-    }
-    console.log("isometric: {} tiles in {} levels, {} chunks read", .{ rendered.tiles, rendered.levels, view.chunksRead });
+    stats.* = .{
+        .tiles = rendered.tiles,
+        .levels = rendered.levels,
+        .chunksRead = view.chunksRead,
+        .duration = start.untilNow(io, .awake),
+        .pipeline = rendered,
+    };
     return result;
 }
 

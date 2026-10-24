@@ -272,18 +272,18 @@ fn openAndRender(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, folde
     defer save.close(allocator);
     if (drawn.prepared) |blocks| save.useBlocks(blocks);
     sample.open = start.untilNow(io, .awake);
-    const options: topdown.Options = .{ .style = drawn.theme.topdown, .stats = &sample.topdown };
+    const options: topdown.Options = .{ .style = drawn.theme.topdown };
     allocator.free(try if (folder) |dir|
-        topdown.render(SaveFile, allocator, io, &save, .{ .folder = dir }, options)
+        topdown.render(SaveFile, allocator, io, &save, .{ .folder = dir }, options, &sample.topdown)
     else
-        topdown.render(SaveFile, allocator, io, &save, .discard, options));
+        topdown.render(SaveFile, allocator, io, &save, .discard, options, &sample.topdown));
     if (drawn.isometric) {
         var stats: isometric.Stats = .{};
-        const isometricOptions: isometric.Options = .{ .style = drawn.theme.isometric, .stats = &stats };
+        const isometricOptions: isometric.Options = .{ .style = drawn.theme.isometric };
         allocator.free(try if (folder) |dir|
-            isometric.render(SaveFile, allocator, io, &save, .{ .folder = dir }, isometricOptions)
+            isometric.render(SaveFile, allocator, io, &save, .{ .folder = dir }, isometricOptions, &stats)
         else
-            isometric.render(SaveFile, allocator, io, &save, .discard, isometricOptions));
+            isometric.render(SaveFile, allocator, io, &save, .discard, isometricOptions, &stats));
         sample.isometric = stats;
     }
     return sample;

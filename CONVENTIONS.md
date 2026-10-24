@@ -13,9 +13,9 @@ Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a r
 | `theme` | `world` |
 | `viewer` | `tiles`, `theme`, `world` |
 | `console` | – |
-| `renderer` | `world`, `tiles`, `theme`, `console` |
+| `renderer` | `world`, `tiles`, `theme` |
 | `vs` | `world`, `tiles`, `sqlite`, `protobuf`, `console` |
-| `cli` | `vs`, `renderer`, `viewer`, `theme`, `console`, `sqlite`, `args` |
+| `cli` | `vs`, `renderer`, `viewer`, `theme`, `tiles`, `console`, `sqlite`, `args` |
 
 `main.zig` only imports `cli`, `console` and `args`.
 

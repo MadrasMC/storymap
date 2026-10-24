@@ -125,6 +125,13 @@ pub fn blockCount(self: *const SaveFile) usize {
     return self.gameData.blockCodes.len;
 }
 
+/// The chunks in the save, in every dimension, counted without reading them.
+pub fn countChunks(self: *const SaveFile) !usize {
+    const rows = try self.db.prepare("SELECT count(*) FROM chunk;");
+    defer rows.finalize();
+    return if (rows.step()) @intCast(rows.column(u64, 0)) else 0;
+}
+
 /// The block code for a block ID, e.g. "rock-granite".
 pub fn blockName(self: *const SaveFile, id: i32) ?[]const u8 {
     return self.gameData.blockCode(id);
