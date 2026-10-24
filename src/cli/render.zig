@@ -141,7 +141,7 @@ pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) 
         },
         else => return err,
     };
-    if (save.unsaved) std.debug.print("storymap: {s}: unsaved changes won't be on the map (is the game running?)\n", .{path});
+    if (save.unsaved) std.log.warn("{s}: unsaved changes won't be on the map (is the game running?)", .{path});
     return save;
 }
 
@@ -149,8 +149,8 @@ pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) 
 fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, save: *const SaveFile) !void {
     const unknown = try prepared.unknown(allocator, save.gameData.blockCodes);
     defer allocator.free(unknown.mods);
-    for (unknown.mods) |mod| std.debug.print("storymap: mod {s}: not found\n", .{mod});
-    if (unknown.example) |example| std.debug.print("storymap: {} blocks unknown to the game and its mods, e.g. {s}\n", .{ unknown.codes, example });
+    for (unknown.mods) |mod| std.log.warn("mod {s}: not found", .{mod});
+    if (unknown.example) |example| std.log.warn("{} blocks unknown to the game and its mods, e.g. {s}", .{ unknown.codes, example });
 }
 
 test "the plain theme draws the game's default style" {

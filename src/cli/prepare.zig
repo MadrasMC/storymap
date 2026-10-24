@@ -79,7 +79,7 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Prepared {
 }
 
 fn noBlocks() ?Prepared {
-    std.debug.print("storymap: could not locate Vintage Story; drawing the map without block colours; pass `--game <folder>`\n", .{});
+    std.log.warn("could not locate Vintage Story; drawing the map without block colours; pass `--game <folder>`", .{});
     return null;
 }
 
