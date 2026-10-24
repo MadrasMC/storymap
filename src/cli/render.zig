@@ -52,37 +52,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .blocks = parsed.value("blocks") orelse Prepared.defaultFolder,
     };
     const force = parsed.flag("prepare");
-    const style: ?Style.Name = if (parsed.value("style")) |text|
-        Style.parseName(text) orelse console.fail("`--style`: unknown style {s}. expected: {s}", .{ text, styleNames })
-    else
-        null;
-
-    var problem: Theme.Problem = .{};
-    const theme = Theme.load(init.arena.allocator(), init.io, themeName, style, &problem) catch switch (problem.kind) {
-        .unreadable => console.fail("`--theme`: unknown theme {s} ({s}). expected: printed, plain, or a folder with theme.css and theme.js", .{ themeName, @errorName(problem.cause.?) }),
-        .stylesheetEndsItsElement => console.fail("{s}/theme.css: contains </style, which would end it early", .{themeName}),
-        .scriptEndsItsElement => console.fail("{s}/theme.js: contains </script, which would end it early", .{themeName}),
-        .invalidStyle => if (problem.style.line == 0)
-            console.fail("{s}/topdown/style.txt: {f}", .{ themeName, problem.style })
-        else
-            console.fail("{s}/topdown/style.txt:{}: {f}", .{ themeName, problem.style.line, problem.style }),
-        .invalidIsometricStyle => if (problem.style.line == 0)
-            console.fail("{s}/isometric/style.txt: {f}", .{ themeName, problem.style })
-        else
-            console.fail("{s}/isometric/style.txt:{}: {f}", .{ themeName, problem.style.line, problem.style }),
-    };
-    switch (theme.topdown) {
-        .game => |gameStyle| if (gameStyle) |name| if (std.meta.stringToEnum(SaveFile.MapStyle, name) == null) {
-            if (style != null) console.fail("`--style`: unknown style game:{s}. expected: {s}", .{ name, gameStyles });
-            console.fail("{s}/topdown/style.txt: unknown style game:{s}. expected: {s}", .{ themeName, name, gameStyles });
-        },
-        else => {},
-    }
-    // The isometric view has one game style, `game`.
-    switch (theme.isometric) {
-        .game => |gameStyle| if (gameStyle) |name| console.fail("{s}/isometric/style.txt: unknown style game:{s}. expected: {s}, game", .{ themeName, name, Style.storymapNames }),
-        else => {},
-    }
+    const theme = loadTheme(init, themeName, parsed.value("style"));
 
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err|
         console.fail("{s}: could not create ({s})", .{ outPath, @errorName(err) });
@@ -115,13 +85,50 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     try viewer.write(allocator, init.io, out, description, now, views.items, theme);
 }
 
+/// The theme `themeName`, with its top-down style replaced by `styleText`, `--style`'s value, if
+/// given. A theme or style that can't be used stops the program with a message saying why.
+pub fn loadTheme(init: std.process.Init, themeName: []const u8, styleText: ?[]const u8) Theme {
+    const style: ?Style.Name = if (styleText) |text|
+        Style.parseName(text) orelse console.fail("`--style`: unknown style {s}. expected: {s}", .{ text, styleNames })
+    else
+        null;
+
+    var problem: Theme.Problem = .{};
+    const theme = Theme.load(init.arena.allocator(), init.io, themeName, style, &problem) catch switch (problem.kind) {
+        .unreadable => console.fail("`--theme`: unknown theme {s} ({s}). expected: printed, plain, or a folder with theme.css and theme.js", .{ themeName, @errorName(problem.cause.?) }),
+        .stylesheetEndsItsElement => console.fail("{s}/theme.css: contains </style, which would end it early", .{themeName}),
+        .scriptEndsItsElement => console.fail("{s}/theme.js: contains </script, which would end it early", .{themeName}),
+        .invalidStyle => if (problem.style.line == 0)
+            console.fail("{s}/topdown/style.txt: {f}", .{ themeName, problem.style })
+        else
+            console.fail("{s}/topdown/style.txt:{}: {f}", .{ themeName, problem.style.line, problem.style }),
+        .invalidIsometricStyle => if (problem.style.line == 0)
+            console.fail("{s}/isometric/style.txt: {f}", .{ themeName, problem.style })
+        else
+            console.fail("{s}/isometric/style.txt:{}: {f}", .{ themeName, problem.style.line, problem.style }),
+    };
+    switch (theme.topdown) {
+        .game => |gameStyle| if (gameStyle) |name| if (std.meta.stringToEnum(SaveFile.MapStyle, name) == null) {
+            if (style != null) console.fail("`--style`: unknown style game:{s}. expected: {s}", .{ name, gameStyles });
+            console.fail("{s}/topdown/style.txt: unknown style game:{s}. expected: {s}", .{ themeName, name, gameStyles });
+        },
+        else => {},
+    }
+    // The isometric view has one game style, `game`.
+    switch (theme.isometric) {
+        .game => |gameStyle| if (gameStyle) |name| console.fail("{s}/isometric/style.txt: unknown style game:{s}. expected: {s}, game", .{ themeName, name, Style.storymapNames }),
+        else => {},
+    }
+    return theme;
+}
+
 const gameStyles = names: {
     var text: []const u8 = "";
     for (std.meta.fieldNames(SaveFile.MapStyle)) |name| text = text ++ (if (text.len > 0) ", " else "") ++ "game:" ++ name;
     break :names text;
 };
 
-const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
+pub const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
 
 /// A save that can't be read stops the program with a message saying why.
 pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !SaveFile {

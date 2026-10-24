@@ -2,7 +2,8 @@
 //! for the numbers in docs/rendering.md#performance. Build with -Doptimize=ReleaseFast.
 //!
 //! The PNGs are encoded but not written, so the disk isn't timed, unless `--folder` names a
-//! folder to write them to. One untimed render first warms the file cache.
+//! folder to write them to. One untimed render first warms the file cache. Without `--theme`,
+//! it draws the slowest styles.
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
@@ -15,6 +16,8 @@ const Theme = @import("theme");
 const build_options = @import("build_options");
 const console = @import("console");
 const render = @import("render.zig");
+const prepare = @import("prepare.zig");
+const Prepared = @import("vs").Prepared;
 const args = @import("args");
 
 pub const spec: args.Spec = .{
@@ -22,6 +25,11 @@ pub const spec: args.Spec = .{
         .{ .name = "json", .description = "Print the results as one line of JSON, for scripts, instead of the summary." },
         .{ .name = "isometric", .description = "Also render the isometric view." },
         .{ .name = "folder", .value = "folder", .description = "Write the tiles into this folder, so writing them is timed too." },
+        .{ .name = "theme", .value = "theme", .description = "The theme whose styles to draw: plain by default, with game:coloured top-down, the slowest styles." },
+        .{ .name = "style", .value = "style", .description = "How to draw the top-down map, instead of the theme's style: " ++ render.styleNames ++ "." },
+        .{ .name = "blocks", .value = "folder", .description = "The blocks folder: blocks by default." },
+        prepare.gameOption,
+        prepare.dataOption,
     },
     .positionals = &.{
         .{ .name = "save-file", .description = "The world's save file (.vcdbs)." },
@@ -43,14 +51,26 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     if (parsed.value("folder")) |path| folder = Io.Dir.cwd().createDirPathOpen(io, path, .{}) catch |err|
         console.fail("{s}: could not create ({s})", .{ path, @errorName(err) });
     defer if (folder) |dir| dir.close(io);
+    // Without `--theme`, the slowest styles.
+    const theme = if (parsed.value("theme")) |name|
+        render.loadTheme(init, name, parsed.value("style"))
+    else
+        render.loadTheme(init, "plain", parsed.value("style") orelse "game:coloured");
+    var prepared = prepare.blocks(init, .{
+        .game = parsed.value("game"),
+        .data = parsed.value("data"),
+        .blocks = parsed.value("blocks") orelse Prepared.defaultFolder,
+    }, false);
+    defer if (prepared) |*blocks| blocks.deinit();
+    const drawn: Drawn = .{ .theme = theme, .prepared = if (prepared) |*blocks| blocks else null, .isometric = withIsometric };
 
     const samples = try allocator.alloc(Sample, runs);
     defer allocator.free(samples);
     // Every chunk in the save, which a render doesn't count: it reads only those it needs.
     var chunks: usize = 0;
-    _ = try openAndRender(allocator, io, dbPath, folder, withIsometric);
+    _ = try openAndRender(allocator, io, dbPath, folder, drawn);
     for (samples) |*sample| {
-        sample.* = try openAndRender(allocator, io, dbPath, folder, withIsometric);
+        sample.* = try openAndRender(allocator, io, dbPath, folder, drawn);
         const start: Io.Timestamp = .now(io, .awake);
         chunks = try decodeAll(allocator, dbPath);
         sample.decode = start.untilNow(io, .awake);
@@ -68,6 +88,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     };
     const work = try workerSeconds(allocator, samples, .topdown);
     const isometricResult: ?Result.Isometric = if (counts.isometric) |stats| .{
+        .style = try std.fmt.allocPrint(init.arena.allocator(), "{f}", .{theme.isometric}),
         .tiles = stats.tiles,
         .levels = stats.levels,
         .chunksRead = stats.chunksRead,
@@ -81,6 +102,9 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         try console.print(io, "storymap {s}, {s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs{s}\n", .{
             build_options.version, world, chunks, counts.topdown.chunksRead, counts.topdown.tiles, threads, @tagName(builtin.mode), runs, if (folder != null) ", tiles written" else "",
         });
+        try console.print(io, "  style {f}", .{theme.topdown});
+        if (withIsometric) try console.print(io, ", isometric {f}", .{theme.isometric});
+        try console.print(io, "\n", .{});
         try printStage(io, "open and block list", seconds.open, null);
         try printStage(io, "decode every chunk", seconds.decode, chunks);
         try printStage(io, "tiles", seconds.tiles, chunks);
@@ -99,6 +123,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .version = build_options.version,
         .world = world,
         .build = @tagName(builtin.mode),
+        .style = try std.fmt.allocPrint(init.arena.allocator(), "{f}", .{theme.topdown}),
         .threads = threads,
         .runs = runs,
         .written = folder != null,
@@ -169,11 +194,8 @@ const Result = struct {
     world: []const u8,
     /// The build mode, as Zig names it, e.g. "fast" for -Doptimize=ReleaseFast.
     build: []const u8,
-    /// The style drawn: the default theme's, as there are no prepared blocks here.
-    style: []const u8 = switch (style) {
-        .relief => "relief",
-        .game => |name| if (name) |given| "game:" ++ given else "game",
-    },
+    /// The top-down style drawn, e.g. "game:coloured".
+    style: []const u8,
     threads: usize,
     /// Renders timed, after one untimed; every time is the median.
     runs: usize,
@@ -224,6 +246,8 @@ const Result = struct {
     };
 
     const Isometric = struct {
+        /// The style drawn, e.g. "game".
+        style: []const u8,
         tiles: usize,
         levels: usize,
         chunksRead: usize,
@@ -233,23 +257,29 @@ const Result = struct {
     };
 };
 
-const style = Theme.printed.topdown;
+/// What each render draws, and how.
+const Drawn = struct {
+    theme: Theme,
+    prepared: ?*const Prepared,
+    isometric: bool,
+};
 
 /// Opens the save and renders it, writing the tiles into `folder` if there is one.
-fn openAndRender(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, folder: ?Io.Dir, withIsometric: bool) !Sample {
+fn openAndRender(allocator: std.mem.Allocator, io: Io, dbPath: []const u8, folder: ?Io.Dir, drawn: Drawn) !Sample {
     var sample: Sample = .{};
     const start: Io.Timestamp = .now(io, .awake);
-    const save = try render.openSaveFile(allocator, io, dbPath);
+    var save = try render.openSaveFile(allocator, io, dbPath);
     defer save.close(allocator);
+    if (drawn.prepared) |blocks| save.useBlocks(blocks);
     sample.open = start.untilNow(io, .awake);
-    const options: topdown.Options = .{ .style = style, .stats = &sample.topdown };
+    const options: topdown.Options = .{ .style = drawn.theme.topdown, .stats = &sample.topdown };
     allocator.free(try if (folder) |dir|
         topdown.render(SaveFile, allocator, io, &save, .{ .folder = dir }, options)
     else
         topdown.render(SaveFile, allocator, io, &save, .discard, options));
-    if (withIsometric) {
+    if (drawn.isometric) {
         var stats: isometric.Stats = .{};
-        const isometricOptions: isometric.Options = .{ .style = Theme.printed.isometric, .stats = &stats };
+        const isometricOptions: isometric.Options = .{ .style = drawn.theme.isometric, .stats = &stats };
         allocator.free(try if (folder) |dir|
             isometric.render(SaveFile, allocator, io, &save, .{ .folder = dir }, isometricOptions)
         else

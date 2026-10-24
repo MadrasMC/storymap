@@ -60,7 +60,7 @@ To measure your own save:
 zig build bench -Doptimize=ReleaseFast -- path/to/save.vcdbs [runs]
 ```
 
-`--isometric` adds the isometric view, and `--folder <folder>` writes the tiles there, so writing them is timed too. Each view's time is broken down into drawing, encoding, writing and shrinking tiles for the levels above.
+`--isometric` adds the isometric view, and `--folder <folder>` writes the tiles there, so writing them is timed too. Each view's time is broken down into drawing, encoding, writing and shrinking tiles for the levels above. It draws the slowest styles, the Plain theme's with `game:coloured` top-down, unless `--theme` or `--style` choose others, as when rendering.
 
 More numbers and what they mean: [`docs/rendering.md`](docs/rendering.md#performance).
 

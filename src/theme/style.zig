@@ -72,6 +72,14 @@ pub const Style = union(enum) {
         game: ?[]const u8 = null,
     };
 
+    /// Its name as written, without its colours.
+    pub fn format(self: Style, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self) {
+            .relief => try writer.writeAll("relief"),
+            .game => |name| if (name) |given| try writer.print("game:{s}", .{given}) else try writer.writeAll("game"),
+        }
+    }
+
     pub fn parseName(text: []const u8) ?Name {
         if (std.mem.eql(u8, text, "game")) return .{ .kind = .game };
         if (std.mem.startsWith(u8, text, "game:")) {

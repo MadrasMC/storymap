@@ -33,6 +33,7 @@ Each tag is built by the Zig release its `build.zig.zon` names. The script looks
 | open | opening the save: its block list and which tiles it has |
 | peak memory | the most memory `storymap bench` held at once (Windows' peak working set, elsewhere the peak resident set), including its decoding of every chunk for comparison |
 
+- **Styles:** `storymap bench` draws the slowest styles, the Plain theme's with `game:coloured` top-down, in versions after 0.2.0. 0.2.0 and earlier draw the Printed theme's relief, so their rows measure a different style from later ones.
 - **Runs:** each time is the median of 7 renders after one untimed one. On the world above, the median of 7 consecutive runs stays within 3% of the next 7; 9 runs is no closer, and 3 or 5 are 5–6% apart.
 - **Sittings:** the same build measures up to 8% apart at different times, with the machine's heat, power plan and background work. So a table is measured in one sitting, and a difference under about 5% between rows isn't a change.
 - **Small maps:** a render's fixed startup cost of about 60 ms is most of a very small map's time, so its km²/s and chunks/s come out low, and a few milliseconds of noise move them a lot. A table's save should be a large world.
