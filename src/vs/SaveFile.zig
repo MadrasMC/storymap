@@ -207,6 +207,9 @@ pub const Appearance = struct {
     grain: []const world.Rgb = &.{},
     /// Its faces' textures, for a block the game draws as a plain cube.
     cube: ?*const world.CubeFaces = null,
+    /// Taking up only the bottom of its block, its selection box less than half a block high, as
+    /// a loose stone does. A thin layer of the ground, of snow, sand or gravel, isn't.
+    low: bool = false,
 };
 
 /// An unknown ID is land.
@@ -262,6 +265,10 @@ test variant {
     try std.testing.expectEqual(variant(undefined, 3, -7, 11, 4), variant(undefined, 3, -7, 11, 4));
 }
 
+pub fn isLow(self: *const SaveFile, id: i32) bool {
+    return self.appearance(id).low;
+}
+
 /// Whether the climate or the season colours the block (`Reader.tint`).
 pub fn isTinted(self: *const SaveFile, id: i32) bool {
     return !self.blockTint(id).isNone();
@@ -285,14 +292,17 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
         const code = maybeCode orelse continue;
         const block = prepared.blocks.getPtr(code) orelse continue;
         const ice = std.mem.eql(u8, block.material, "Ice");
+        const cover = std.mem.eql(u8, block.material, "Snow");
+        const ground = cover or std.mem.eql(u8, block.material, "Sand") or std.mem.eql(u8, block.material, "Gravel");
         blockAppearance.* = .{
             .mapType = std.meta.stringToEnum(world.MapType, block.colorCode) orelse .land,
             .lake = std.mem.eql(u8, block.material, "Water") or (ice and !std.mem.eql(u8, code, "glacierice")),
-            .cover = std.mem.eql(u8, block.material, "Snow"),
+            .cover = cover,
             .invisible = std.mem.eql(u8, block.material, "Meta"),
             .colour = block.colour,
             .grain = block.grain,
             .cube = if (block.cube) |*cube| cube else null,
+            .low = (block.height orelse 16) < 8 and !ground,
         };
     }
     for (self.tints, self.gameData.blockCodes) |*tint, maybeCode| {

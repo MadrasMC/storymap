@@ -7,9 +7,10 @@
 //! Blocks name their two textures and their climate and season colour maps by number from 0,
 //! or `-` for none, then, for a block drawn as a cube, the images of its faces' plain and
 //! tinted layers (`world.CubeFaces`), top, south and east, by number in `textures.bin`, a
-//! texture's variants separated by commas:
+//! texture's variants separated by commas, and last how high its selection box reaches, in
+//! sixteenths, or `-` for the whole block:
 //!
-//!     storymap blocks 8
+//!     storymap blocks 9
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
@@ -18,7 +19,9 @@
 //!     …
 //!     colormap climatePlantTint 4 0
 //!     …
-//!     block rock-granite Stone land 0 0 - - 0,1,2,3 - 0,1,2,3 - 0,1,2,3 -
+//!     block rock-granite Stone land 0 0 - - 0,1,2,3 - 0,1,2,3 - 0,1,2,3 - -
+//!     …
+//!     block loosestones-granite-free Stone land 0 0 - - - - - - - - 2
 //!     …
 //!
 //! `textures.bin` holds the face images one after another, each its width and height as
@@ -60,13 +63,15 @@ pub const Block = struct {
     /// For a block the game draws as a plain cube, its faces' images; null for any other, or
     /// one with a face that can't be read.
     cube: ?world.CubeFaces = null,
+    /// How high its selection box reaches, in sixteenths of a block; null for the whole block.
+    height: ?u8 = null,
 };
 
 const Image = world.Image;
 
 /// The format of `blocks.txt` and `textures.bin`, and of what goes into them: raise it when
 /// any changes, so sets prepared before are prepared again.
-const formatVersion = 8;
+const formatVersion = 9;
 const fileName = "blocks.txt";
 const imageFileName = "textures.bin";
 const colourMapFolder = "colormaps";
@@ -156,6 +161,7 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
             };
             for (variants, 0..) |n, i| try w.print("{s}{}", .{ if (i == 0) " " else ",", n });
         }
+        if (block.height) |height| try w.print(" {}", .{height}) else try w.writeAll(" -");
         try w.writeByte('\n');
     }
     var imageBytes: std.Io.Writer.Allocating = .init(arena);
@@ -443,6 +449,7 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
                 .climateColourMap = climate orelse null,
                 .seasonColourMap = season orelse null,
                 .cube = cube,
+                .height = try heightOf(words.next()),
             });
         }
     }
@@ -483,6 +490,13 @@ fn parseRgb(word: ?[]const u8) !world.Rgb {
     if (hex.len != 6) return error.NotPreparedBlocks;
     _ = std.fmt.hexToBytes(&rgb, hex) catch return error.NotPreparedBlocks;
     return rgb;
+}
+
+/// A block's height in sixteenths, or null for `-`.
+fn heightOf(word: ?[]const u8) !?u8 {
+    const text = word orelse return error.NotPreparedBlocks;
+    if (std.mem.eql(u8, text, "-")) return null;
+    return std.fmt.parseInt(u8, text, 10) catch error.NotPreparedBlocks;
 }
 
 /// The images of a layer's variants, numbered and separated by commas, or none for `-`.

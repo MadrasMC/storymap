@@ -23,6 +23,9 @@ pub const Block = struct {
     /// For a block the game draws as a plain cube, the textures on the faces the isometric view
     /// shows; null for any other.
     cube: ?Cube = null,
+    /// How high its selection box reaches, the part of it a player can point at, in sixteenths of
+    /// a block; null where its block type gives none, which is the whole block.
+    height: ?u8 = null,
 };
 
 /// A cube's top, south and east faces: those seen looking north-west from above.
@@ -158,6 +161,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                 .climateColorMap = look.climateColorMap,
                 .seasonColorMap = look.seasonColorMap,
                 .cube = look.cube,
+                .height = look.height,
             });
         }
     }
@@ -171,6 +175,7 @@ const Look = struct {
     climateColorMap: ?[]const u8 = null,
     seasonColorMap: ?[]const u8 = null,
     cube: ?Cube = null,
+    height: ?u8 = null,
 };
 
 /// A variant's `Look`, from its block type's properties with their `…ByType` forms resolved.
@@ -209,7 +214,19 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         .climateColorMap = climateColorMap,
         .seasonColorMap = seasonColorMap,
         .cube = cube,
+        .height = try heightOf(arena, json, variant),
     };
+}
+
+/// The top of a block's selection box, `selectionBox`, else `collisionSelectionBox`, in
+/// sixteenths of a block; null without one.
+fn heightOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !?u8 {
+    const box = try property(arena, json, "selectionBox", variant) orelse
+        try property(arena, json, "collisionSelectionBox", variant) orelse return null;
+    const top = box.get("y2") orelse return null;
+    if (top != .number) return null;
+    const blocks = std.fmt.parseFloat(f64, top.number) catch return null;
+    return @intFromFloat(std.math.clamp(@round(blocks * 16), 0, 255));
 }
 
 /// How the game draws a block, as far as the isometric view tells them apart.
@@ -938,6 +955,21 @@ test "the cube a block is drawn as" {
         "{ shape: { base: 'game:block/basic/cube', rotateY: 90 }, textures: { all: { base: 'x' } } }",
         "{ drawtype: 'surfacelayer', textures: { all: { base: 'x' } } }",
     }) |json| try std.testing.expectEqual(null, (try describe(a, try Json.parse(a, json), rock, &shapes)).cube);
+}
+
+test "how high a block's selection box reaches" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const variant: Variant = .{ .code = .{ .domain = "game", .path = "loosestones-granite-free" }, .parts = &.{} };
+    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    const cases = [_]struct { json: []const u8, height: ?u8 }{
+        .{ .json = "{ selectionBox: { x1: 0.0625, y1: 0, z1: 0.0625, x2: 0.9375, y2: 0.125, z2: 0.9375 } }", .height = 2 },
+        .{ .json = "{ collisionSelectionBox: { x1: 0, y1: 0, z1: 0, x2: 1, y2: 0.25, z2: 1 } }", .height = 4 },
+        .{ .json = "{ selectionboxByType: { '*-free': { x1: 0, y1: 0, z1: 0, x2: 1, y2: 0.5, z2: 1 } } }", .height = 8 },
+        .{ .json = "{ code: 'rock' }", .height = null },
+    };
+    for (cases) |case| try std.testing.expectEqual(case.height, (try describe(a, try Json.parse(a, case.json), variant, &shapes)).height);
 }
 
 test "the colour maps that tint a block" {

@@ -2,7 +2,8 @@
 //! south and east faces lit differently. In the `relief` style each is in its map type's relief
 //! colour (`relief.zig`); in the `game` style, a block the game draws as a cube is in its
 //! textures (`Picture`), and any other in its texture's average colour, each tinted by the
-//! climate where it is, as the game tints grass, leaves and water. Plants aren't drawn.
+//! climate where it is, as the game tints grass, leaves and water. Plants aren't drawn, nor low
+//! blocks, such as loose stones, which a whole cube would make look much larger than they are.
 //!
 //! Each tile follows its lines of sight (`Line`) from the top of the world, and draws the first
 //! block each meets, as Mapcrafter does. A chunk is read only when a line enters it, and each
@@ -12,7 +13,8 @@
 //! A `Source` is a game's save, opened for reading, with:
 //! - `chunkColumns: []const world.ChunkColumn`, those that may have blocks;
 //! - `heights() world.Heights`;
-//! - `blockCount() usize`, `mapType(id: i32) world.MapType` and `isVisible(id: i32) bool`;
+//! - `blockCount() usize`, `mapType(id: i32) world.MapType`, `isVisible(id: i32) bool` and
+//!   `isLow(id: i32) bool`, a block taking up only the bottom of its place;
 //! - for the `game` style, `colour(id: i32) world.Rgb`, `cubeFaces(id: i32) ?*const
 //!   world.CubeFaces`, `isTinted(id: i32) bool`, and `variant(x: i64, y: i64, z: i64, count:
 //!   u32) u32`, which of a texture's `count` variants the block at (x, y, z) shows;
@@ -684,9 +686,9 @@ fn View(comptime Source: type) type {
             allocator.free(self.blockLooks);
         }
 
-        /// Plants aren't drawn, nor blocks not seen in play.
+        /// Plants aren't drawn, nor low blocks, nor blocks not seen in play.
         fn isDrawn(source: *const Source, id: i32) bool {
-            return source.isVisible(id) and source.mapType(id) != .plant;
+            return source.isVisible(id) and source.mapType(id) != .plant and !source.isLow(id);
         }
 
         /// Adds `look` and returns its number in a chunk's looks, its index + 1.
