@@ -64,3 +64,15 @@ The goal is no allocation after startup ([`docs/rendering.md`](docs/rendering.md
 Name an allocator parameter `arena` only when the function relies on arena semantics: it allocates and never frees individually (intermediate lists, partial results on error). Otherwise name it `allocator`, or `gpa` when it frees what it allocates.
 
 Whether the caller happens to pass an arena doesn't matter; the name describes what the function needs. Prefer results the caller can always free: return `null` and let the caller pick a fallback, rather than returning a static string from a function that otherwise allocates.
+
+### Messages
+
+| message | written with |
+| --- | --- |
+| a warning: something is skipped or missing from the map, and the program carries on | `std.log.warn` |
+| a problem that stops the program | `console.fail` |
+| the program's own output: status lines (`blocks: …`), render summaries, bench results | `std.debug.print` |
+
+Write a warning without the `storymap: ` prefix or a trailing newline: `console.log`, the program's `std_options.logFn` in `main.zig`, adds both. Don't use `std.log.err` for warnings: the test runner fails any test that logs an error.
+
+`zig build test` prints whatever a passing test writes to stderr under its step, the way it prints a failure. A test that causes a warning on purpose sets `std.testing.log_level = .err` and restores `.warn` with `defer`, since the test runner doesn't reset it between tests.
