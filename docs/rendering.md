@@ -145,7 +145,7 @@ The isometric view's `game` style draws a block's top, south and east faces in i
 
 In 1.22.7 with Primitive Survival, 1,799 of the 14,781 blocks are cubes, with 1,249 distinct face images.
 
-The renderer draws each cube once when a render starts, into a 32-pixel square ([`src/renderer/isometric.zig`](../src/renderer/isometric.zig), `pictureOf`): each pixel of a face averages its texture at 2 × 2 points across it, a 32-texel texture giving about 4 texels a pixel, and is lit as the relief style lights that face.
+The renderer draws each cube once when a render starts, into a 32-pixel square ([`src/renderer/isometric.zig`](../src/renderer/isometric.zig), `pictureOf`): each pixel of a face averages its texture at 2 × 2 points across it, a 32-texel texture giving about 4 texels a pixel, and is lit as the relief style lights that face. The plain and tinted layers stay apart: where a block is drawn, its tinted layer is multiplied by the block's tint there ([Climate and season tint](#climate-and-season-tint), steps 1 to 4, at the block's own height) and drawn over the plain one by how much of each pixel it covers. Blocks that aren't cubes take their average colour times the tint.
 
 ### Preparing blocks
 

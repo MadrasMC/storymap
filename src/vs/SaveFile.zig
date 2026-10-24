@@ -228,6 +228,11 @@ pub fn cubeFaces(self: *const SaveFile, id: i32) ?*const world.CubeFaces {
     return self.appearance(id).cube;
 }
 
+/// Whether the climate or the season colours the block (`Reader.tint`).
+pub fn isTinted(self: *const SaveFile, id: i32) bool {
+    return !self.blockTint(id).isNone();
+}
+
 /// False for air and for blocks not seen in play, such as meta blocks.
 pub fn isVisible(self: *const SaveFile, id: i32) bool {
     return id != 0 and !self.appearance(id).invisible;
@@ -264,6 +269,8 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
 
 /// A tile is 16 × 16 chunk columns, the same area as a map region.
 const chunksPerTile = tiles.size / 32;
+/// A map region's side, in blocks.
+const regionSize = tiles.size;
 
 /// The chunk columns with a map chunk, in dimension 0. Every chunk column has one in the saves
 /// seen (docs/save-format/README.md#2-positions), and `mapchunk` has a row per column where
@@ -334,6 +341,17 @@ test appearancesByCode {
     try std.testing.expectEqualSlices(Appearance, &expected, appearances);
 }
 
+const climateArea = Tint.ClimateMap.maxSize * Tint.ClimateMap.maxSize;
+
+/// A map region's climate map, in a `Reader`'s cache.
+const RegionClimate = struct {
+    /// The map region's position, or null for an empty slot.
+    region: ?[2]i64 = null,
+    /// Whether the region has a climate map that could be read.
+    found: bool = false,
+    map: Tint.ClimateMap,
+};
+
 /// One thread's connection, decoder and buffers, reused for every tile it reads.
 pub const Reader = struct {
     save: *const SaveFile,
@@ -345,8 +363,11 @@ pub const Reader = struct {
     decoder: Chunk.Decoder,
     chunk: *Chunk,
     mapChunk: *MapChunk,
-    /// The climate map of the tile's map region.
-    climate: Tint.ClimateMap,
+    /// The climate maps of the map regions read last: an isometric tile's lines of sight cross
+    /// several.
+    climates: [4]RegionClimate,
+    /// The slot the next region read goes into.
+    nextClimate: usize = 0,
     /// The block right under each column's highest solid one, liquid first, or 0 if unknown:
     /// what the shaded map shows under a cover (`Appearance.cover`). Indexed like the surface;
     /// empty for other styles.
@@ -379,8 +400,10 @@ pub const Reader = struct {
         errdefer chunkRow.finalize();
         const mapRegionRow = try db.prepare("SELECT data FROM mapregion WHERE position = ?1;");
         errdefer mapRegionRow.finalize();
-        const climateValues = try allocator.alloc(i32, Tint.ClimateMap.maxSize * Tint.ClimateMap.maxSize);
+        var climates: [4]RegionClimate = undefined;
+        const climateValues = try allocator.alloc(i32, climates.len * climateArea);
         errdefer allocator.free(climateValues);
+        for (&climates, 0..) |*slot, i| slot.* = .{ .map = .{ .values = climateValues[i * climateArea ..][0..climateArea] } };
         var decoder: Chunk.Decoder = try .init(allocator, Chunk.Decoder.defaultBlockEntityBytes);
         errdefer decoder.deinit(allocator);
         const chunk = try allocator.create(Chunk);
@@ -417,7 +440,7 @@ pub const Reader = struct {
             .decoder = decoder,
             .chunk = chunk,
             .mapChunk = mapChunk,
-            .climate = .{ .values = climateValues },
+            .climates = climates,
         };
     }
 
@@ -428,7 +451,8 @@ pub const Reader = struct {
         allocator.free(self.liquidTint);
         allocator.free(self.topTint);
         allocator.free(self.under);
-        allocator.free(self.climate.values);
+        // The slots' values are one allocation, the first slot's at its start.
+        allocator.free(self.climates[0].map.values.ptr[0 .. self.climates.len * climateArea]);
         allocator.destroy(self.mapChunk);
         allocator.destroy(self.chunk);
         self.decoder.deinit(allocator);
@@ -489,21 +513,48 @@ pub const Reader = struct {
         return done;
     }
 
+    /// The colour multiplied into block `id`'s tinted parts at block (x, y, z), by the climate
+    /// there and the season: white for a block without colour maps, or where the save has no
+    /// climate.
+    pub fn tint(self: *Reader, id: i32, x: i64, y: i64, z: i64) !world.Rgb {
+        const save = self.save;
+        const maps = save.blockTint(id);
+        if (maps.isNone()) return Tint.none;
+        const rx = @divFloor(x, regionSize);
+        const rz = @divFloor(z, regionSize);
+        const climate = try self.climateOf(rx, rz) orelse return Tint.none;
+        const here = climate.at(@as(f32, @floatFromInt(x - rx * regionSize)) / regionSize, @as(f32, @floatFromInt(z - rz * regionSize)) / regionSize);
+        return Tint.tint(maps.climate, maps.season, here, @intCast(y), @intCast(save.gameData.seaLevel()), save.seasonProgress);
+    }
+
+    /// The climate map of map region (x, z), or null where the save has none that can be read.
+    fn climateOf(self: *Reader, x: i64, z: i64) !?*const Tint.ClimateMap {
+        for (&self.climates) |*slot| {
+            const region = slot.region orelse continue;
+            if (region[0] == x and region[1] == z) return if (slot.found) &slot.map else null;
+        }
+        const slot = &self.climates[self.nextClimate];
+        self.nextClimate = (self.nextClimate + 1) % self.climates.len;
+        slot.region = .{ x, z };
+        slot.found = false;
+        if (x < 0 or z < 0 or x > Chunk.Position.maxXZ or z > Chunk.Position.maxXZ) return null;
+        const position: Chunk.Position = .{ .x = @intCast(x), .z = @intCast(z) };
+        self.mapRegionRow.bind(1, position.position64());
+        defer self.mapRegionRow.reset();
+        if (!self.mapRegionRow.step()) return null;
+        var parser: ProtoBuf = .{ .buf = self.mapRegionRow.column([]const u8, 0) };
+        slot.found = while (try parser.next()) |field| {
+            if (field.field_number == 3 and field.data == .LEN) break try slot.map.decode(field.data.LEN);
+        } else false;
+        return if (slot.found) &slot.map else null;
+    }
+
     /// Tints the tile's own columns by the climate in its map region and the season. A tile
     /// without a climate map stays untinted.
     fn readTints(self: *Reader, tile: tiles.Tile, surface: world.Surface) !void {
         const save = self.save;
-        if (tile.x < 0 or tile.y < 0) return;
-        const region: Chunk.Position = .{ .x = @intCast(tile.x), .z = @intCast(tile.y) };
-        self.mapRegionRow.bind(1, region.position64());
-        defer self.mapRegionRow.reset();
-        if (!self.mapRegionRow.step()) return;
-        var parser: ProtoBuf = .{ .buf = self.mapRegionRow.column([]const u8, 0) };
-        const found = while (try parser.next()) |field| {
-            if (field.field_number == 3 and field.data == .LEN) break try self.climate.decode(field.data.LEN);
-        } else false;
-        if (!found) return;
-
+        // A tile is a map region's area.
+        const climate = try self.climateOf(tile.x, tile.y) orelse return;
         const sea: i32 = @intCast(save.gameData.seaLevel());
         const side = world.Surface.side;
         for (0..tiles.size) |pz| for (0..tiles.size) |px| {
@@ -512,7 +563,7 @@ pub const Reader = struct {
             const liquid = if (surface.liquidTop[i] != null) save.blockTint(surface.liquidBlock[i]) else BlockTint{};
             const grain = if (surface.top[i] != null and self.grainBlock[i] != 0) save.blockTint(self.grainBlock[i]) else BlockTint{};
             if (top.isNone() and liquid.isNone() and grain.isNone()) continue;
-            const here = self.climate.at(@as(f32, @floatFromInt(px)) / tiles.size, @as(f32, @floatFromInt(pz)) / tiles.size);
+            const here = climate.at(@as(f32, @floatFromInt(px)) / tiles.size, @as(f32, @floatFromInt(pz)) / tiles.size);
             if (!top.isNone()) self.topTint[i] = Tint.tint(top.climate, top.season, here, surface.top[i].?, sea, save.seasonProgress);
             if (!liquid.isNone()) self.liquidTint[i] = Tint.tint(liquid.climate, liquid.season, here, surface.liquidTop[i].?, sea, save.seasonProgress);
             if (!grain.isNone()) self.grainTint[i] = Tint.tint(grain.climate, grain.season, here, surface.top[i].?, sea, save.seasonProgress);
