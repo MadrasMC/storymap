@@ -135,9 +135,19 @@ How far through the year the save is comes from `gamedata`'s clock (§6): `Total
 
 Measured against a 1.22.7 world's map cache in accurate mode, water, which has no season map, matches the climate colour within 0.01 per channel: its tint is the climate map's pixel. Over grassland, the game's tint fits a climate colour and a single season colour mixed by the shader's weight, the same season colour everywhere to within 0.04, but brighter than any column of `seasonalGrass` averages, so Storymap's grass is darker than the game's. Which row and column the game picks, and how it gets that colour, is an open question. Not followed either: frost, which lightens tinted blocks where it's cold; block classes with their own colour, such as forest floor, which mixes soil and grass by its grass level, and water lilies; and leaves whose colour maps come from their shape. *(Measured (1.22.7): the cache divided by Storymap's untinted render, per 32-block cell, against the climate there.)*
 
+### Cube faces
+
+The isometric view's `game` style draws a block's top, south and east faces in its textures, for blocks the game draws as a plain cube:
+
+- **Cubes:** drawtype `Cube` or `TopSoil`, or `JSON` (the default) with the shape `block/basic/cube` (the default) or `block/basic/cube-nozfight` (glacier ice's, its faces inset by 0.006 of a pixel), not rotated *(Source: vsapi [`Block`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/Collectible/Block/Block.cs), `DrawType` and `DefaultCubeShape`)*. Other shapes, such as logs' and plants', and other drawtypes, such as liquids and leaves, aren't drawn yet.
+- **A face's texture** is the one named for it (`up`, `south`, `east`), else its group's (`verticals` for top and bottom, `horizontals` for the sides), else `all`, found as for [Texture colours](#texture-colours). Its overlays are drawn over it, each stretched or shrunk to its size.
+- **Tint:** a block with a climate or season colour map has every face tinted, except grassy soil (drawtype `TopSoil`: soil, forest floor, peat, clay), which is its soil's texture with grass over it. The grass is its `specialSecondTexture`, twice as wide as high: the right half is the top, the left half the sides' fringe. Only the grass is tinted.
+
+In 1.22.7 with Primitive Survival, 1,799 of the 14,781 blocks are cubes, with 1,249 distinct face images.
+
 ### Preparing blocks
 
-Everything a map needs from the assets is prepared once, by [`src/vs/Prepared.zig`](../src/vs/Prepared.zig), into a blocks folder: `blocks` in the current folder, beside a render's `out`, or the one given (`--blocks` when rendering, the folder argument of `storymap prepare`). For each block, that's its code, its material, its colour code ([Block colours](#block-colours)), its texture colours ([Texture colours](#texture-colours)) and its colour maps ([Climate and season tint](#climate-and-season-tint)), in `<blocks folder>/<key>/blocks.txt`, with the colour maps' images beside it in `colormaps/`.
+Everything a map needs from the assets is prepared once, by [`src/vs/Prepared.zig`](../src/vs/Prepared.zig), into a blocks folder: `blocks` in the current folder, beside a render's `out`, or the one given (`--blocks` when rendering, the folder argument of `storymap prepare`). For each block, that's its code, its material, its colour code ([Block colours](#block-colours)), its texture colours ([Texture colours](#texture-colours)), its colour maps ([Climate and season tint](#climate-and-season-tint)) and its cube faces ([Cube faces](#cube-faces)), in `<blocks folder>/<key>/blocks.txt`. The colour maps' images are beside it in `colormaps/`, and the face images in `textures.bin`, as RGBA pixels (5.1 MB for 1.22.7).
 
 - **One set per game and mods:** the key changes with the game version and the mods (their names, sizes and times), so updating either prepares a new set, and switching back finds the old one.
 - **On demand:** a render prepares the set it needs if it isn't there yet. `--prepare` prepares it again anyway, and `storymap prepare` does only that.

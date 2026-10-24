@@ -19,6 +19,35 @@ pub const Block = struct {
     /// `config/colormaps.json`, e.g. "climatePlantTint" and "seasonalGrass".
     climateColorMap: ?[]const u8 = null,
     seasonColorMap: ?[]const u8 = null,
+    /// For a block the game draws as a plain cube, the textures on the faces the isometric view
+    /// shows; null for any other.
+    cube: ?Cube = null,
+};
+
+/// A cube's top, south and east faces: those seen looking north-west from above.
+pub const Cube = struct {
+    up: Face,
+    south: Face,
+    east: Face,
+};
+
+/// One face of a cube: what's never tinted, and what the block's colour maps tint, drawn over
+/// it. Grassy soil has both, the soil and its grass; other blocks one or the other.
+pub const Face = struct {
+    plain: ?Layer = null,
+    tinted: ?Layer = null,
+};
+
+/// A texture and the overlays drawn over it, each as "domain:path" below `textures/` without
+/// ".png", the path ending in `*` for the first of its variants.
+pub const Layer = struct {
+    base: []const u8,
+    overlays: []const []const u8 = &.{},
+    /// For grassy soil's grass: the half of a texture twice as wide as tall that this face takes,
+    /// the left for the sides and the right for the top.
+    half: ?Half = null,
+
+    pub const Half = enum { left, right };
 };
 
 /// The textures that colour a block on the game's colour-accurate map (vsapi
@@ -126,6 +155,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                 .textures = look.textures,
                 .climateColorMap = look.climateColorMap,
                 .seasonColorMap = look.seasonColorMap,
+                .cube = look.cube,
             });
         }
     }
@@ -138,6 +168,7 @@ const Look = struct {
     textures: Textures,
     climateColorMap: ?[]const u8 = null,
     seasonColorMap: ?[]const u8 = null,
+    cube: ?Cube = null,
 };
 
 /// A variant's `Look`, from its block type's properties with their `…ByType` forms resolved.
@@ -146,8 +177,12 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !Look 
     const material = canonicalMaterial(if (materialValue) |m| m.asString() orelse defaultMaterial else defaultMaterial);
     const attributes = try property(arena, json, "attributes", variant);
     const colorCode = if (attributes) |a| if (a.get("mapColorCode")) |c| c.asString() else null else null;
+    // A …ByType may set one to null, for variants without.
+    const climateColorMap = if (try property(arena, json, "climateColorMap", variant)) |c| c.asString() else null;
+    const seasonColorMap = if (try property(arena, json, "seasonColorMap", variant)) |c| c.asString() else null;
 
     var textures: Textures = .{};
+    var cube: ?Cube = null;
     if (try property(arena, json, "textures", variant)) |all| if (all == .object and all.object.len > 0) {
         const forColour = if (attributes) |a| if (a.get("textureCodeForBlockColor")) |c| c.asString() else null else null;
         const forGrain = if (try property(arena, json, "particlesTextureCode", variant)) |c| c.asString() else null;
@@ -155,15 +190,93 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !Look 
             .colour = try textureLocation(arena, pickTexture(all.object, forColour), variant.code.domain),
             .grain = try textureLocation(arena, pickTexture(all.object, forGrain), variant.code.domain),
         };
+        const tinted = climateColorMap != null or seasonColorMap != null;
+        cube = try cubeOf(arena, all.object, try drawingOf(arena, json, variant), tinted, variant.code.domain);
     };
     return .{
         .material = material,
         .colorCode = colorCode orelse defaultColorCode(material),
         .textures = textures,
-        // A …ByType may set one to null, for variants without.
-        .climateColorMap = if (try property(arena, json, "climateColorMap", variant)) |c| c.asString() else null,
-        .seasonColorMap = if (try property(arena, json, "seasonColorMap", variant)) |c| c.asString() else null,
+        .climateColorMap = climateColorMap,
+        .seasonColorMap = seasonColorMap,
+        .cube = cube,
     };
+}
+
+/// How the game draws a block, as far as the isometric view tells them apart.
+const Drawing = enum {
+    /// A plain cube, each face its own texture.
+    cube,
+    /// Grassy soil (`TopSoil`): a cube of soil, with grass over its top and the top of its sides.
+    topSoil,
+    other,
+};
+
+/// From its `drawtype`, which is `json` without one: a JSON block whose shape is the game's
+/// default, the plain cube, unturned, is drawn as a cube too (vsapi `Block.DrawType`,
+/// `Block.DefaultCubeShape`).
+fn drawingOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !Drawing {
+    const drawtype = if (try property(arena, json, "drawtype", variant)) |d| d.asString() orelse "json" else "json";
+    if (std.ascii.eqlIgnoreCase(drawtype, "cube")) return .cube;
+    if (std.ascii.eqlIgnoreCase(drawtype, "topsoil")) return .topSoil;
+    if (!std.ascii.eqlIgnoreCase(drawtype, "json")) return .other;
+    const shape = try property(arena, json, "shape", variant) orelse return .cube;
+    const base = (shape.get("base") orelse return .other).asString() orelse return .other;
+    const location: Location = try .parse(arena, base, Assets.gameDomain);
+    // `cube-nozfight`, for glacier ice, insets each pair of faces by 0.006 of a pixel.
+    const cubes = [_][]const u8{ "block/basic/cube", "block/basic/cube-nozfight" };
+    for (cubes) |cube| {
+        if (std.mem.eql(u8, location.path, cube)) break;
+    } else return .other;
+    for ([_][]const u8{ "rotateX", "rotateY", "rotateZ" }) |axis| {
+        const angle = shape.get(axis) orelse continue;
+        if (angle != .number or (std.fmt.parseFloat(f64, angle.number) catch 1) != 0) return .other;
+    }
+    return .cube;
+}
+
+/// A cube's faces from its block's textures, or null if it isn't drawn as one or a face has
+/// no texture. A face takes the texture named for it, else its group's, else `all`. A block with
+/// colour maps has every face tinted, except grassy soil, which tints only its grass, the
+/// right half of its `specialSecondTexture` on top and the left half on the sides.
+fn cubeOf(arena: std.mem.Allocator, textures: []const Json.Field, drawing: Drawing, tinted: bool, domain: []const u8) !?Cube {
+    if (drawing == .other) return null;
+    const up = try layerOf(arena, findTexture(textures, &.{ "up", "verticals", "all" }), domain) orelse return null;
+    const south = try layerOf(arena, findTexture(textures, &.{ "south", "horizontals", "all" }), domain) orelse return null;
+    const east = try layerOf(arena, findTexture(textures, &.{ "east", "horizontals", "all" }), domain) orelse return null;
+    if (drawing == .topSoil) {
+        const grass = try textureLocation(arena, findTexture(textures, &.{"specialSecondTexture"}) orelse return null, domain) orelse return null;
+        return .{
+            .up = .{ .plain = up, .tinted = .{ .base = grass, .half = .right } },
+            .south = .{ .plain = south, .tinted = .{ .base = grass, .half = .left } },
+            .east = .{ .plain = east, .tinted = .{ .base = grass, .half = .left } },
+        };
+    }
+    const face = struct {
+        fn of(layer: Layer, isTinted: bool) Face {
+            return if (isTinted) .{ .tinted = layer } else .{ .plain = layer };
+        }
+    }.of;
+    return .{ .up = face(up, tinted), .south = face(south, tinted), .east = face(east, tinted) };
+}
+
+/// Case-sensitive, as in the game.
+fn findTexture(textures: []const Json.Field, names: []const []const u8) ?Json.Value {
+    for (names) |name| for (textures) |texture| if (std.mem.eql(u8, texture.key, name)) return texture.value;
+    return null;
+}
+
+/// A texture's base and overlays, or null without a base.
+fn layerOf(arena: std.mem.Allocator, texture: ?Json.Value, domain: []const u8) !?Layer {
+    const value = texture orelse return null;
+    const base = try textureLocation(arena, value, domain) orelse return null;
+    var overlays: std.ArrayList([]const u8) = .empty;
+    if (value.get("overlays")) |list| if (list == .array) for (list.array) |item| {
+        const path = item.asString() orelse continue;
+        const location: Location = try .parse(arena, path, domain);
+        try overlays.append(arena, try std.fmt.allocPrint(arena, "{s}:{s}", .{ location.domain, location.path }));
+    };
+    return .{ .base = base, .overlays = overlays.items };
 }
 
 /// Case-sensitive, as in the game.
@@ -632,6 +745,51 @@ test "the textures that colour a block" {
         try std.testing.expectEqualDeep(case.colour, look.textures.colour);
         try std.testing.expectEqualDeep(case.grain, look.textures.grain);
     }
+}
+
+test "the cube a block is drawn as" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rock: Variant = .{ .code = .{ .domain = "game", .path = "rock-granite" }, .parts = &.{.{ .group = "rock", .state = "granite" }} };
+
+    // `all` on every face, with an ore's overlay, untinted.
+    const ore = (try describe(a, try Json.parse(a, "{ drawtype: 'cube', textures: { all: { base: 'block/stone/rock/{rock}1', overlays: [ 'block/stone/ore/gold1' ] } } }"), rock)).cube.?;
+    try std.testing.expectEqualStrings("game:block/stone/rock/granite1", ore.east.plain.?.base);
+    try std.testing.expectEqualStrings("game:block/stone/ore/gold1", ore.up.plain.?.overlays[0]);
+    try std.testing.expectEqual(null, ore.south.tinted);
+
+    // Its own name, then its group's, then `all`; no drawtype or shape is the game's cube.
+    const log = (try describe(a, try Json.parse(a, "{ textures: { all: { base: 'a' }, verticals: { base: 'v' }, south: { base: 's' } } }"), rock)).cube.?;
+    try std.testing.expectEqualStrings("game:v", log.up.plain.?.base);
+    try std.testing.expectEqualStrings("game:s", log.south.plain.?.base);
+    try std.testing.expectEqualStrings("game:a", log.east.plain.?.base);
+
+    // Colour maps tint the whole face.
+    const tinted = (try describe(a, try Json.parse(a, "{ drawtype: 'Cube', climateColorMap: 'climatePlantTint', textures: { all: { base: 'x' } } }"), rock)).cube.?;
+    try std.testing.expectEqualStrings("game:x", tinted.up.tinted.?.base);
+    try std.testing.expectEqual(null, tinted.up.plain);
+
+    // Glacier ice's cube with its faces inset.
+    const ice = (try describe(a, try Json.parse(a, "{ shape: { base: 'block/basic/cube-nozfight' }, textures: { all: { base: 'i' } } }"), rock)).cube.?;
+    try std.testing.expectEqualStrings("game:i", ice.up.plain.?.base);
+
+    // Grassy soil: soil under the grass's halves, the right on top and the left on the sides.
+    const soil = (try describe(a, try Json.parse(a,
+        \\{ drawtype: 'TopSoil', climateColorMap: 'climatePlantTint',
+        \\  textures: { all: { base: 'block/soil/fertmedium' }, specialSecondTexture: { base: 'block/plant/grasscoverage/normal' } } }
+    ), rock)).cube.?;
+    try std.testing.expectEqualStrings("game:block/soil/fertmedium", soil.up.plain.?.base);
+    try std.testing.expectEqual(.right, soil.up.tinted.?.half.?);
+    try std.testing.expectEqual(.left, soil.east.tinted.?.half.?);
+    try std.testing.expectEqualStrings("game:block/plant/grasscoverage/normal", soil.south.tinted.?.base);
+
+    // Not cubes: another shape, a turned cube, another drawtype.
+    for ([_][]const u8{
+        "{ shape: { base: 'block/wood/log/noresin1' }, textures: { all: { base: 'x' } } }",
+        "{ shape: { base: 'game:block/basic/cube', rotateY: 90 }, textures: { all: { base: 'x' } } }",
+        "{ drawtype: 'liquid', textures: { all: { base: 'x' } } }",
+    }) |json| try std.testing.expectEqual(null, (try describe(a, try Json.parse(a, json), rock)).cube);
 }
 
 test "the colour maps that tint a block" {
