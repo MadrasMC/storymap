@@ -203,6 +203,9 @@ test "a decoder is reused across chunks without allocating" {
 }
 
 test "block entities over the limit are skipped, the blocks still decode" {
+    // Keeps the expected warning off stderr, where the build runner would print it.
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
     // Room for the list but not for the entity's own data.
     var decoder: Decoder = try .init(std.testing.allocator, @sizeOf(BlockEntity) + 16);
     defer decoder.deinit(std.testing.allocator);

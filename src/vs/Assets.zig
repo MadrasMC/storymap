@@ -76,7 +76,7 @@ pub fn open(allocator: std.mem.Allocator, io: Io, game: Dir, data: ?Dir) !Assets
     std.mem.sort([]const u8, names.items, {}, lessThan);
     for (names.items) |name| {
         self.addMod(io, mods, name) catch |err| {
-            std.debug.print("storymap: skipped mod {s}: could not read ({s})\n", .{ name, @errorName(err) });
+            std.log.warn("skipped mod {s}: could not read ({s})", .{ name, @errorName(err) });
         };
     }
     return self;

@@ -38,3 +38,8 @@ pub fn fail(comptime format: []const u8, values: anytype) noreturn {
     std.debug.print("storymap: " ++ format, values);
     exit(1);
 }
+
+/// `std_options.logFn` for the program, so `std.log` messages read like Storymap's own.
+pub fn log(comptime _: std.log.Level, comptime _: @EnumLiteral(), comptime format: []const u8, values: anytype) void {
+    std.debug.print("storymap: " ++ format ++ "\n", values);
+}

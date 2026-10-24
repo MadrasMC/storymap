@@ -279,7 +279,7 @@ fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets, fo
     const file = "config/colormaps.json";
     const bytes = try assets.read(arena, io, Assets.gameDomain, file) orelse return &.{};
     const json = Json.parse(arena, bytes) catch |err| {
-        std.debug.print("storymap: {s}: could not read ({s}); nothing will be tinted\n", .{ file, @errorName(err) });
+        std.log.warn("{s}: could not read ({s}); nothing will be tinted", .{ file, @errorName(err) });
         return &.{};
     };
     if (json != .array) return &.{};
@@ -292,7 +292,7 @@ fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets, fo
         const domain = if (colon) |c| base[0..c] else Assets.gameDomain;
         const path = try std.fmt.allocPrint(arena, "textures/{s}.png", .{if (colon) |c| base[c + 1 ..] else base});
         const png = try assets.read(arena, io, domain, path) orelse {
-            std.debug.print("storymap: colour map {s}: no image {s}:{s}\n", .{ code, domain, path });
+            std.log.warn("colour map {s}: no image {s}:{s}", .{ code, domain, path });
             continue;
         };
         const sub = try std.fmt.allocPrint(arena, "{s}/{s}.png", .{ colourMapFolder, code });
@@ -522,6 +522,9 @@ pub fn unknown(self: *const Prepared, allocator: std.mem.Allocator, codes: []con
 }
 
 test "prepare, load and compare with a save" {
+    // Keeps the expected warning off stderr, where the build runner would print it.
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

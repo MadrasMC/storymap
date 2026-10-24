@@ -10,6 +10,8 @@ const render = cli.render;
 const prepare = cli.prepare;
 const bench = cli.bench;
 
+pub const std_options: std.Options = .{ .logFn = console.log };
+
 const program: args.Program = .{ .name = "storymap", .header = "storymap " ++ build_options.version };
 
 const commands = .{
