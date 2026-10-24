@@ -6,7 +6,7 @@
 //! colour maps with their padding and flags, each image beside it as `colormaps/<code>.png`.
 //! Blocks name their two textures and their climate and season colour maps by number from 0,
 //! or `-` for none, then, for a block drawn as a cube, the images of its faces' plain and
-//! tinted layers (`Cube`), top, south and east, by number in `textures.bin`:
+//! tinted layers (`world.CubeFaces`), top, south and east, by number in `textures.bin`:
 //!
 //!     storymap blocks 5
 //!     game 1.22.7
@@ -58,28 +58,10 @@ pub const Block = struct {
     seasonColourMap: ?*const Tint.ColourMap = null,
     /// For a block the game draws as a plain cube, its faces' images; null for any other, or
     /// one with a face that can't be read.
-    cube: ?Cube = null,
+    cube: ?world.CubeFaces = null,
 };
 
-/// A cube's top, south and east faces, as `BlockTypes.Cube`, with their textures composited.
-pub const Cube = struct {
-    up: Face,
-    south: Face,
-    east: Face,
-};
-
-/// What's never tinted, and what the block's colour maps tint, drawn over it.
-pub const Face = struct {
-    plain: ?*const Image = null,
-    tinted: ?*const Image = null,
-};
-
-/// Pixels row by row, red, green, blue and alpha.
-pub const Image = struct {
-    width: u16,
-    height: u16,
-    pixels: []const [4]u8,
-};
+const Image = world.Image;
 
 /// The format of `blocks.txt` and `textures.bin`, and of what goes into them: raise it when
 /// any changes, so sets prepared before are prepared again.
@@ -406,14 +388,14 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
             const grain = try numbered(*const TextureColours, textures.items, words.next());
             const climate = try numbered(?*const Tint.ColourMap, colourMaps.items, words.next());
             const season = try numbered(?*const Tint.ColourMap, colourMaps.items, words.next());
-            var faces: [3]Face = undefined;
+            var faces: [3]world.CubeFaces.Face = undefined;
             for (&faces) |*face| face.* = .{
                 .plain = try numbered(*const Image, images, words.next()),
                 .tinted = try numbered(*const Image, images, words.next()),
             };
             const cube = for (faces) |face| {
                 if (face.plain == null and face.tinted == null) break null;
-            } else Cube{ .up = faces[0], .south = faces[1], .east = faces[2] };
+            } else world.CubeFaces{ .up = faces[0], .south = faces[1], .east = faces[2] };
             try self.blocks.put(arena, first, .{
                 .material = material,
                 .colorCode = colorCode,

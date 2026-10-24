@@ -75,6 +75,27 @@ pub const Chunk = struct {
     liquid: [volume]i32,
 };
 
+/// Pixels row by row, red, green, blue and alpha.
+pub const Image = struct {
+    width: u16,
+    height: u16,
+    pixels: []const [4]u8,
+};
+
+/// The top, south and east faces of a block drawn as a cube, each as the game's textures show
+/// them, looking at the face from outside with the sky up (the top with north up).
+pub const CubeFaces = struct {
+    up: Face,
+    south: Face,
+    east: Face,
+
+    /// What's never tinted, and what the block's tint colours, drawn over it.
+    pub const Face = struct {
+        plain: ?*const Image = null,
+        tinted: ?*const Image = null,
+    };
+};
+
 /// The chunks at x and z from the bottom of the world to the top.
 pub const ChunkColumn = struct {
     x: i32,

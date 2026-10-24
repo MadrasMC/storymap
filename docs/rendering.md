@@ -145,6 +145,8 @@ The isometric view's `game` style draws a block's top, south and east faces in i
 
 In 1.22.7 with Primitive Survival, 1,799 of the 14,781 blocks are cubes, with 1,249 distinct face images.
 
+The renderer draws each cube once when a render starts, into a 32-pixel square ([`src/renderer/isometric.zig`](../src/renderer/isometric.zig), `pictureOf`): each pixel of a face averages its texture at 2 × 2 points across it, a 32-texel texture giving about 4 texels a pixel, and is lit as the relief style lights that face.
+
 ### Preparing blocks
 
 Everything a map needs from the assets is prepared once, by [`src/vs/Prepared.zig`](../src/vs/Prepared.zig), into a blocks folder: `blocks` in the current folder, beside a render's `out`, or the one given (`--blocks` when rendering, the folder argument of `storymap prepare`). For each block, that's its code, its material, its colour code ([Block colours](#block-colours)), its texture colours ([Texture colours](#texture-colours)), its colour maps ([Climate and season tint](#climate-and-season-tint)) and its cube faces ([Cube faces](#cube-faces)), in `<blocks folder>/<key>/blocks.txt`. The colour maps' images are beside it in `colormaps/`, and the face images in `textures.bin`, as RGBA pixels (5.1 MB for 1.22.7).

@@ -198,6 +198,8 @@ pub const Appearance = struct {
     colour: ?world.Rgb = null,
     /// Colours sampled across its texture: each column mixes in one of them.
     grain: []const world.Rgb = &.{},
+    /// Its faces' textures, for a block the game draws as a plain cube.
+    cube: ?*const world.CubeFaces = null,
 };
 
 /// An unknown ID is land.
@@ -207,6 +209,16 @@ pub fn appearance(self: *const SaveFile, id: i32) Appearance {
 
 pub fn mapType(self: *const SaveFile, id: i32) world.MapType {
     return self.appearance(id).mapType;
+}
+
+/// Its texture's average colour, or else its type's on the game's map.
+pub fn colour(self: *const SaveFile, id: i32) world.Rgb {
+    const blockAppearance = self.appearance(id);
+    return blockAppearance.colour orelse palette.colours.get(blockAppearance.mapType);
+}
+
+pub fn cubeFaces(self: *const SaveFile, id: i32) ?*const world.CubeFaces {
+    return self.appearance(id).cube;
 }
 
 /// False for air and for blocks not seen in play, such as meta blocks.
@@ -225,7 +237,7 @@ pub const MapPainter = @import("MapPainter.zig");
 pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
     for (self.appearances, self.gameData.blockCodes) |*blockAppearance, maybeCode| {
         const code = maybeCode orelse continue;
-        const block = prepared.blocks.get(code) orelse continue;
+        const block = prepared.blocks.getPtr(code) orelse continue;
         const ice = std.mem.eql(u8, block.material, "Ice");
         blockAppearance.* = .{
             .mapType = std.meta.stringToEnum(world.MapType, block.colorCode) orelse .land,
@@ -234,6 +246,7 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
             .invisible = std.mem.eql(u8, block.material, "Meta"),
             .colour = block.colour,
             .grain = block.grain,
+            .cube = if (block.cube) |*cube| cube else null,
         };
     }
     for (self.tints, self.gameData.blockCodes) |*tint, maybeCode| {

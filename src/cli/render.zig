@@ -102,14 +102,8 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     defer views.deinit(allocator);
     try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .written = written });
 
-    // The game's textures come with textured cubes (TODO.md item 8); until then, `game` draws
-    // relief cubes in the default colours.
-    const palette = switch (theme.isometric) {
-        .relief => |colours| colours,
-        .game => Theme.defaultColours,
-    };
     const writtenIsometric = if (parsed.flag("isometric"))
-        try isometric.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .palette = palette })
+        try isometric.render(SaveFile, allocator, init.io, &save, .{ .folder = out }, .{ .style = theme.isometric })
     else
         null;
     defer if (writtenIsometric) |list| allocator.free(list);

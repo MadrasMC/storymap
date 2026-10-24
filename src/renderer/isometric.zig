@@ -1,6 +1,7 @@
-//! The isometric view, looking north-west from above: every block drawn as a cube in its map
-//! type's relief colour (`relief.zig`), its top, south and east faces lit differently. Plants
-//! aren't drawn.
+//! The isometric view, looking north-west from above: every block drawn as a cube, its top,
+//! south and east faces lit differently. In the `relief` style each is in its map type's relief
+//! colour (`relief.zig`); in the `game` style, a block the game draws as a cube is in its
+//! textures (`Picture`), and any other in its texture's average colour. Plants aren't drawn.
 //!
 //! Each tile follows its lines of sight (`Line`) from the top of the world, and draws the first
 //! block each meets, as Mapcrafter does. A chunk is read only when a line enters it, and each
@@ -11,6 +12,8 @@
 //! - `chunkColumns: []const world.ChunkColumn`, those that may have blocks;
 //! - `heights() world.Heights`;
 //! - `blockCount() usize`, `mapType(id: i32) world.MapType` and `isVisible(id: i32) bool`;
+//! - for the `game` style, `colour(id: i32) world.Rgb` and `cubeFaces(id: i32) ?*const
+//!   world.CubeFaces`;
 //! - `Reader`, one per thread: `init(source: *const Source, allocator, null) !Reader`,
 //!   `deinit(*Reader, allocator)`, `readChunk(*Reader, x: i32, y: i32, z: i32, chunk:
 //!   *world.Chunk) !bool`, false where there's no chunk to draw, and `chunksRead: usize`.
@@ -19,6 +22,7 @@ const Io = std.Io;
 const world = @import("world");
 const tiles = @import("tiles");
 const console = @import("console");
+const Style = @import("theme").Style;
 const relief = @import("relief.zig");
 
 pub const folder = "isometric";
@@ -50,17 +54,18 @@ pub const Stats = struct {
 };
 
 pub const Options = struct {
-    /// The colours of the map types.
-    palette: world.Palette,
+    /// How blocks are drawn: a theme's `isometric/style.txt`. The game has one style, `game`.
+    style: Style,
     /// Where to record stats instead of printing a summary.
     stats: ?*Stats = null,
 };
 
 /// Renders `source` into `output` and returns the tiles written, at every level, owned by the
-/// caller.
+/// caller. A game style other than `game` is error.UnknownStyle, and more different looks
+/// than a chunk can number error.TooManyLooks.
 pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options) ![]tiles.Written {
     const start: Io.Timestamp = .now(io, .awake);
-    var view: View(Source) = try .init(allocator, source, &options.palette);
+    var view: View(Source) = try .init(allocator, source, options.style);
     defer view.deinit(allocator);
     const list = try tileList(allocator, source.chunkColumns, source.heights().world);
     defer allocator.free(list);
@@ -133,21 +138,21 @@ test Line {
     }
 }
 
-/// The chunks a worker has read: how each of their blocks is drawn (`View.kinds`), or that a
-/// chunk has nothing to draw, which takes no room. It holds a fixed number of each, set up once,
-/// and makes room by forgetting the one used longest ago.
+/// The chunks a worker has read: how each of their blocks is drawn (`View.blockLooks`), or that
+/// a chunk has nothing to draw, which takes no room. It holds a fixed number of each, set up
+/// once, and makes room by forgetting the one used longest ago.
 const ChunkCache = struct {
     pub const Position = struct { x: i32, y: i32, z: i32 };
-    pub const Kinds = [world.Chunk.volume]u8;
-    pub const Lookup = union(enum) { uncached, empty, kinds: *const Kinds };
+    pub const Looks = [world.Chunk.volume]u16;
+    pub const Lookup = union(enum) { uncached, empty, looks: *const Looks };
 
-    /// Chunks remembered, and how many of them can have blocks to draw: 32 KB each.
+    /// Chunks remembered, and how many of them can have blocks to draw: 64 KB each.
     pub const defaultChunks = 4096;
     pub const defaultChunksWithBlocks = 128;
 
     const Entry = struct {
         position: Position,
-        /// Where its kinds are in `kinds`, or null for a chunk with nothing to draw.
+        /// Where its looks are in `looks`, or null for a chunk with nothing to draw.
         slot: ?u32,
         /// When it was last used, by `clock`.
         used: u64,
@@ -157,8 +162,8 @@ const ChunkCache = struct {
     count: usize = 0,
     /// Each position's index in `entries`.
     byPosition: std.AutoHashMapUnmanaged(Position, u32),
-    kinds: []Kinds,
-    /// Slots in `kinds` no entry holds, the first `freeCount` of them.
+    looks: []Looks,
+    /// Slots in `looks` no entry holds, the first `freeCount` of them.
     free: []u32,
     freeCount: usize,
     clock: u64 = 0,
@@ -169,16 +174,16 @@ const ChunkCache = struct {
         var byPosition: std.AutoHashMapUnmanaged(Position, u32) = .empty;
         try byPosition.ensureTotalCapacity(allocator, chunks);
         errdefer byPosition.deinit(allocator);
-        const kinds = try allocator.alloc(Kinds, chunksWithBlocks);
-        errdefer allocator.free(kinds);
+        const looks = try allocator.alloc(Looks, chunksWithBlocks);
+        errdefer allocator.free(looks);
         const free = try allocator.alloc(u32, chunksWithBlocks);
         for (free, 0..) |*slot, i| slot.* = @intCast(i);
-        return .{ .entries = entries, .byPosition = byPosition, .kinds = kinds, .free = free, .freeCount = free.len };
+        return .{ .entries = entries, .byPosition = byPosition, .looks = looks, .free = free, .freeCount = free.len };
     }
 
     fn deinit(self: *ChunkCache, allocator: std.mem.Allocator) void {
         allocator.free(self.free);
-        allocator.free(self.kinds);
+        allocator.free(self.looks);
         self.byPosition.deinit(allocator);
         allocator.free(self.entries);
     }
@@ -188,12 +193,12 @@ const ChunkCache = struct {
         const entry = &self.entries[index];
         self.clock += 1;
         entry.used = self.clock;
-        return if (entry.slot) |slot| .{ .kinds = &self.kinds[slot] } else .empty;
+        return if (entry.slot) |slot| .{ .looks = &self.looks[slot] } else .empty;
     }
 
-    /// Remembers `position`, which must not be cached yet, and returns where to write its kinds
+    /// Remembers `position`, which must not be cached yet, and returns where to write its looks
     /// if it has `blocks`, or null.
-    fn put(self: *ChunkCache, position: Position, blocks: bool) ?*Kinds {
+    fn put(self: *ChunkCache, position: Position, blocks: bool) ?*Looks {
         var index: usize = undefined;
         var slot: ?u32 = null;
         if (blocks and self.freeCount == 0) {
@@ -221,7 +226,7 @@ const ChunkCache = struct {
         self.clock += 1;
         self.entries[index] = .{ .position = position, .slot = slot, .used = self.clock };
         self.byPosition.putAssumeCapacity(position, @intCast(index));
-        return if (slot) |s| &self.kinds[s] else null;
+        return if (slot) |s| &self.looks[s] else null;
     }
 
     /// The entry used longest ago, of those with blocks if `withBlocks`.
@@ -250,13 +255,13 @@ test ChunkCache {
     cache.put(a, true).?[0] = 7;
     cache.put(b, true).?[0] = 8;
     try std.testing.expect(cache.put(c, false) == null);
-    try std.testing.expectEqual(7, cache.get(a).kinds[0]);
+    try std.testing.expectEqual(7, cache.get(a).looks[0]);
     try std.testing.expect(cache.get(c) == .empty);
     // No slot is free for d's blocks: b, used longest ago of the chunks with blocks, makes room.
     cache.put(d, true).?[0] = 9;
     try std.testing.expect(cache.get(b) == .uncached);
-    try std.testing.expectEqual(9, cache.get(d).kinds[0]);
-    try std.testing.expectEqual(7, cache.get(a).kinds[0]);
+    try std.testing.expectEqual(9, cache.get(d).looks[0]);
+    try std.testing.expectEqual(7, cache.get(a).looks[0]);
     // Every entry is taken: c, now used longest ago, makes room for an empty chunk.
     try std.testing.expect(cache.put(b, false) == null);
     try std.testing.expect(cache.get(c) == .uncached);
@@ -351,6 +356,137 @@ test faces {
 /// Each face's light, in 256ths.
 const light = std.EnumArray(Face, u16).init(.{ .none = 0, .top = 256, .south = 208, .east = 176 });
 
+/// Each map type's three face colours at each height in the relief style:
+/// `(mapType * heights.world + y) * 3`, top, south, east.
+fn reliefColours(allocator: std.mem.Allocator, palette: *const world.Palette, heights: world.Heights) ![]u32 {
+    const types = std.enums.values(world.MapType);
+    const colours = try allocator.alloc(u32, types.len * heights.world * 3);
+    const shades: relief.Heights = .of(heights);
+    for (types) |mapType| for (0..heights.world) |y| {
+        const base = palette.colours.get(mapType);
+        const colour = if (mapType.isLiquid()) relief.liquidColour(base, 0) else relief.groundColour(palette, base, @intCast(y), shades, 0);
+        const at = (@backingInt(mapType) * heights.world + y) * 3;
+        colours[at] = lit(colour, light.get(.top));
+        colours[at + 1] = lit(colour, light.get(.south));
+        colours[at + 2] = lit(colour, light.get(.east));
+    };
+    return colours;
+}
+
+/// A colour's top, south and east faces, lit.
+fn faceColours(colour: world.Rgb) [3]u32 {
+    const pixel = tiles.rgba(colour[0], colour[1], colour[2], 255);
+    return .{ lit(pixel, light.get(.top)), lit(pixel, light.get(.south)), lit(pixel, light.get(.east)) };
+}
+
+/// A block's square drawn in its textures, its faces lit, and transparent where none is.
+const Picture = [blockWidth * blockWidth]u32;
+
+/// Points sampled across and down each pixel of a picture.
+const samples = 2;
+
+/// Draws `cube` in its textures: each pixel is the average of its faces' texels under it, the
+/// tinted layer drawn over the plain one. A pixel over only transparent texels is `fallback`.
+fn pictureOf(cube: *const world.CubeFaces, fallback: world.Rgb) Picture {
+    var out: Picture = undefined;
+    for (0..blockWidth) |row| for (0..blockWidth) |column| {
+        const p = row * blockWidth + column;
+        const face = faces[row][column];
+        const layers = switch (face) {
+            .none => {
+                out[p] = tiles.transparent;
+                continue;
+            },
+            .top => cube.up,
+            .south => cube.south,
+            .east => cube.east,
+        };
+        var sum: [4]u32 = @splat(0);
+        for (0..samples) |sy| for (0..samples) |sx| {
+            const x = @as(f32, @floatFromInt(column)) + (@as(f32, @floatFromInt(sx)) + 0.5) / samples;
+            const y = @as(f32, @floatFromInt(row)) + (@as(f32, @floatFromInt(sy)) + 0.5) / samples;
+            const u, const v = textureCoordinates(face, x, y);
+            var texel: [4]u8 = if (layers.plain) |image| texelAt(image, u, v) else @splat(0);
+            if (layers.tinted) |image| texel = over(texelAt(image, u, v), texel);
+            for (0..3) |c| sum[c] += @as(u32, texel[c]) * texel[3];
+            sum[3] += texel[3];
+        };
+        const colour: world.Rgb = if (sum[3] == 0) fallback else .{
+            @intCast(sum[0] / sum[3]),
+            @intCast(sum[1] / sum[3]),
+            @intCast(sum[2] / sum[3]),
+        };
+        out[p] = lit(tiles.rgba(colour[0], colour[1], colour[2], 255), light.get(face));
+    };
+    return out;
+}
+
+/// Where a point in a block's square falls on the texture of the face it's on: across and down
+/// it, each from 0 to 1. A point at (x, y, z) in the world, block (0, 0, 0) being the cube from 0
+/// to 1, is drawn at ((x − z + 1) · `across`, (x + z) · `down` − (y − 1) · `below`) in its square.
+fn textureCoordinates(face: Face, x: f32, y: f32) [2]f32 {
+    const a: f32 = across;
+    const d: f32 = down;
+    const b: f32 = below;
+    const coordinates: [2]f32 = switch (face) {
+        .none => unreachable,
+        // At height 1, with north up.
+        .top => .{ (x / a - 1 + y / d) / 2, (y / d - x / a + 1) / 2 },
+        // At z = 1, with west on the left.
+        .south => .{ x / a, 1 - ((x / a + 1) * d + b - y) / b },
+        // At x = 1, with south on the left.
+        .east => .{ x / a - 1, 1 - ((3 - x / a) * d + b - y) / b },
+    };
+    return .{ std.math.clamp(coordinates[0], 0, 1), std.math.clamp(coordinates[1], 0, 1) };
+}
+
+test textureCoordinates {
+    const w: f32 = blockWidth;
+    // Each face's corners: the top's highest is its texture's top left (north-west), and its
+    // leftmost the bottom left (south-west).
+    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.top, w / 2, 0));
+    try std.testing.expectEqual([2]f32{ 0, 1 }, textureCoordinates(.top, 0, w / 4));
+    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.top, w / 2, w / 2));
+    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.south, 0, w / 4));
+    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.south, w / 2, w));
+    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.east, w / 2, w / 2));
+    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.east, w, w * 3 / 4));
+}
+
+/// The texel at (u, v), each from 0 to 1.
+fn texelAt(image: *const world.Image, u: f32, v: f32) [4]u8 {
+    const x: usize = @min(image.width - 1, @as(usize, @intFromFloat(u * @as(f32, @floatFromInt(image.width)))));
+    const y: usize = @min(image.height - 1, @as(usize, @intFromFloat(v * @as(f32, @floatFromInt(image.height)))));
+    return image.pixels[y * image.width + x];
+}
+
+/// `top` drawn over `under` by its opacity.
+fn over(top: [4]u8, under: [4]u8) [4]u8 {
+    const a: u32 = top[3];
+    const shown: u32 = @as(u32, under[3]) * (255 - a) / 255;
+    const alpha = a + shown;
+    if (alpha == 0) return @splat(0);
+    var out: [4]u8 = undefined;
+    for (0..3) |c| out[c] = @intCast((@as(u32, top[c]) * a + @as(u32, under[c]) * shown) / alpha);
+    out[3] = @intCast(alpha);
+    return out;
+}
+
+test pictureOf {
+    const red: [4][4]u8 = @splat(.{ 200, 0, 0, 255 });
+    const grass = [_][4]u8{ .{ 0, 100, 0, 255 }, .{ 0, 100, 0, 255 }, .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 } };
+    const soil: world.Image = .{ .width = 2, .height = 2, .pixels = &red };
+    const fringe: world.Image = .{ .width = 2, .height = 2, .pixels = &grass };
+    const grassy: world.CubeFaces.Face = .{ .plain = &soil, .tinted = &fringe };
+    const picture = pictureOf(&.{ .up = .{ .plain = &soil }, .south = grassy, .east = grassy }, .{ 1, 2, 3 });
+    const w = blockWidth;
+    try std.testing.expectEqual(tiles.transparent, picture[0]);
+    try std.testing.expectEqual(faceColours(.{ 200, 0, 0 })[0], picture[(w / 4) * w + w / 2]);
+    // The sides' top half is the fringe over the soil, their bottom half the soil.
+    try std.testing.expectEqual(faceColours(.{ 0, 100, 0 })[1], picture[(w * 3 / 8) * w + w / 4]);
+    try std.testing.expectEqual(faceColours(.{ 200, 0, 0 })[2], picture[(w * 3 / 4) * w + w * 3 / 4]);
+}
+
 /// What every worker shares, read-only while they draw, and their totals once they're done.
 fn View(comptime Source: type) type {
     return struct {
@@ -358,39 +494,102 @@ fn View(comptime Source: type) type {
         pub const name = folder;
 
         source: *const Source,
-        /// How each block ID is drawn: 0 not at all, otherwise its map type + 1.
-        kinds: []u8,
-        /// Each map type's three face colours at each height: `(mapType * height + y) * 3`, top,
-        /// south, east.
+        /// How each block ID is drawn: 0 not at all, otherwise its look's index in `looks` + 1.
+        blockLooks: []u16,
+        looks: []Look,
+        /// In the `relief` style, each map type's three face colours at each height:
+        /// `(mapType * height + y) * 3`, top, south, east.
         colours: []u32,
+        pictures: []Picture,
         height: u16,
         chunksRead: usize = 0,
 
-        fn init(allocator: std.mem.Allocator, source: *const Source, palette: *const world.Palette) !Self {
-            const kinds = try allocator.alloc(u8, source.blockCount());
-            errdefer allocator.free(kinds);
-            for (kinds, 0..) |*kind, id| {
-                const mapType = source.mapType(@intCast(id));
-                kind.* = if (!source.isVisible(@intCast(id)) or mapType == .plant) 0 else @backingInt(mapType) + 1;
-            }
+        /// How a block is drawn.
+        const Look = union(enum) {
+            /// In its map type's relief colours, which change with height (`colours`).
+            relief: world.MapType,
+            /// Each face in one colour: top, south and east.
+            colours: [3]u32,
+            /// In its textures: the picture's index in `pictures`.
+            picture: u32,
+        };
+
+        fn init(allocator: std.mem.Allocator, source: *const Source, style: Style) !Self {
             const heights = source.heights();
-            const types = std.enums.values(world.MapType);
-            const colours = try allocator.alloc(u32, types.len * heights.world * 3);
-            const shades: relief.Heights = .of(heights);
-            for (types) |mapType| for (0..heights.world) |y| {
-                const base = palette.colours.get(mapType);
-                const colour = if (mapType.isLiquid()) relief.liquidColour(base, 0) else relief.groundColour(palette, base, @intCast(y), shades, 0);
-                const at = (@backingInt(mapType) * heights.world + y) * 3;
-                colours[at] = lit(colour, light.get(.top));
-                colours[at + 1] = lit(colour, light.get(.south));
-                colours[at + 2] = lit(colour, light.get(.east));
+            const blockLooks = try allocator.alloc(u16, source.blockCount());
+            errdefer allocator.free(blockLooks);
+            var looks: std.ArrayList(Look) = .empty;
+            errdefer looks.deinit(allocator);
+            var pictures: std.ArrayList(Picture) = .empty;
+            errdefer pictures.deinit(allocator);
+            var colours: []u32 = &.{};
+            errdefer allocator.free(colours);
+            switch (style) {
+                .relief => |palette| {
+                    colours = try reliefColours(allocator, &palette, heights);
+                    for (std.enums.values(world.MapType)) |mapType| try looks.append(allocator, .{ .relief = mapType });
+                    for (blockLooks, 0..) |*look, id| {
+                        look.* = if (isDrawn(source, @intCast(id))) @backingInt(source.mapType(@intCast(id))) + 1 else 0;
+                    }
+                },
+                .game => |gameStyle| {
+                    if (gameStyle != null) return error.UnknownStyle;
+                    // Blocks that look the same share a look.
+                    var byFaces: std.AutoHashMapUnmanaged(world.CubeFaces, u16) = .empty;
+                    defer byFaces.deinit(allocator);
+                    var byColour: std.AutoHashMapUnmanaged(world.Rgb, u16) = .empty;
+                    defer byColour.deinit(allocator);
+                    for (blockLooks, 0..) |*look, i| {
+                        const id: i32 = @intCast(i);
+                        if (!isDrawn(source, id)) {
+                            look.* = 0;
+                            continue;
+                        }
+                        const colour = source.colour(id);
+                        if (source.cubeFaces(id)) |cube| {
+                            const entry = try byFaces.getOrPut(allocator, cube.*);
+                            if (!entry.found_existing) {
+                                entry.value_ptr.* = try addLook(allocator, &looks, .{ .picture = @intCast(pictures.items.len) });
+                                try pictures.append(allocator, pictureOf(cube, colour));
+                            }
+                            look.* = entry.value_ptr.*;
+                        } else {
+                            const entry = try byColour.getOrPut(allocator, colour);
+                            if (!entry.found_existing) entry.value_ptr.* = try addLook(allocator, &looks, .{ .colours = faceColours(colour) });
+                            look.* = entry.value_ptr.*;
+                        }
+                    }
+                },
+            }
+            const lookList = try looks.toOwnedSlice(allocator);
+            errdefer allocator.free(lookList);
+            return .{
+                .source = source,
+                .blockLooks = blockLooks,
+                .looks = lookList,
+                .colours = colours,
+                .pictures = try pictures.toOwnedSlice(allocator),
+                .height = heights.world,
             };
-            return .{ .source = source, .kinds = kinds, .colours = colours, .height = heights.world };
         }
 
         fn deinit(self: Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.pictures);
             allocator.free(self.colours);
-            allocator.free(self.kinds);
+            allocator.free(self.looks);
+            allocator.free(self.blockLooks);
+        }
+
+        /// Plants aren't drawn, nor blocks not seen in play.
+        fn isDrawn(source: *const Source, id: i32) bool {
+            return source.isVisible(id) and source.mapType(id) != .plant;
+        }
+
+        /// Adds `look` and returns its number in a chunk's looks, its index + 1.
+        fn addLook(allocator: std.mem.Allocator, looks: *std.ArrayList(Look), look: Look) !u16 {
+            if (looks.items.len >= std.math.maxInt(u16)) return error.TooManyLooks;
+            try looks.append(allocator, look);
+            return @intCast(looks.items.len);
         }
 
         pub fn collect(self: *Self, worker: *const Worker) void {
@@ -401,10 +600,10 @@ fn View(comptime Source: type) type {
         pub const Worker = struct {
             view: *const Self,
             reader: Source.Reader,
-            /// Where a chunk is read into, and its blocks' kinds worked out, before they go into
+            /// Where a chunk is read into, and its blocks' looks worked out, before they go into
             /// the cache.
             chunk: *world.Chunk,
-            kinds: *ChunkCache.Kinds,
+            looks: *ChunkCache.Looks,
             cache: ChunkCache,
             /// The depth of what each pixel shows: x + y + z of its block, larger nearer.
             depth: *[tiles.size * tiles.size]i32,
@@ -414,18 +613,18 @@ fn View(comptime Source: type) type {
                 errdefer reader.deinit(allocator);
                 const chunk = try allocator.create(world.Chunk);
                 errdefer allocator.destroy(chunk);
-                const kinds = try allocator.create(ChunkCache.Kinds);
-                errdefer allocator.destroy(kinds);
+                const looks = try allocator.create(ChunkCache.Looks);
+                errdefer allocator.destroy(looks);
                 var cache: ChunkCache = try .init(allocator, ChunkCache.defaultChunks, ChunkCache.defaultChunksWithBlocks);
                 errdefer cache.deinit(allocator);
                 const depth = try allocator.create([tiles.size * tiles.size]i32);
-                return .{ .view = view, .reader = reader, .chunk = chunk, .kinds = kinds, .cache = cache, .depth = depth };
+                return .{ .view = view, .reader = reader, .chunk = chunk, .looks = looks, .cache = cache, .depth = depth };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
                 allocator.destroy(self.depth);
                 self.cache.deinit(allocator);
-                allocator.destroy(self.kinds);
+                allocator.destroy(self.looks);
                 allocator.destroy(self.chunk);
                 self.reader.deinit(allocator);
             }
@@ -446,15 +645,26 @@ fn View(comptime Source: type) type {
                         if (@mod(u + v, 2) != 0) continue;
                         const line: Line = .{ .u = u, .v = v };
                         const block = try self.nearestBlock(line) orelse continue;
-                        const at = ((@as(usize, block.kind) - 1) * self.view.height + @as(usize, @intCast(block.y))) * 3;
+                        const paint: Paint = switch (self.view.looks[block.look - 1]) {
+                            .relief => |mapType| relief: {
+                                const at = (@as(usize, @backingInt(mapType)) * self.view.height + @as(usize, @intCast(block.y))) * 3;
+                                break :relief .{ .faces = self.view.colours[at..][0..3] };
+                            },
+                            .colours => |*colours| .{ .faces = colours },
+                            .picture => |i| .{ .picture = &self.view.pictures[i] },
+                        };
                         const square = line.square();
-                        if (self.drawBlock(square.left - x0, square.top - y0, @intCast(block.x + block.y + block.z), self.view.colours[at..][0..3], pixels)) any = true;
+                        if (self.drawBlock(square.left - x0, square.top - y0, @intCast(block.x + block.y + block.z), paint, pixels)) any = true;
                     }
                 }
                 return any;
             }
 
-            const Block = struct { x: i64, y: i64, z: i64, kind: u8 };
+            const Block = struct { x: i64, y: i64, z: i64, look: u16 };
+
+            /// What a block's pixels come from: a colour for each face, top, south and east, or
+            /// a picture.
+            const Paint = union(enum) { faces: *const [3]u32, picture: *const Picture };
 
             /// The nearest drawn block on a line of sight: following it from the top of the world
             /// down, the first one, or null if none is. A chunk without one is passed in one step.
@@ -470,12 +680,12 @@ fn View(comptime Source: type) type {
                     var lz: usize = @intCast(z - cz * side);
                     // The line's blocks in this chunk, from here until it leaves it.
                     const steps = @min(lx, ly, lz) + 1;
-                    if (try self.chunkKinds(cx, cy, cz)) |kinds| {
+                    if (try self.chunkLooks(cx, cy, cz)) |looks| {
                         for (0..steps) |step| {
-                            const kind = kinds[(ly * side + lz) * side + lx];
-                            if (kind != 0) {
+                            const look = looks[(ly * side + lz) * side + lx];
+                            if (look != 0) {
                                 const back: i64 = @intCast(step);
-                                return .{ .x = x - back, .y = y - back, .z = z - back, .kind = kind };
+                                return .{ .x = x - back, .y = y - back, .z = z - back, .look = look };
                             }
                             lx -%= 1;
                             ly -%= 1;
@@ -489,26 +699,26 @@ fn View(comptime Source: type) type {
 
             /// How each block of chunk (x, y, z) is drawn, from the cache or else read; null for a
             /// chunk with nothing to draw.
-            fn chunkKinds(self: *Worker, x: i64, y: i64, z: i64) !?*const ChunkCache.Kinds {
+            fn chunkLooks(self: *Worker, x: i64, y: i64, z: i64) !?*const ChunkCache.Looks {
                 const limit = std.math.maxInt(i32);
                 if (@abs(x) > limit or @abs(y) > limit or @abs(z) > limit) return null;
                 const position: ChunkCache.Position = .{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
                 switch (self.cache.get(position)) {
                     .empty => return null,
-                    .kinds => |kinds| return kinds,
+                    .looks => |looks| return looks,
                     .uncached => {},
                 }
                 if (!try self.reader.readChunk(position.x, position.y, position.z, self.chunk)) {
                     _ = self.cache.put(position, false);
                     return null;
                 }
-                const byId = self.view.kinds;
-                var drawn: u8 = 0;
-                for (self.kinds, self.chunk.solid, self.chunk.liquid) |*kind, solid, liquid| {
-                    const solidKind = if (solid >= 0 and solid < byId.len) byId[@intCast(solid)] else 0;
-                    const liquidKind = if (liquid >= 0 and liquid < byId.len) byId[@intCast(liquid)] else 0;
-                    kind.* = if (solidKind != 0) solidKind else liquidKind;
-                    drawn |= kind.*;
+                const byId = self.view.blockLooks;
+                var drawn: u16 = 0;
+                for (self.looks, self.chunk.solid, self.chunk.liquid) |*look, solid, liquid| {
+                    const solidLook = if (solid >= 0 and solid < byId.len) byId[@intCast(solid)] else 0;
+                    const liquidLook = if (liquid >= 0 and liquid < byId.len) byId[@intCast(liquid)] else 0;
+                    look.* = if (solidLook != 0) solidLook else liquidLook;
+                    drawn |= look.*;
                 }
                 // A chunk of only air, plants or invisible blocks, such as those in the sky, is kept
                 // as having nothing to draw: lines pass it in one step, and it takes no slot.
@@ -516,27 +726,32 @@ fn View(comptime Source: type) type {
                     _ = self.cache.put(position, false);
                     return null;
                 }
-                const kinds = self.cache.put(position, true).?;
-                kinds.* = self.kinds.*;
-                return kinds;
+                const looks = self.cache.put(position, true).?;
+                looks.* = self.looks.*;
+                return looks;
             }
 
-            fn drawBlock(self: *Worker, left: i64, top: i64, depth: i32, colours: *const [3]u32, pixels: *tiles.Pixels) bool {
+            fn drawBlock(self: *Worker, left: i64, top: i64, depth: i32, paint: Paint, pixels: *tiles.Pixels) bool {
                 var any = false;
-                for (0..blockWidth) |row| {
-                    const py = top + @as(i64, @intCast(row));
-                    if (py < 0 or py >= tiles.size) continue;
-                    for (0..blockWidth) |column| {
-                        const px = left + @as(i64, @intCast(column));
-                        if (px < 0 or px >= tiles.size) continue;
-                        const face = faces[row][column];
-                        if (face == .none) continue;
-                        const p: usize = @intCast(py * tiles.size + px);
-                        if (depth <= self.depth[p]) continue;
-                        self.depth[p] = depth;
-                        pixels[p] = colours[@backingInt(face) - 1];
-                        any = true;
-                    }
+                switch (paint) {
+                    inline else => |from, kind| for (0..blockWidth) |row| {
+                        const py = top + @as(i64, @intCast(row));
+                        if (py < 0 or py >= tiles.size) continue;
+                        for (0..blockWidth) |column| {
+                            const px = left + @as(i64, @intCast(column));
+                            if (px < 0 or px >= tiles.size) continue;
+                            const face = faces[row][column];
+                            if (face == .none) continue;
+                            const p: usize = @intCast(py * tiles.size + px);
+                            if (depth <= self.depth[p]) continue;
+                            self.depth[p] = depth;
+                            pixels[p] = switch (kind) {
+                                .faces => from[@backingInt(face) - 1],
+                                .picture => from[row * blockWidth + column],
+                            };
+                            any = true;
+                        }
+                    },
                 }
                 return any;
             }
