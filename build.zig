@@ -101,6 +101,29 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // libjxl's fast lossless encoder alone, which needs nothing else of libjxl when standalone.
+    const libjxl = b.dependency("libjxl", .{});
+    const jxl_lib = b.addLibrary(.{
+        .name = "jxl_fast_lossless",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = .ReleaseFast,
+            .link_libcpp = true,
+        }),
+    });
+    jxl_lib.root_module.addCSourceFile(.{
+        .file = libjxl.path("lib/jxl/enc_fast_lossless.cc"),
+        .flags = &.{ "-std=c++17", "-DFJXL_STANDALONE=1" },
+    });
+    jxl_lib.root_module.addIncludePath(libjxl.path("."));
+
+    const jxl_mod = b.createModule(.{
+        .root_source_file = b.path("lib/jxl/jxl.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    jxl_mod.linkLibrary(jxl_lib);
+
     const options = b.addOptions();
     options.addOption([]const u8, "version", @import("build.zig.zon").version);
     const options_mod = options.createModule();
@@ -220,7 +243,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
-        args_mod,    sqlite_mod,   protobuf_mod, png_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
+        args_mod,    sqlite_mod,   protobuf_mod, png_mod, jxl_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
         console_mod, renderer_mod, vs_mod,       cli_mod,
     };
     for (tested) |module| {
