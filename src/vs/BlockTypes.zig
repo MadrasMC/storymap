@@ -325,11 +325,14 @@ test fullCube {
 
 /// From its `drawtype`, which is `json` without one: a JSON block whose shape is the game's
 /// default, the plain cube, unturned, is drawn as a cube too (vsapi `Block.DrawType`,
-/// `Block.DefaultCubeShape`), and so is one whose shape at a distance holds a cube.
+/// `Block.DefaultCubeShape`), and so is one whose shape at a distance holds a cube, and a
+/// liquid.
 fn drawingOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes: *Shapes) !Drawing {
     const drawtype = if (try property(arena, json, "drawtype", variant)) |d| d.asString() orelse "json" else "json";
     if (std.ascii.eqlIgnoreCase(drawtype, "cube")) return .cube;
     if (std.ascii.eqlIgnoreCase(drawtype, "topsoil")) return .topSoil;
+    // Liquids are a cube in their `all` texture, if lower where they flow, and see-through.
+    if (std.ascii.eqlIgnoreCase(drawtype, "liquid")) return .cube;
     if (!std.ascii.eqlIgnoreCase(drawtype, "json")) return .other;
     const shape = try property(arena, json, "shape", variant) orelse return .cube;
     if (try isCubeShape(arena, shape)) return .cube;
@@ -924,11 +927,16 @@ test "the cube a block is drawn as" {
     try std.testing.expectEqualStrings("seasonalBirch", branchy.seasonColorMap.?);
     try std.testing.expectEqualStrings("game:small", branchy.cube.?.up.tinted.?.base);
 
+    // Water: its `all` texture on every face, tinted, and not its second one.
+    const water = (try describe(a, try Json.parse(a, "{ drawtype: 'liquid', climateColorMap: 'climateWaterTint', textures: { all: { base: 'block/liquid/water' }, specialSecondTexture: { base: 'block/liquid/water2' } } }"), rock, &shapes)).cube.?;
+    try std.testing.expectEqualStrings("game:block/liquid/water", water.up.tinted.?.base);
+    try std.testing.expectEqual(null, water.up.plain);
+
     // Not cubes: another shape, a turned cube, another drawtype.
     for ([_][]const u8{
         "{ shape: { base: 'block/wood/log/noresin1' }, textures: { all: { base: 'x' } } }",
         "{ shape: { base: 'game:block/basic/cube', rotateY: 90 }, textures: { all: { base: 'x' } } }",
-        "{ drawtype: 'liquid', textures: { all: { base: 'x' } } }",
+        "{ drawtype: 'surfacelayer', textures: { all: { base: 'x' } } }",
     }) |json| try std.testing.expectEqual(null, (try describe(a, try Json.parse(a, json), rock, &shapes)).cube);
 }
 
