@@ -19,6 +19,7 @@ const Io = std.Io;
 const world = @import("world");
 const tiles = @import("tiles");
 const Style = @import("theme").Style;
+const console = @import("console");
 const Rgb = Style.Rgb;
 const relief = @import("relief.zig");
 
@@ -71,7 +72,7 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
         };
         return list;
     }
-    std.debug.print("{} tiles in {} levels, surface y {}..{}\n", .{ rendered.tiles, rendered.levels, view.lowest, view.highest });
+    console.log("{} tiles in {} levels, surface y {}..{}", .{ rendered.tiles, rendered.levels, view.lowest, view.highest });
     printSurfaceBlocks(Source, source, view.blockCounts);
     return list;
 }
@@ -233,7 +234,9 @@ fn printSurfaceBlocks(comptime Source: type, source: *const Source, blockCounts:
     if (columnCount == 0) return;
     var shown: [5]usize = undefined;
     var count: usize = 0;
-    std.debug.print("most common surface blocks:", .{});
+    var buffer: [512]u8 = undefined;
+    // A line too long for the buffer is cut short.
+    var line: std.Io.Writer = .fixed(&buffer);
     while (count < shown.len) : (count += 1) {
         // The most common block not shown yet.
         var best: ?usize = null;
@@ -246,10 +249,10 @@ fn printSurfaceBlocks(comptime Source: type, source: *const Source, blockCounts:
         const percent = blockCounts[id] * 100 / columnCount;
         const separator = if (count == 0) "" else ",";
         if (source.blockName(@intCast(id))) |code| {
-            std.debug.print("{s} {s} {}%", .{ separator, code, percent });
+            line.print("{s} {s} {}%", .{ separator, code, percent }) catch break;
         } else {
-            std.debug.print("{s} #{} {}%", .{ separator, id, percent });
+            line.print("{s} #{} {}%", .{ separator, id, percent }) catch break;
         }
     }
-    std.debug.print("\n", .{});
+    console.log("most common surface blocks:{s}", .{line.buffered()});
 }

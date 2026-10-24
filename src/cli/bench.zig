@@ -38,10 +38,10 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const withIsometric = parsed.flag("isometric");
     const dbPath = parsed.positional("save-file").?;
     const runs = if (parsed.positional("runs")) |text| std.fmt.parseInt(usize, text, 10) catch 0 else 5;
-    if (runs == 0) fail("storymap: `[runs]`: invalid count {s}. expected: a whole number above 0\n", .{parsed.positional("runs").?});
+    if (runs == 0) console.fail("`[runs]`: invalid count {s}. expected: a whole number above 0", .{parsed.positional("runs").?});
     var folder: ?Io.Dir = null;
     if (parsed.value("folder")) |path| folder = Io.Dir.cwd().createDirPathOpen(io, path, .{}) catch |err|
-        fail("storymap: {s}: could not create ({s})\n", .{ path, @errorName(err) });
+        console.fail("{s}: could not create ({s})", .{ path, @errorName(err) });
     defer if (folder) |dir| dir.close(io);
 
     const samples = try allocator.alloc(Sample, runs);
@@ -78,20 +78,20 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const area: f64 = @floatFromInt(counts.topdown.area);
 
     if (!json) {
-        std.debug.print("storymap {s}, {s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs{s}\n", .{
+        try console.print(io, "storymap {s}, {s}: {} chunks ({} read for the map), {} tiles, {} threads, {s} build, median of {} runs{s}\n", .{
             build_options.version, world, chunks, counts.topdown.chunksRead, counts.topdown.tiles, threads, @tagName(builtin.mode), runs, if (folder != null) ", tiles written" else "",
         });
-        printStage("open and block list", seconds.open, null);
-        printStage("decode every chunk", seconds.decode, chunks);
-        printStage("tiles", seconds.tiles, chunks);
-        if (isometricResult) |result| printStage("isometric tiles", result.seconds, null);
-        printStage("end to end", seconds.total, chunks);
-        printWork("top-down", work);
+        try printStage(io, "open and block list", seconds.open, null);
+        try printStage(io, "decode every chunk", seconds.decode, chunks);
+        try printStage(io, "tiles", seconds.tiles, chunks);
+        if (isometricResult) |result| try printStage(io, "isometric tiles", result.seconds, null);
+        try printStage(io, "end to end", seconds.total, chunks);
+        try printWork(io, "top-down", work);
         if (isometricResult) |result| {
-            printWork("isometric", result.workerSeconds);
-            std.debug.print("  isometric: {} tiles in {} levels, {} chunks read\n", .{ result.tiles, result.levels, result.chunksRead });
+            try printWork(io, "isometric", result.workerSeconds);
+            try console.print(io, "  isometric: {} tiles in {} levels, {} chunks read\n", .{ result.tiles, result.levels, result.chunksRead });
         }
-        std.debug.print("  map area {d:.2} km², drawn at {d:.1} km²/s end to end\n", .{ area / 1e6, area / 1e6 / seconds.total });
+        try console.print(io, "  map area {d:.2} km², drawn at {d:.1} km²/s end to end\n", .{ area / 1e6, area / 1e6 / seconds.total });
         return;
     }
 
@@ -114,10 +114,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .workerSeconds = work,
         .isometric = isometricResult,
     };
-    var buffer: [2048]u8 = undefined;
-    var stdout = Io.File.stdout().writerStreaming(io, &buffer);
-    try stdout.interface.print("{f}\n", .{std.json.fmt(result, .{ .emit_null_optional_fields = false })});
-    try stdout.interface.flush();
+    try console.print(io, "{f}\n", .{std.json.fmt(result, .{ .emit_null_optional_fields = false })});
 }
 
 /// One render's times and counts.
@@ -159,8 +156,8 @@ fn workerSeconds(allocator: std.mem.Allocator, samples: []const Sample, comptime
     return out;
 }
 
-fn printWork(view: []const u8, work: Result.WorkerSeconds) void {
-    std.debug.print("  workers' time, {s}: draw {d:.2} s, filter {d:.2} s, compress {d:.2} s, write {d:.2} s, shrink {d:.2} s\n", .{ view, work.draw, work.filter, work.compress, work.write, work.shrink });
+fn printWork(io: Io, view: []const u8, work: Result.WorkerSeconds) !void {
+    try console.print(io, "  workers' time, {s}: draw {d:.2} s, filter {d:.2} s, compress {d:.2} s, write {d:.2} s, shrink {d:.2} s\n", .{ view, work.draw, work.filter, work.compress, work.write, work.shrink });
 }
 
 /// The results `--json` prints, for scripts comparing versions. Keys keep their names and
@@ -273,10 +270,10 @@ fn toSeconds(duration: Io.Duration) f64 {
     return @as(f64, @floatFromInt(duration.nanoseconds)) / std.time.ns_per_s;
 }
 
-fn printStage(name: []const u8, seconds: f64, chunks: ?usize) void {
-    std.debug.print("  {s:<22} {d:>7.3} s", .{ name, seconds });
-    if (chunks) |n| std.debug.print("  {d:>9.0} chunks/s", .{@as(f64, @floatFromInt(n)) / seconds});
-    std.debug.print("\n", .{});
+fn printStage(io: Io, name: []const u8, seconds: f64, chunks: ?usize) !void {
+    try console.print(io, "  {s:<22} {d:>7.3} s", .{ name, seconds });
+    if (chunks) |n| try console.print(io, "  {d:>9.0} chunks/s", .{@as(f64, @floatFromInt(n)) / seconds});
+    try console.print(io, "\n", .{});
 }
 
 /// Returns the number of chunks in the save.
@@ -342,11 +339,6 @@ fn median(times: []Io.Duration) Io.Duration {
         }
     }.lessThan);
     return times[times.len / 2];
-}
-
-fn fail(comptime format: []const u8, values: anytype) noreturn {
-    std.debug.print(format, values);
-    console.exit(2);
 }
 
 test median {

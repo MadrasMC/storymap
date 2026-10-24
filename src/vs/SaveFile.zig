@@ -5,6 +5,7 @@ const SaveFile = @This();
 const std = @import("std");
 const DB = @import("sqlite");
 const tiles = @import("tiles");
+const console = @import("console");
 const world = @import("world");
 const Chunk = @import("Chunk.zig");
 const Compression = @import("Compression.zig");
@@ -515,10 +516,10 @@ pub const Reader = struct {
             // A finished column whose heights can't be read is scanned instead. One whose
             // stage can't be read either isn't drawn.
             if (stored.stage != .done) {
-                if (stored.stage == .none) std.log.warn("skipped chunk column ({}, {}): could not read ({s})", .{ cx, cz, @errorName(err) });
+                if (stored.stage == .none) console.warn("skipped chunk column ({}, {}): could not read ({s})", .{ cx, cz, @errorName(err) });
                 return;
             }
-            std.log.warn("scanned chunk column ({}, {}) for heights: could not read its stored ones ({s})", .{ cx, cz, @errorName(err) });
+            console.warn("scanned chunk column ({}, {}) for heights: could not read its stored ones ({s})", .{ cx, cz, @errorName(err) });
             @memset(&stored.rainHeight, MapChunk.unset);
         };
         if (stored.stage != .done) return;
@@ -699,7 +700,7 @@ const Span = struct {
 fn decodeOrWarn(decoder: *Chunk.Decoder, chunk: *Chunk, position: u64, data: []const u8) !void {
     decoder.decode(chunk, position, data) catch |err| {
         const pos = chunk.position;
-        std.log.warn("skipped chunk ({}, {}, {}): could not read ({s})", .{ pos.x, pos.y, pos.z, @errorName(err) });
+        console.warn("skipped chunk ({}, {}, {}): could not read ({s})", .{ pos.x, pos.y, pos.z, @errorName(err) });
         return err;
     };
 }

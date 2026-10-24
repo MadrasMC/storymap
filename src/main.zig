@@ -10,7 +10,7 @@ const render = cli.render;
 const prepare = cli.prepare;
 const bench = cli.bench;
 
-pub const std_options: std.Options = .{ .logFn = console.log };
+pub const std_options: std.Options = .{ .logFn = console.logFn };
 
 const program: args.Program = .{ .name = "storymap", .header = "storymap " ++ build_options.version };
 
@@ -29,8 +29,8 @@ pub fn main(init: std.process.Init) !void {
     const given = try args.ofProcess(init.arena.allocator(), init.minimal.args);
     args.dispatch(program, commands, init.io, init, given, &problem) catch |err| switch (err) {
         error.InvalidArguments => {
-            if (problem.kind != .missingArguments) std.debug.print("storymap: {f}\n\n", .{problem});
-            std.debug.print("{s}", .{problem.usage});
+            if (problem.kind != .missingArguments) console.err("{f}\n", .{problem});
+            console.log("{s}", .{std.mem.trimEnd(u8, problem.usage, "\n")});
             console.exit(2);
         },
         else => return err,
@@ -38,8 +38,5 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn printVersion(init: std.process.Init) !void {
-    var buffer: [64]u8 = undefined;
-    var stdout = std.Io.File.stdout().writerStreaming(init.io, &buffer);
-    try stdout.interface.print("{s}\n", .{program.header});
-    try stdout.interface.flush();
+    try console.print(init.io, "{s}\n", .{program.header});
 }

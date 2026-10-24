@@ -3,6 +3,7 @@ const Chunk = @This();
 
 const std = @import("std");
 const ProtoBuf = @import("protobuf");
+const console = @import("console");
 const Compression = @import("Compression.zig");
 const BlockEntity = @import("BlockEntity.zig");
 
@@ -127,7 +128,7 @@ pub const Decoder = struct {
                             overLimit += 1;
                         } else {
                             const pos = chunk.position;
-                            std.log.warn("chunk ({}, {}, {}): skipping a block entity ({s})", .{ pos.x, pos.y, pos.z, @errorName(err) });
+                            console.warn("chunk ({}, {}, {}): skipping a block entity ({s})", .{ pos.x, pos.y, pos.z, @errorName(err) });
                         }
                         continue;
                     };
@@ -138,7 +139,7 @@ pub const Decoder = struct {
         }
         if (overLimit > 0) {
             const pos = chunk.position;
-            std.log.warn("chunk ({}, {}, {}): skipping {} block entities over the {} KiB limit", .{ pos.x, pos.y, pos.z, overLimit, self.blockEntityBuffer.len / 1024 });
+            console.warn("chunk ({}, {}, {}): skipping {} block entities over the {} KiB limit", .{ pos.x, pos.y, pos.z, overLimit, self.blockEntityBuffer.len / 1024 });
         }
         chunk.blockEntities = entities[0..found];
     }

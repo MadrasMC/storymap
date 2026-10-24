@@ -2,6 +2,7 @@
 //! the game does it (docs/rendering.md#block-codes).
 const std = @import("std");
 const Io = std.Io;
+const console = @import("console");
 const Assets = @import("Assets.zig");
 const Json = @import("Json.zig");
 const Wildcard = @import("Wildcard.zig");
@@ -126,7 +127,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
     for (try assets.list(arena, io, "blocktypes")) |name| {
         if (!std.mem.endsWith(u8, name.path, ".json")) continue;
         const blockType = expander.blockType(name) catch |err| {
-            std.log.warn("skipped block type {s}:{s}: could not read ({s})", .{ name.domain, name.path, @errorName(err) });
+            console.warn("skipped block type {s}:{s}: could not read ({s})", .{ name.domain, name.path, @errorName(err) });
             continue;
         };
         var warned = false;
@@ -143,7 +144,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                 else => look: {
                     // As in the game, a variant whose …ByType properties can't be resolved
                     // keeps the defaults.
-                    if (!warned) std.log.warn("{s}:{s}: could not resolve its …ByType properties ({s})", .{ name.domain, name.path, @errorName(err) });
+                    if (!warned) console.warn("{s}:{s}: could not resolve its …ByType properties ({s})", .{ name.domain, name.path, @errorName(err) });
                     warned = true;
                     break :look Look{ .material = defaultMaterial, .colorCode = defaultColorCode(defaultMaterial), .textures = .{} };
                 },
@@ -498,7 +499,7 @@ const Expander = struct {
                 const location = try Location.parse(arena, propertyName, Assets.gameDomain);
                 const key = try std.fmt.allocPrint(arena, "{s}:{s}", .{ location.domain, location.path });
                 const codeKey = self.properties.get(key) orelse {
-                    std.log.warn("{s}:{s}: unknown world property {s}", .{ name.domain, name.path, key });
+                    console.warn("{s}:{s}: unknown world property {s}", .{ name.domain, name.path, key });
                     break;
                 };
                 const typeName = groupCode orelse codeKey[std.mem.indexOfScalar(u8, codeKey, ':').? + 1 ..];
@@ -596,7 +597,7 @@ const Expander = struct {
 
 fn matchOrWarn(pattern: Location, code: Location, name: Assets.Name) bool {
     return pattern.matches(code) catch |err| {
-        std.log.warn("{s}:{s}: could not read variant pattern {s} ({s})", .{ name.domain, name.path, pattern.path, @errorName(err) });
+        console.warn("{s}:{s}: could not read variant pattern {s} ({s})", .{ name.domain, name.path, pattern.path, @errorName(err) });
         return false;
     };
 }

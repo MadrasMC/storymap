@@ -28,6 +28,7 @@ const std = @import("std");
 const Io = std.Io;
 const Dir = Io.Dir;
 const world = @import("world");
+const console = @import("console");
 const Assets = @import("Assets.zig");
 const BlockTypes = @import("BlockTypes.zig");
 const TextureColours = @import("TextureColours.zig");
@@ -279,7 +280,7 @@ fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets, fo
     const file = "config/colormaps.json";
     const bytes = try assets.read(arena, io, Assets.gameDomain, file) orelse return &.{};
     const json = Json.parse(arena, bytes) catch |err| {
-        std.log.warn("{s}: could not read ({s}); nothing will be tinted", .{ file, @errorName(err) });
+        console.warn("{s}: could not read ({s}); nothing will be tinted", .{ file, @errorName(err) });
         return &.{};
     };
     if (json != .array) return &.{};
@@ -292,7 +293,7 @@ fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets, fo
         const domain = if (colon) |c| base[0..c] else Assets.gameDomain;
         const path = try std.fmt.allocPrint(arena, "textures/{s}.png", .{if (colon) |c| base[c + 1 ..] else base});
         const png = try assets.read(arena, io, domain, path) orelse {
-            std.log.warn("colour map {s}: no image {s}:{s}", .{ code, domain, path });
+            console.warn("colour map {s}: no image {s}:{s}", .{ code, domain, path });
             continue;
         };
         const sub = try std.fmt.allocPrint(arena, "{s}/{s}.png", .{ colourMapFolder, code });

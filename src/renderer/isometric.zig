@@ -18,6 +18,7 @@ const std = @import("std");
 const Io = std.Io;
 const world = @import("world");
 const tiles = @import("tiles");
+const console = @import("console");
 const relief = @import("relief.zig");
 
 pub const folder = "isometric";
@@ -79,7 +80,7 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
         };
         return result;
     }
-    std.debug.print("isometric: {} tiles in {} levels, {} chunks read\n", .{ rendered.tiles, rendered.levels, view.chunksRead });
+    console.log("isometric: {} tiles in {} levels, {} chunks read", .{ rendered.tiles, rendered.levels, view.chunksRead });
     return result;
 }
 

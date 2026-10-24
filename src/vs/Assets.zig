@@ -9,6 +9,7 @@ const Assets = @This();
 
 const std = @import("std");
 const builtin = @import("builtin");
+const console = @import("console");
 const Io = std.Io;
 const Dir = Io.Dir;
 
@@ -76,7 +77,7 @@ pub fn open(allocator: std.mem.Allocator, io: Io, game: Dir, data: ?Dir) !Assets
     std.mem.sort([]const u8, names.items, {}, lessThan);
     for (names.items) |name| {
         self.addMod(io, mods, name) catch |err| {
-            std.log.warn("skipped mod {s}: could not read ({s})", .{ name, @errorName(err) });
+            console.warn("skipped mod {s}: could not read ({s})", .{ name, @errorName(err) });
         };
     }
     return self;

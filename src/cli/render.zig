@@ -43,7 +43,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const outPath = parsed.positional("folder") orelse "out";
     const themeName = parsed.value("theme") orelse "printed";
     const season: ?SaveFile.Season = if (parsed.value("season")) |name|
-        std.meta.stringToEnum(SaveFile.Season, name) orelse console.fail("`--season`: unknown season {s}. expected: spring, summer, fall, winter\n", .{name})
+        std.meta.stringToEnum(SaveFile.Season, name) orelse console.fail("`--season`: unknown season {s}. expected: spring, summer, fall, winter", .{name})
     else
         null;
     const folders: prepare.Folders = .{
@@ -53,39 +53,39 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     };
     const force = parsed.flag("prepare");
     const style: ?Style.Name = if (parsed.value("style")) |text|
-        Style.parseName(text) orelse console.fail("`--style`: unknown style {s}. expected: {s}\n", .{ text, styleNames })
+        Style.parseName(text) orelse console.fail("`--style`: unknown style {s}. expected: {s}", .{ text, styleNames })
     else
         null;
 
     var problem: Theme.Problem = .{};
     const theme = Theme.load(init.arena.allocator(), init.io, themeName, style, &problem) catch switch (problem.kind) {
-        .unreadable => console.fail("`--theme`: unknown theme {s} ({s}). expected: printed, plain, or a folder with theme.css and theme.js\n", .{ themeName, @errorName(problem.cause.?) }),
-        .stylesheetEndsItsElement => console.fail("{s}/theme.css: contains </style, which would end it early\n", .{themeName}),
-        .scriptEndsItsElement => console.fail("{s}/theme.js: contains </script, which would end it early\n", .{themeName}),
+        .unreadable => console.fail("`--theme`: unknown theme {s} ({s}). expected: printed, plain, or a folder with theme.css and theme.js", .{ themeName, @errorName(problem.cause.?) }),
+        .stylesheetEndsItsElement => console.fail("{s}/theme.css: contains </style, which would end it early", .{themeName}),
+        .scriptEndsItsElement => console.fail("{s}/theme.js: contains </script, which would end it early", .{themeName}),
         .invalidStyle => if (problem.style.line == 0)
-            console.fail("{s}/topdown/style.txt: {f}\n", .{ themeName, problem.style })
+            console.fail("{s}/topdown/style.txt: {f}", .{ themeName, problem.style })
         else
-            console.fail("{s}/topdown/style.txt:{}: {f}\n", .{ themeName, problem.style.line, problem.style }),
+            console.fail("{s}/topdown/style.txt:{}: {f}", .{ themeName, problem.style.line, problem.style }),
         .invalidIsometricStyle => if (problem.style.line == 0)
-            console.fail("{s}/isometric/style.txt: {f}\n", .{ themeName, problem.style })
+            console.fail("{s}/isometric/style.txt: {f}", .{ themeName, problem.style })
         else
-            console.fail("{s}/isometric/style.txt:{}: {f}\n", .{ themeName, problem.style.line, problem.style }),
+            console.fail("{s}/isometric/style.txt:{}: {f}", .{ themeName, problem.style.line, problem.style }),
     };
     switch (theme.topdown) {
         .game => |gameStyle| if (gameStyle) |name| if (std.meta.stringToEnum(SaveFile.MapStyle, name) == null) {
-            if (style != null) console.fail("`--style`: unknown style game:{s}. expected: {s}\n", .{ name, gameStyles });
-            console.fail("{s}/topdown/style.txt: unknown style game:{s}. expected: {s}\n", .{ themeName, name, gameStyles });
+            if (style != null) console.fail("`--style`: unknown style game:{s}. expected: {s}", .{ name, gameStyles });
+            console.fail("{s}/topdown/style.txt: unknown style game:{s}. expected: {s}", .{ themeName, name, gameStyles });
         },
         else => {},
     }
     // The isometric view has one game style, `game`.
     switch (theme.isometric) {
-        .game => |gameStyle| if (gameStyle) |name| console.fail("{s}/isometric/style.txt: unknown style game:{s}. expected: {s}, game\n", .{ themeName, name, Style.storymapNames }),
+        .game => |gameStyle| if (gameStyle) |name| console.fail("{s}/isometric/style.txt: unknown style game:{s}. expected: {s}, game", .{ themeName, name, Style.storymapNames }),
         else => {},
     }
 
     var out = std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err|
-        console.fail("{s}: could not create ({s})\n", .{ outPath, @errorName(err) });
+        console.fail("{s}: could not create ({s})", .{ outPath, @errorName(err) });
     defer out.close(init.io);
     var save = try openSaveFile(allocator, init.io, savePath);
     defer save.close(allocator);
@@ -134,14 +134,14 @@ pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) 
     var problem: SaveFile.Problem = .{};
     const save = SaveFile.open(allocator, io, path, &problem) catch |err| switch (err) {
         error.InvalidSaveFile => switch (problem.kind) {
-            .unopenable => console.fail("{s}: could not open ({s})\n", .{ path, @errorName(problem.cause.?) }),
-            .notASave => console.fail("{s}: not a Vintage Story save ({s})\n", .{ path, @errorName(problem.cause.?) }),
-            .noChunks => console.fail("{s}: no chunks to draw\n", .{path}),
-            .unreadableBlockList => console.fail("{s}: could not read the block list ({s})\n", .{ path, @errorName(problem.cause.?) }),
+            .unopenable => console.fail("{s}: could not open ({s})", .{ path, @errorName(problem.cause.?) }),
+            .notASave => console.fail("{s}: not a Vintage Story save ({s})", .{ path, @errorName(problem.cause.?) }),
+            .noChunks => console.fail("{s}: no chunks to draw", .{path}),
+            .unreadableBlockList => console.fail("{s}: could not read the block list ({s})", .{ path, @errorName(problem.cause.?) }),
         },
         else => return err,
     };
-    if (save.unsaved) std.log.warn("{s}: unsaved changes won't be on the map (is the game running?)", .{path});
+    if (save.unsaved) console.warn("{s}: unsaved changes won't be on the map (is the game running?)", .{path});
     return save;
 }
 
@@ -149,8 +149,8 @@ pub fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) 
 fn warnUnknownBlocks(allocator: std.mem.Allocator, prepared: *const Prepared, save: *const SaveFile) !void {
     const unknown = try prepared.unknown(allocator, save.gameData.blockCodes);
     defer allocator.free(unknown.mods);
-    for (unknown.mods) |mod| std.log.warn("mod {s}: not found", .{mod});
-    if (unknown.example) |example| std.log.warn("{} blocks unknown to the game and its mods, e.g. {s}", .{ unknown.codes, example });
+    for (unknown.mods) |mod| console.warn("mod {s}: not found", .{mod});
+    if (unknown.example) |example| console.warn("{} blocks unknown to the game and its mods, e.g. {s}", .{ unknown.codes, example });
 }
 
 test "the plain theme draws the game's default style" {
