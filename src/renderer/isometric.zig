@@ -420,7 +420,10 @@ fn pictureOf(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) 
         const plain = average(face, column, row, pick(layers.plain, variant));
         const colour = if (plain[3] == 0) fallback else plain[0..3].*;
         out.plain[p] = lit(tiles.rgba(colour[0], colour[1], colour[2], 255), light.get(face));
-        const layer = average(face, column, row, pick(layers.tinted, variant));
+        var layer = average(face, column, row, pick(layers.tinted, variant));
+        // A face that's all tinted, as leaves are, has its holes filled with `fallback` to be
+        // tinted too, rather than showing what's under it untinted.
+        if (layers.plain.len == 0 and layers.tinted.len > 0) layer = if (layer[3] == 0) fallback ++ [1]u8{255} else layer[0..3].* ++ [1]u8{255};
         tinted[p] = lit(tiles.rgba(layer[0], layer[1], layer[2], layer[3]), light.get(face));
     };
     if (anyTinted) out.tinted = tinted;
@@ -546,6 +549,12 @@ test pictureOf {
     const second = pictureOf(&varied, 1, .{ 1, 2, 3 });
     try std.testing.expectEqual(faceColours(.{ 0, 0, 200 })[0], second.plain[top]);
     try std.testing.expectEqual(faceColours(.{ 200, 0, 0 })[2], second.plain[bare]);
+
+    // Leaves, all tinted: the holes in the bottom half take the fallback, and are tinted too.
+    const leafy: world.CubeFaces.Face = .{ .tinted = &.{&fringe} };
+    const leaves = pictureOf(&.{ .up = leafy, .south = leafy, .east = leafy }, 0, .{ 100, 100, 100 });
+    // Grey 100 lit as an east face is 68, then tinted by 127 of 255, 33.
+    try std.testing.expectEqual(tiles.rgba(0, 33, 0, 255), blend(leaves.plain[bare], leaves.tinted.?[bare], .{ 0, 127, 0 }));
 }
 
 /// What every worker shares, read-only while they draw, and their totals once they're done.
