@@ -2,10 +2,20 @@
 //! up its buffers once, for the largest image it will take.
 const std = @import("std");
 const flate = std.compress.flate;
+const PixelDeflate = @import("PixelDeflate.zig");
 
 pub const Options = struct {
-    /// Deflate's trade between speed and size.
+    compressor: Compressor = .flate,
+    /// For `flate`, deflate's trade between speed and size.
     level: flate.Compress.Options = .level_4,
+};
+
+/// How the filtered rows are compressed.
+pub const Compressor = enum {
+    /// `std.compress.flate`, at `Options.level`.
+    flate,
+    /// Matches only where a pixel starts, one guess each, as fpng does (`PixelDeflate`).
+    pixels,
 };
 
 pub const Encoder = struct {
@@ -25,6 +35,8 @@ pub const Encoder = struct {
     filteredWidth: u32 = 0,
     filteredHeight: u32 = 0,
     deflate: *flate.Compress,
+    /// For the `pixels` compressor.
+    pixelDeflate: ?PixelDeflate,
 
     /// An encoder for images of up to `width` × `height` pixels.
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32, options: Options) !Encoder {
@@ -42,6 +54,8 @@ pub const Encoder = struct {
         const filtered = try allocator.alloc(u8, raw);
         errdefer allocator.free(filtered);
         const deflate = try allocator.create(flate.Compress);
+        errdefer allocator.destroy(deflate);
+        const pixelDeflate: ?PixelDeflate = if (options.compressor == .pixels) try .init(allocator, raw) else null;
         return .{
             .width = width,
             .height = height,
@@ -51,10 +65,12 @@ pub const Encoder = struct {
             .padded = .{ padded[0..paddedBytes], padded[paddedBytes..] },
             .filtered = filtered,
             .deflate = deflate,
+            .pixelDeflate = pixelDeflate,
         };
     }
 
     pub fn deinit(self: Encoder, allocator: std.mem.Allocator) void {
+        if (self.pixelDeflate) |compressor| compressor.deinit(allocator);
         allocator.destroy(self.deflate);
         allocator.free(self.filtered);
         allocator.free(self.padded[0].ptr[0 .. 2 * self.padded[0].len]);
@@ -103,11 +119,18 @@ pub const Encoder = struct {
 
         // The image data's length and type are filled in once it's compressed.
         const data = end + 8;
-        var output: std.Io.Writer = .fixed(self.out[data .. self.out.len - 12 - 4]);
-        self.deflate.* = try .init(&output, self.window, .zlib, self.options.level);
-        try self.deflate.writer.writeAll(self.filtered[0 .. height * (1 + @as(usize, width) * 4)]);
-        try self.deflate.finish();
-        const length = output.end;
+        const rowBytes = 1 + @as(usize, width) * 4;
+        const filtered = self.filtered[0 .. height * rowBytes];
+        const length = switch (self.options.compressor) {
+            .flate => length: {
+                var output: std.Io.Writer = .fixed(self.out[data .. self.out.len - 12 - 4]);
+                self.deflate.* = try .init(&output, self.window, .zlib, self.options.level);
+                try self.deflate.writer.writeAll(filtered);
+                try self.deflate.finish();
+                break :length output.end;
+            },
+            .pixels => self.pixelDeflate.?.compress(filtered, rowBytes, self.out[data .. self.out.len - 12 - 4]),
+        };
         std.mem.writeInt(u32, self.out[end..][0..4], @intCast(length), .big);
         @memcpy(self.out[end + 4 ..][0..4], "IDAT");
         std.mem.writeInt(u32, self.out[data + length ..][0..4], std.hash.Crc32.hash(self.out[end + 4 .. data + length]), .big);
@@ -228,8 +251,17 @@ fn writeChunk(out: []u8, comptime kind: *const [4]u8, data: []const u8) usize {
     return 12 + data.len;
 }
 
+test {
+    _ = PixelDeflate;
+}
+
 test Encoder {
-    var encoder: Encoder = try .init(std.testing.allocator, 4, 3, .{});
+    for ([_]Compressor{ .flate, .pixels }) |compressor| try expectPng(compressor);
+}
+
+/// Encodes a small image, and checks it unfilters back to the pixels.
+fn expectPng(compressor: Compressor) !void {
+    var encoder: Encoder = try .init(std.testing.allocator, 4, 3, .{ .compressor = compressor });
     defer encoder.deinit(std.testing.allocator);
     var pixels: [4 * 3 * 4]u8 = undefined;
     for (&pixels, 0..) |*byte, i| byte.* = @intCast(i * 7 % 256);
