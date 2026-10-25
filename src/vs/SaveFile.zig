@@ -207,6 +207,8 @@ pub const Appearance = struct {
     grain: []const world.Rgb = &.{},
     /// Its faces' textures, for a block the game draws as a plain cube.
     cube: ?*const world.CubeFaces = null,
+    /// Its shape, for a block the game draws in one other than the plain cube.
+    shape: ?*const world.Shape = null,
     /// Taking up only the bottom of its block, its selection box less than half a block high, as
     /// a loose stone does. A thin layer of the ground, of snow, sand or gravel, isn't.
     low: bool = false,
@@ -229,6 +231,10 @@ pub fn colour(self: *const SaveFile, id: i32) world.Rgb {
 
 pub fn cubeFaces(self: *const SaveFile, id: i32) ?*const world.CubeFaces {
     return self.appearance(id).cube;
+}
+
+pub fn shape(self: *const SaveFile, id: i32) ?*const world.Shape {
+    return self.appearance(id).shape;
 }
 
 /// Which of a texture's `count` variants the block at (x, y, z) shows, by vsapi's
@@ -302,6 +308,7 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
             .colour = block.colour,
             .grain = block.grain,
             .cube = if (block.cube) |*cube| cube else null,
+            .shape = if (block.shape) |*blockShape| blockShape else null,
             .low = (block.height orelse 16) < 8 and !ground,
         };
     }
