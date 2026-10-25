@@ -124,6 +124,66 @@ pub fn build(b: *std.Build) void {
     });
     jxl_mod.linkLibrary(jxl_lib);
 
+    // libwebp's encoder, and what it shares with the decoder, without the decoder itself.
+    const libwebp = b.dependency("libwebp", .{});
+    const webp_lib = b.addLibrary(.{
+        .name = "webp_encoder",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = .ReleaseFast,
+            .link_libc = true,
+        }),
+    });
+    webp_lib.root_module.addCSourceFiles(.{
+        .root = libwebp.path("."),
+        .files = &.{
+            "sharpyuv/sharpyuv.c",                  "sharpyuv/sharpyuv_cpu.c",               "sharpyuv/sharpyuv_csp.c",
+            "sharpyuv/sharpyuv_dsp.c",              "sharpyuv/sharpyuv_gamma.c",             "sharpyuv/sharpyuv_neon.c",
+            "sharpyuv/sharpyuv_sse2.c",             "src/dsp/alpha_processing.c",            "src/dsp/alpha_processing_neon.c",
+            "src/dsp/alpha_processing_sse2.c",      "src/dsp/alpha_processing_sse41.c",      "src/dsp/cpu.c",
+            "src/dsp/dec.c",                        "src/dsp/dec_clip_tables.c",             "src/dsp/dec_neon.c",
+            "src/dsp/dec_sse2.c",                   "src/dsp/dec_sse41.c",                   "src/dsp/filters.c",
+            "src/dsp/filters_neon.c",               "src/dsp/filters_sse2.c",                "src/dsp/lossless.c",
+            "src/dsp/lossless_neon.c",              "src/dsp/lossless_sse2.c",               "src/dsp/lossless_sse41.c",
+            "src/dsp/rescaler.c",                   "src/dsp/rescaler_neon.c",               "src/dsp/rescaler_sse2.c",
+            "src/dsp/upsampling.c",                 "src/dsp/upsampling_neon.c",             "src/dsp/upsampling_sse2.c",
+            "src/dsp/upsampling_sse41.c",           "src/dsp/yuv.c",                         "src/dsp/yuv_neon.c",
+            "src/dsp/yuv_sse2.c",                   "src/dsp/yuv_sse41.c",                   "src/dsp/cost.c",
+            "src/dsp/cost_neon.c",                  "src/dsp/cost_sse2.c",                   "src/dsp/enc.c",
+            "src/dsp/enc_neon.c",                   "src/dsp/enc_sse2.c",                    "src/dsp/enc_sse41.c",
+            "src/dsp/lossless_enc.c",               "src/dsp/lossless_enc_neon.c",           "src/dsp/lossless_enc_sse2.c",
+            "src/dsp/lossless_enc_sse41.c",         "src/dsp/ssim.c",                        "src/dsp/ssim_sse2.c",
+            "src/dsp/lossless_avx2.c",              "src/dsp/lossless_enc_avx2.c",
+            "src/enc/alpha_enc.c",                  "src/enc/analysis_enc.c",                "src/enc/backward_references_cost_enc.c",
+            "src/enc/backward_references_enc.c",    "src/enc/config_enc.c",                  "src/enc/cost_enc.c",
+            "src/enc/filter_enc.c",                 "src/enc/frame_enc.c",                   "src/enc/histogram_enc.c",
+            "src/enc/iterator_enc.c",               "src/enc/near_lossless_enc.c",           "src/enc/picture_enc.c",
+            "src/enc/picture_csp_enc.c",            "src/enc/picture_psnr_enc.c",            "src/enc/picture_rescale_enc.c",
+            "src/enc/picture_tools_enc.c",          "src/enc/predictor_enc.c",               "src/enc/quant_enc.c",
+            "src/enc/syntax_enc.c",                 "src/enc/token_enc.c",                   "src/enc/tree_enc.c",
+            "src/enc/vp8l_enc.c",                   "src/enc/webp_enc.c",                    "src/utils/bit_reader_utils.c",
+            "src/utils/color_cache_utils.c",        "src/utils/filters_utils.c",             "src/utils/huffman_utils.c",
+            "src/utils/palette.c",                  "src/utils/quant_levels_dec_utils.c",    "src/utils/random_utils.c",
+            "src/utils/rescaler_utils.c",           "src/utils/thread_utils.c",              "src/utils/utils.c",
+            "src/utils/bit_writer_utils.c",         "src/utils/huffman_encode_utils.c",      "src/utils/quant_levels_utils.c",
+        },
+    });
+    webp_lib.root_module.addIncludePath(libwebp.path("."));
+    webp_lib.root_module.addIncludePath(libwebp.path("src"));
+
+    const webp_translate_c = b.addTranslateC(.{
+        .root_source_file = libwebp.path("src/webp/encode.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const webp_mod = b.createModule(.{
+        .root_source_file = b.path("lib/webp/webp.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "encode", .module = webp_translate_c.createModule() }},
+    });
+    webp_mod.linkLibrary(webp_lib);
+
     const options = b.addOptions();
     options.addOption([]const u8, "version", @import("build.zig.zon").version);
     const options_mod = options.createModule();
@@ -138,6 +198,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "png", .module = png_mod },
             .{ .name = "jxl", .module = jxl_mod },
+            .{ .name = "webp", .module = webp_mod },
         },
     });
 
@@ -246,7 +307,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
-        args_mod,    sqlite_mod,   protobuf_mod, png_mod, jxl_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
+        args_mod,    sqlite_mod,   protobuf_mod, png_mod, jxl_mod, webp_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
         console_mod, renderer_mod, vs_mod,       cli_mod,
     };
     for (tested) |module| {

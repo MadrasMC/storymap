@@ -23,6 +23,7 @@ pub const spec: args.Spec = .{
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
         .{ .name = "jpegxl", .description = "Encode the tiles as lossless JPEG XL instead of PNG, which not every browser shows." },
+        .{ .name = "webp", .description = "Encode the tiles as lossless WebP instead of PNG." },
         .{ .name = "no-write", .description = "Draw and encode the tiles without writing anything, to time the rest." },
         .{ .name = "json", .description = "Print the render's times and counts on stdout as one line of JSON, for scripts." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
@@ -65,7 +66,9 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const out: ?std.Io.Dir = if (write) std.Io.Dir.cwd().createDirPathOpen(init.io, outPath, .{}) catch |err|
         console.fail("{s}: could not create ({s})", .{ outPath, @errorName(err) }) else null;
     defer if (out) |dir| dir.close(init.io);
-    const output: tiles.Output = .{ .folder = out, .format = if (parsed.flag("jpegxl")) .jpegxl else .png };
+    if (parsed.flag("jpegxl") and parsed.flag("webp")) console.fail("`--jpegxl` and `--webp`: choose one", .{});
+    const format: tiles.Format = if (parsed.flag("jpegxl")) .jpegxl else if (parsed.flag("webp")) .webp else .png;
+    const output: tiles.Output = .{ .folder = out, .format = format };
 
     const loading: std.Io.Timestamp = .now(init.io, .awake);
     var prepared = prepare.blocks(init, folders, force);
@@ -155,7 +158,7 @@ const Report = struct {
     threads: usize,
     /// Whether anything was written: not with `--no-write`.
     written: bool,
-    /// What the tiles are encoded as: "png" or "jpegxl".
+    /// What the tiles are encoded as: "png", "jpegxl" or "webp".
     format: []const u8,
     /// Every chunk in the save, though a render reads only those it needs.
     chunks: usize,

@@ -21,5 +21,9 @@
             .url = "https://github.com/libjxl/libjxl/archive/refs/tags/v0.12.0.zip",
             .hash = "N-V-__8AANGKZABOXifbcpxI8kcQ1xmMaM8IjOJapDyo8Ul4",
         },
+        .libwebp = .{
+            .url = "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.zip",
+            .hash = "N-V-__8AAGkrewARcKiSyLfJKsaW0ZoqHh4hzi4mTGwekxjk",
+        },
     },
 }

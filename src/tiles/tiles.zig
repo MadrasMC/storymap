@@ -1,6 +1,6 @@
 //! The tile pipeline every view shares: draws full-detail tiles on every core, builds the
 //! zoomed-out levels above them, and writes each tile to `<output>/<view>/<level>/<x>/<y>.png`,
-//! or `.jxl` in JPEG XL (docs/rendering.md#output-tiles-and-levels-of-detail).
+//! or `.jxl` in JPEG XL, or `.webp` in WebP (docs/rendering.md#output-tiles-and-levels-of-detail).
 //!
 //! A view is a type with:
 //! - `name`, its folder in the output, e.g. "topdown";
@@ -17,6 +17,7 @@ const std = @import("std");
 const Io = std.Io;
 const png = @import("png");
 const jxl = @import("jxl");
+const webp = @import("webp");
 
 /// A tile's side in pixels, in every view and level.
 pub const size = 512;
@@ -53,12 +54,15 @@ pub const Format = enum {
     png,
     /// Lossless JPEG XL (`lib/jxl`).
     jpegxl,
+    /// Lossless WebP (`lib/webp`).
+    webp,
 
     /// The tiles' file extension.
     pub fn extension(self: Format) []const u8 {
         return switch (self) {
             .png => "png",
             .jpegxl => "jxl",
+            .webp => "webp",
         };
     }
 };
@@ -67,6 +71,7 @@ pub const Format = enum {
 const Encoder = union(Format) {
     png: png.Encoder,
     jpegxl: jxl.Encoder,
+    webp: webp.Encoder,
 
     fn deinit(self: Encoder, allocator: std.mem.Allocator) void {
         switch (self) {
@@ -82,8 +87,8 @@ pub const Stats = struct {
     levels: usize = 0,
     /// Drawing full-detail tiles (`Worker.draw`).
     draw: Io.Duration = .zero,
-    /// Encoding the tiles: for PNG, filtering their rows, then compressing them; JPEG XL's is
-    /// all compressing.
+    /// Encoding the tiles: for PNG, filtering their rows, then compressing them; JPEG XL's and
+    /// WebP's is all compressing.
     filter: Io.Duration = .zero,
     compress: Io.Duration = .zero,
     /// Creating the tiles' folders and writing their files; nothing without a folder.
@@ -335,6 +340,7 @@ fn Job(comptime View: type) type {
             const encoder: Encoder = switch (output.format) {
                 .png => .{ .png = try .init(allocator, size, size, .{}) },
                 .jpegxl => .{ .jpegxl = try .init(allocator, size, size, .{}) },
+                .webp => .{ .webp = try .init(allocator, size, size, .{}) },
             };
             errdefer encoder.deinit(allocator);
             return .{
@@ -436,7 +442,8 @@ fn Job(comptime View: type) type {
             }
         }
 
-        /// Encodes a tile and writes it to `<view>/<level>/<x>/<y>.png`, or `.jxl`.
+        /// Encodes a tile and writes it to `<view>/<level>/<x>/<y>.png`, or the format's
+        /// extension.
         fn write(self: *Self, level: usize, tile: Tile, pixels: *const Pixels) !void {
             const bytes = std.mem.sliceAsBytes(pixels);
             const data = switch (self.encoder) {
@@ -448,10 +455,10 @@ fn Job(comptime View: type) type {
                     defer timeSince(self.io, &self.stats.compress, compressing);
                     break :png try encoder.compress();
                 },
-                .jpegxl => |*encoder| jpegxl: {
+                inline .jpegxl, .webp => |*encoder| other: {
                     const compressing: Io.Timestamp = .now(self.io, .awake);
                     defer timeSince(self.io, &self.stats.compress, compressing);
-                    break :jpegxl try encoder.encode(bytes, size, size);
+                    break :other try encoder.encode(bytes, size, size);
                 },
             };
             self.stats.tiles += 1;
