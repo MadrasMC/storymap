@@ -98,6 +98,58 @@ pub const CubeFaces = struct {
     };
 };
 
+/// A block drawn in its shape: boxes placed and turned in it, each face it shows in a texture.
+/// A block is from 0 to 1 on each axis, x east, y up and z south. Blocks placed the same share
+/// their boxes, and each has its own textures.
+pub const Shape = struct {
+    boxes: []const Box,
+    /// What the boxes' faces show, by number (`Face.texture`): none on a face whose texture
+    /// isn't there.
+    textures: []const CubeFaces.Face,
+
+    pub const Box = struct {
+        /// Where the box's corners go: a point from (0, 0, 0) to `size`, in blocks, times this
+        /// matrix is the point in the block. Three rows of four, the last column the shift.
+        transform: [3][4]f32,
+        size: [3]f32,
+        /// Whether its faces are lit by the way they face; unlit, they're as bright as a top.
+        shade: bool,
+        /// By `Side`: null for a face it doesn't show.
+        faces: [6]?Face,
+    };
+
+    /// A box's faces, each facing away from its middle, before the box is turned.
+    pub const Side = enum {
+        north,
+        east,
+        south,
+        west,
+        up,
+        down,
+
+        /// The corners of the face on this side of a box from (0, 0, 0) to (1, 1, 1), in the
+        /// order `Face.uv` gives their texture coordinates: going round the face.
+        pub fn corners(self: Side) [4][3]f32 {
+            return switch (self) {
+                .north => .{ .{ 0, 0, 0 }, .{ 0, 1, 0 }, .{ 1, 1, 0 }, .{ 1, 0, 0 } },
+                .east => .{ .{ 1, 0, 0 }, .{ 1, 1, 0 }, .{ 1, 1, 1 }, .{ 1, 0, 1 } },
+                .south => .{ .{ 0, 0, 1 }, .{ 1, 0, 1 }, .{ 1, 1, 1 }, .{ 0, 1, 1 } },
+                .west => .{ .{ 0, 0, 0 }, .{ 0, 0, 1 }, .{ 0, 1, 1 }, .{ 0, 1, 0 } },
+                .up => .{ .{ 0, 1, 0 }, .{ 0, 1, 1 }, .{ 1, 1, 1 }, .{ 1, 1, 0 } },
+                .down => .{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 1, 0, 1 }, .{ 0, 0, 1 } },
+            };
+        }
+    };
+
+    pub const Face = struct {
+        /// In `Shape.textures`.
+        texture: u16,
+        /// Where each of the face's corners (`Side.corners`) is on the texture, from 0 to 1
+        /// across and down; between them, the texture is stretched evenly.
+        uv: [4][2]f32,
+    };
+};
+
 /// The chunks at x and z from the bottom of the world to the top.
 pub const ChunkColumn = struct {
     x: i32,

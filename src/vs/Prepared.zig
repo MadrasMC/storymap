@@ -4,13 +4,19 @@
 //! A prepared set is a folder `<blocks folder>/<key>/` (see `key`) holding `blocks.txt`.
 //! Textures come first, each with its average colour and grain (`TextureColours`), then the
 //! colour maps with their padding and flags, each image beside it as `colormaps/<code>.png`.
+//! Then the shapes (`world.Shape`), each how many boxes it has and how many textures they
+//! name, then its boxes, one to a line: the 12 numbers of its transform, row by row, its size,
+//! 1 if it's shaded, and its faces, north, east, south, west, up and down, each its texture's
+//! number and its corners' texture coordinates, or `-` for none.
+//!
 //! Blocks name their two textures and their climate and season colour maps by number from 0,
 //! or `-` for none, then, for a block drawn as a cube, the images of its faces' plain and
 //! tinted layers (`world.CubeFaces`), top, south and east, by number in `textures.bin`, a
-//! texture's variants separated by commas, and last how high its selection box reaches, in
-//! sixteenths, or `-` for the whole block:
+//! texture's variants separated by commas, then how high its selection box reaches, in
+//! sixteenths, or `-` for the whole block, and last its shape's number, followed by the plain
+//! and tinted layers of each texture the shape names, or `-` for a block without one:
 //!
-//!     storymap blocks 9
+//!     storymap blocks 11
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
@@ -19,9 +25,12 @@
 //!     …
 //!     colormap climatePlantTint 4 0
 //!     …
-//!     block rock-granite Stone land 0 0 - - 0,1,2,3 - 0,1,2,3 - 0,1,2,3 - -
+//!     shape 2 1
+//!     box 0.70711 0 0.70711 0.10225 0 1 0 0 -0.70711 0 0.70711 0.45581 0.3125 0.125 0.25 1 0:0.3125,0.625:0.3125,0.5:0,0.5:0,0.625 …
 //!     …
-//!     block loosestones-granite-free Stone land 0 0 - - - - - - - - 2
+//!     block rock-granite Stone land 0 0 - - 0,1,2,3 - 0,1,2,3 - 0,1,2,3 - - -
+//!     …
+//!     block loosestones-granite-free Stone land 0 0 - - - - - - - - 2 1890 0 -
 //!     …
 //!
 //! `textures.bin` holds the face images one after another, each its width and height as
@@ -65,13 +74,16 @@ pub const Block = struct {
     cube: ?world.CubeFaces = null,
     /// How high its selection box reaches, in sixteenths of a block; null for the whole block.
     height: ?u8 = null,
+    /// For a block the game draws in a shape other than the plain cube, that shape; null for any
+    /// other, or one whose shape can't be read.
+    shape: ?world.Shape = null,
 };
 
 const Image = world.Image;
 
 /// The format of `blocks.txt` and `textures.bin`, and of what goes into them: raise it when
 /// any changes, so sets prepared before are prepared again.
-const formatVersion = 9;
+const formatVersion = 11;
 const fileName = "blocks.txt";
 const imageFileName = "textures.bin";
 const colourMapFolder = "colormaps";
@@ -138,6 +150,19 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
         } else true;
         if (whole) layers.* = found;
     }
+    // Shapes are numbered in the order blocks first have them, and each block's textures for
+    // its shape are its images' numbers, plain and tinted, for each of them; null for a texture
+    // that can't be read, which leaves its faces out.
+    var geometries: std.AutoArrayHashMapUnmanaged(*const BlockTypes.Geometry, void) = .empty;
+    const shapeTextures = try arena.alloc([]const [2]?[]const usize, blocks.len);
+    for (shapeTextures, blocks) |*bound, block| {
+        bound.* = &.{};
+        const shape = block.shape orelse continue;
+        try geometries.put(arena, shape.geometry, {});
+        const layers = try arena.alloc([2]?[]const usize, shape.textures.len);
+        for (layers, shape.textures) |*layer, texture| layer.* = .{ try images.variants(texture.plain), try images.variants(texture.tinted) };
+        bound.* = layers;
+    }
 
     var text: std.Io.Writer.Allocating = .init(arena);
     const w = &text.writer;
@@ -150,18 +175,34 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
         try w.writeByte('\n');
     }
     for (colourMaps) |map| try w.print("colormap {s} {} {}\n", .{ map.code, map.padding, map.extraFlags });
-    for (blocks, numbers, cubes) |block, number, cube| {
+    for (geometries.keys()) |geometry| {
+        try w.print("shape {} {}\n", .{ geometry.boxes.len, geometry.textures.len });
+        for (geometry.boxes) |box| {
+            try w.writeAll("box");
+            for (box.transform) |row| for (row) |value| try w.print(" {d}", .{rounded(value)});
+            for (box.size) |value| try w.print(" {d}", .{rounded(value)});
+            try w.print(" {}", .{@intFromBool(box.shade)});
+            for (box.faces) |maybeFace| {
+                const face = maybeFace orelse {
+                    try w.writeAll(" -");
+                    continue;
+                };
+                try w.print(" {}", .{face.texture});
+                for (face.uv) |corner| try w.print(":{d},{d}", .{ rounded(corner[0]), rounded(corner[1]) });
+            }
+            try w.writeByte('\n');
+        }
+    }
+    for (blocks, numbers, cubes, shapeTextures) |block, number, cube, bound| {
         try w.print("block {s} {s} {s}", .{ block.code, block.material, block.colorCode });
         for (number) |n| if (n) |i| try w.print(" {}", .{i}) else try w.writeAll(" -");
         const layers: [6]?[]const usize = cube orelse @splat(null);
-        for (layers) |layer| {
-            const variants = layer orelse {
-                try w.writeAll(" -");
-                continue;
-            };
-            for (variants, 0..) |n, i| try w.print("{s}{}", .{ if (i == 0) " " else ",", n });
-        }
+        for (layers) |layer| try writeVariants(w, layer);
         if (block.height) |height| try w.print(" {}", .{height}) else try w.writeAll(" -");
+        if (block.shape) |shape| {
+            try w.print(" {}", .{geometries.getIndex(shape.geometry).?});
+            for (bound) |texture| for (texture) |layer| try writeVariants(w, layer);
+        } else try w.writeAll(" -");
         try w.writeByte('\n');
     }
     var imageBytes: std.Io.Writer.Allocating = .init(arena);
@@ -179,6 +220,18 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
     try folder.writeFile(io, .{ .sub_path = partial, .data = text.written() });
     try folder.rename(partial, folder, fileName, io);
     return blocks.len;
+}
+
+/// `value` to the nearest 100,000th, so it's written in few digits: a shape's positions are in
+/// blocks and its texture coordinates in textures, so that's far finer than a pixel.
+fn rounded(value: f32) f32 {
+    return @round(value * 100_000) / 100_000;
+}
+
+/// A layer's images by number, its variants separated by commas, or `-` without any.
+fn writeVariants(w: *std.Io.Writer, layer: ?[]const usize) !void {
+    const variants = layer orelse return w.writeAll(" -");
+    for (variants, 0..) |n, i| try w.print("{s}{}", .{ if (i == 0) " " else ",", n });
 }
 
 /// Cube faces' images, each made once: a texture with its overlays drawn over it, or half of
@@ -407,6 +460,11 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
     // The same list of variants, written the same, is one slice, so blocks with the same faces
     // can be told apart by their slices alone.
     var variantLists: std.StringHashMapUnmanaged([]const *const Image) = .empty;
+    var geometries: std.ArrayList(Geometry) = .empty;
+    // The shape whose boxes are being read, and how many it has.
+    var boxes: std.ArrayList(world.Shape.Box) = .empty;
+    var boxCount: usize = 0;
+    var textureCount: usize = 0;
     while (lines.next()) |line| {
         var words = std.mem.tokenizeScalar(u8, std.mem.trimEnd(u8, line, "\r"), ' ');
         const kind = words.next() orelse continue;
@@ -426,6 +484,23 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
             const padding = std.fmt.parseInt(usize, words.next() orelse "", 10) catch return error.NotPreparedBlocks;
             const flags = std.fmt.parseInt(u32, words.next() orelse "", 10) catch return error.NotPreparedBlocks;
             try colourMaps.append(arena, try loadColourMap(arena, io, folder, first, padding, flags == 1));
+        } else if (std.mem.eql(u8, kind, "shape")) {
+            if (boxes.items.len != boxCount) return error.NotPreparedBlocks;
+            boxCount = std.fmt.parseInt(usize, first, 10) catch return error.NotPreparedBlocks;
+            textureCount = std.fmt.parseInt(usize, words.next() orelse "", 10) catch return error.NotPreparedBlocks;
+            boxes = .empty;
+        } else if (std.mem.eql(u8, kind, "box")) {
+            if (boxes.items.len == boxCount) return error.NotPreparedBlocks;
+            var box: world.Shape.Box = undefined;
+            var values = std.mem.tokenizeScalar(u8, line[kind.len..], ' ');
+            for (&box.transform) |*row| for (row) |*value| {
+                value.* = try parseFloat(values.next());
+            };
+            for (&box.size) |*value| value.* = try parseFloat(values.next());
+            box.shade = std.mem.eql(u8, values.next() orelse return error.NotPreparedBlocks, "1");
+            for (&box.faces) |*face| face.* = try parseBoxFace(values.next(), textureCount);
+            try boxes.append(arena, box);
+            if (boxes.items.len == boxCount) try geometries.append(arena, .{ .boxes = boxes.items, .textures = textureCount });
         } else if (std.mem.eql(u8, kind, "block")) {
             const material = words.next() orelse return error.NotPreparedBlocks;
             const colorCode = words.next() orelse return error.NotPreparedBlocks;
@@ -441,6 +516,15 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
             const cube = for (faces) |face| {
                 if (face.plain.len == 0 and face.tinted.len == 0) break null;
             } else world.CubeFaces{ .up = faces[0], .south = faces[1], .east = faces[2] };
+            const height = try heightOf(words.next());
+            const shape: ?world.Shape = if (try numbered(Geometry, geometries.items, words.next())) |geometry| shape: {
+                const bound = try arena.alloc(world.CubeFaces.Face, geometry.textures);
+                for (bound) |*texture| texture.* = .{
+                    .plain = try variantsOf(arena, &variantLists, images, words.next()),
+                    .tinted = try variantsOf(arena, &variantLists, images, words.next()),
+                };
+                break :shape .{ .boxes = geometry.boxes, .textures = bound };
+            } else null;
             try self.blocks.put(arena, first, .{
                 .material = material,
                 .colorCode = colorCode,
@@ -449,7 +533,8 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
                 .climateColourMap = climate orelse null,
                 .seasonColourMap = season orelse null,
                 .cube = cube,
-                .height = try heightOf(words.next()),
+                .height = height,
+                .shape = shape,
             });
         }
     }
@@ -490,6 +575,32 @@ fn parseRgb(word: ?[]const u8) !world.Rgb {
     if (hex.len != 6) return error.NotPreparedBlocks;
     _ = std.fmt.hexToBytes(&rgb, hex) catch return error.NotPreparedBlocks;
     return rgb;
+}
+
+/// A shape's boxes, as `blocks.txt` gives them, before a block's textures are bound to them.
+const Geometry = struct {
+    boxes: []const world.Shape.Box,
+    textures: usize,
+};
+
+fn parseFloat(word: ?[]const u8) !f32 {
+    return std.fmt.parseFloat(f32, word orelse return error.NotPreparedBlocks) catch error.NotPreparedBlocks;
+}
+
+/// A box's face, its texture's number and the texture coordinates of its corners, or null for
+/// `-`.
+fn parseBoxFace(word: ?[]const u8, textureCount: usize) !?world.Shape.Face {
+    const text = word orelse return error.NotPreparedBlocks;
+    if (std.mem.eql(u8, text, "-")) return null;
+    var parts = std.mem.splitScalar(u8, text, ':');
+    const texture = std.fmt.parseInt(u16, parts.next().?, 10) catch return error.NotPreparedBlocks;
+    if (texture >= textureCount) return error.NotPreparedBlocks;
+    var face: world.Shape.Face = .{ .texture = texture, .uv = undefined };
+    for (&face.uv) |*corner| {
+        var coordinates = std.mem.splitScalar(u8, parts.next() orelse return error.NotPreparedBlocks, ',');
+        corner.* = .{ try parseFloat(coordinates.next()), try parseFloat(coordinates.next()) };
+    }
+    return face;
 }
 
 /// A block's height in sixteenths, or null for `-`.
@@ -588,6 +699,8 @@ test "prepare, load and compare with a save" {
         .{ "game/assets/survival/textures/block/stone/granite3.png", @embedFile("testdata/red.png") },
         .{ "game/assets/survival/blocktypes/soil.json", "{ code: 'soil', drawtype: 'TopSoil', textures: { all: { base: 'block/stone/granite*' }, specialSecondTexture: { base: 'block/grass' } } }" },
         .{ "game/assets/survival/textures/block/grass.png", @embedFile("testdata/red.png") },
+        .{ "game/assets/survival/blocktypes/step.json", "{ code: 'step', shape: { base: 'block/step' }, textures: { all: { base: 'block/stone/granite*' } } }" },
+        .{ "game/assets/survival/shapes/block/step.json", "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 8, 16 ], rotationOrigin: [ 8, 8, 8 ], rotationY: 90, faces: { north: { texture: '#all', uv: [ 0, 0, 16, 8 ] }, up: { texture: '#top' } } } ] }" },
         .{ "data/Mods/testmod.zip", @embedFile("testdata/testmod.zip") },
     };
     for (files) |file| {
@@ -610,8 +723,8 @@ test "prepare, load and compare with a save" {
     try std.testing.expect(!exists(io, folder));
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    // rock-granite, soil, and the test mod's thing.
-    try std.testing.expectEqual(3, try prepare(arena.allocator(), io, &assets, folder));
+    // rock-granite, soil, step, and the test mod's thing.
+    try std.testing.expectEqual(4, try prepare(arena.allocator(), io, &assets, folder));
     try std.testing.expect(exists(io, folder));
 
     var prepared = try load(std.testing.allocator, io, folder);
@@ -647,6 +760,29 @@ test "prepare, load and compare with a save" {
     try std.testing.expectEqual(soil.south.tinted.ptr, soil.east.tinted.ptr);
     try std.testing.expectEqual(rock.up.tinted[0].pixels[1], soil.up.tinted[0].pixels[0]);
     try std.testing.expectEqual(rock.up.tinted[0].pixels[0], soil.south.tinted[0].pixels[0]);
+    try std.testing.expectEqual(null, prepared.blocks.get("rock-granite").?.shape);
+
+    // The step's one box, turned a quarter about its origin, half a block high. Both its faces
+    // are the granite, untinted, the same images as the rock's: one by name, and one by `all`,
+    // naming a texture the block doesn't have.
+    const step = prepared.blocks.get("step").?;
+    try std.testing.expectEqual(null, step.cube);
+    const shape = step.shape.?;
+    try std.testing.expectEqual(1, shape.boxes.len);
+    const box = shape.boxes[0];
+    try std.testing.expectEqual([3]f32{ 1, 0.5, 1 }, box.size);
+    try std.testing.expectEqual([4]f32{ 0, 0, 1, 0 }, box.transform[0]);
+    try std.testing.expectEqual([4]f32{ -1, 0, 0, 1 }, box.transform[2]);
+    try std.testing.expect(box.shade);
+    const north = box.faces[@backingInt(world.Shape.Side.north)].?;
+    try std.testing.expectEqual([4][2]f32{ .{ 1, 0.5 }, .{ 1, 0 }, .{ 0, 0 }, .{ 0, 0.5 } }, north.uv);
+    const up = box.faces[@backingInt(world.Shape.Side.up)].?;
+    try std.testing.expectEqual(2, shape.textures.len);
+    for ([_]world.Shape.Face{ north, up }) |face| {
+        try std.testing.expectEqual(rock.up.tinted.ptr, shape.textures[face.texture].plain.ptr);
+        try std.testing.expectEqual(0, shape.textures[face.texture].tinted.len);
+    }
+    try std.testing.expectEqual(null, box.faces[@backingInt(world.Shape.Side.down)]);
 
     const codes = [_]?[]const u8{ "air", "rock-granite", "rock-basalt", null, "testmod:thing", "othermod:x", "othermod:y" };
     const missing = try prepared.unknown(std.testing.allocator, &codes);
