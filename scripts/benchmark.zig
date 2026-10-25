@@ -4,14 +4,14 @@
 //! median of each time. From the project's folder:
 //!
 //!     zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current]
-//!         [--isometric] [--write] [--jpegxl | --webp] [--zigs <folder>]
+//!         [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]] [--zigs <folder>]
 //!
 //! Each run is `storymap <save-file> --no-write --json` in the slowest styles, the Plain theme's
 //! with `game:coloured` top-down (`styles`). `--isometric` adds the isometric view, `--write`
-//! writes the tiles into `.benchmark/out`, so writing them is timed too, and `--jpegxl` or
-//! `--webp` encodes them as JPEG XL or WebP. Versions up to 0.2.0 have their own `storymap bench`, which draws the Printed
-//! theme's relief in PNG and takes the medians itself; they're run with that, without the
-//! isometric view.
+//! writes the tiles into `.benchmark/out`, so writing them is timed too, `--jpegxl` or `--webp`
+//! encodes them as JPEG XL or WebP, and `--lossy-from` makes WebP lossy from a level up. Versions
+//! up to 0.2.0 have their own `storymap bench`, which draws the Printed theme's relief in PNG and
+//! takes the medians itself; they're run with that, without the isometric view.
 //!
 //! Zig releases are looked for in `--zigs` (`.benchmark/zig` by default) as their archives unpack,
 //! e.g. `zig-x86_64-windows-0.17.0/`, and downloaded there from ziglang.org if missing.
@@ -24,7 +24,7 @@ const Io = std.Io;
 
 const exe = if (builtin.os.tag == .windows) ".exe" else "";
 
-const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--isometric] [--write] [--jpegxl | --webp] [--zigs <folder>]\n";
+const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]] [--zigs <folder>]\n";
 
 const styles = [_][]const u8{ "--theme", "plain", "--style", "game:coloured" };
 const outFolder = ".benchmark/out";
@@ -90,6 +90,8 @@ const Runs = struct {
     write: bool,
     /// The option choosing the tiles' format, or null for PNG.
     format: ?[]const u8,
+    /// `--lossy-from`'s level, passed on as it's written.
+    lossyFrom: ?[]const u8 = null,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -114,7 +116,7 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--jpegxl") or std.mem.eql(u8, arg, "--webp")) {
             if (runs.format != null) fail("--jpegxl and --webp: choose one\n", .{});
             runs.format = arg;
-        } else if (std.mem.eql(u8, arg, "--runs") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--zigs")) {
+        } else if (std.mem.eql(u8, arg, "--runs") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--zigs") or std.mem.eql(u8, arg, "--lossy-from")) {
             i += 1;
             if (i == given.len) fail("{s} needs a value\n" ++ usage, .{arg});
             if (std.mem.eql(u8, arg, "--runs")) {
@@ -123,6 +125,7 @@ pub fn main(init: std.process.Init) !void {
             }
             if (std.mem.eql(u8, arg, "--tag")) try tags.append(arena, given[i]);
             if (std.mem.eql(u8, arg, "--zigs")) zigsPath = given[i];
+            if (std.mem.eql(u8, arg, "--lossy-from")) runs.lossyFrom = given[i];
         } else if (savePath == null and !std.mem.startsWith(u8, arg, "--")) {
             savePath = arg;
         } else fail("unexpected argument {s}\n" ++ usage, .{arg});
@@ -222,6 +225,7 @@ fn measureBuild(arena: std.mem.Allocator, io: Io, storymap: []const u8, save: []
     if (runs.write) try argv.append(arena, outFolder) else try argv.append(arena, "--no-write");
     if (runs.isometric) try argv.append(arena, "--isometric");
     if (runs.format) |format| try argv.append(arena, format);
+    if (runs.lossyFrom) |level| try argv.appendSlice(arena, &.{ "--lossy-from", level });
     try argv.append(arena, "--json");
 
     // The first warms the file cache, and prepares the blocks if they aren't yet.

@@ -48,6 +48,9 @@ pub const Output = struct {
     /// disk.
     folder: ?Io.Dir,
     format: Format = .png,
+    /// For WebP, the level from which tiles are lossy, at quality 90, where blocks are drawn
+    /// small enough that blurred edges don't show; null for none.
+    lossyFrom: ?u8 = null,
 };
 
 pub const Format = enum {
@@ -455,10 +458,16 @@ fn Job(comptime View: type) type {
                     defer timeSince(self.io, &self.stats.compress, compressing);
                     break :png try encoder.compress();
                 },
-                inline .jpegxl, .webp => |*encoder| other: {
+                .jpegxl => |*encoder| jpegxl: {
                     const compressing: Io.Timestamp = .now(self.io, .awake);
                     defer timeSince(self.io, &self.stats.compress, compressing);
-                    break :other try encoder.encode(bytes, size, size);
+                    break :jpegxl try encoder.encode(bytes, size, size);
+                },
+                .webp => |*encoder| webp: {
+                    const compressing: Io.Timestamp = .now(self.io, .awake);
+                    defer timeSince(self.io, &self.stats.compress, compressing);
+                    const lossy = if (self.output.lossyFrom) |from| level >= from else false;
+                    break :webp try if (lossy) encoder.encodeLossy(bytes, size, size, 90) else encoder.encode(bytes, size, size);
                 },
             };
             self.stats.tiles += 1;

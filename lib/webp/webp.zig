@@ -1,4 +1,4 @@
-//! A lossless WebP encoder for 8-bit RGBA images: libwebp's encoder. An `Encoder` sets up its
+//! A WebP encoder for 8-bit RGBA images, lossless or lossy: libwebp's encoder. An `Encoder` sets up its
 //! output buffer once, for the largest image it will take; libwebp allocates its own working
 //! memory as it encodes.
 const std = @import("std");
@@ -29,16 +29,26 @@ pub const Encoder = struct {
         allocator.free(self.out);
     }
 
-    /// The WebP file of `pixels`, `width` × `height` of them row by row, each red, green, blue
-    /// and alpha bytes. Valid until the next `encode`. error.EncodingFailed if libwebp can't
-    /// encode it.
+    /// The lossless WebP file of `pixels`, `width` × `height` of them row by row, each red,
+    /// green, blue and alpha bytes. Valid until the next `encode` or `encodeLossy`.
+    /// error.EncodingFailed if libwebp can't encode it.
     pub fn encode(self: *Encoder, pixels: []const u8, width: u32, height: u32) error{EncodingFailed}![]const u8 {
+        return self.encodeWith(pixels, width, height, true, self.options.effort);
+    }
+
+    /// `pixels` as a lossy WebP file, at `quality` from 0 to 100; the alpha channel stays
+    /// lossless.
+    pub fn encodeLossy(self: *Encoder, pixels: []const u8, width: u32, height: u32, quality: f32) error{EncodingFailed}![]const u8 {
+        return self.encodeWith(pixels, width, height, false, quality);
+    }
+
+    fn encodeWith(self: *Encoder, pixels: []const u8, width: u32, height: u32, lossless: bool, quality: f32) error{EncodingFailed}![]const u8 {
         std.debug.assert(width <= self.width and height <= self.height and pixels.len == @as(usize, width) * height * 4);
         var config: c.WebPConfig = undefined;
         if (c.WebPConfigInit(&config) == 0) return error.EncodingFailed;
-        config.lossless = 1;
+        config.lossless = @intFromBool(lossless);
         config.method = self.options.method;
-        config.quality = self.options.effort;
+        config.quality = quality;
 
         var picture: c.WebPPicture = undefined;
         if (c.WebPPictureInit(&picture) == 0) return error.EncodingFailed;
@@ -96,4 +106,9 @@ test Encoder {
     const small = try encoder.encode(&flat, 16, 8);
     try std.testing.expectEqualStrings("RIFF", small[0..4]);
     try std.testing.expect(small.len * 20 < first.len);
+
+    // Lossy, with its alpha channel: a VP8X file, far smaller than lossless for noise.
+    const lossy = try encoder.encodeLossy(&noise, width, height, 90);
+    try std.testing.expectEqualStrings("WEBPVP8X", lossy[8..16]);
+    try std.testing.expect(lossy.len < first.len);
 }

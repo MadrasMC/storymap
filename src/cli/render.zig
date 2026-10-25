@@ -24,6 +24,7 @@ pub const spec: args.Spec = .{
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
         .{ .name = "jpegxl", .description = "Encode the tiles as lossless JPEG XL instead of PNG, which not every browser shows." },
         .{ .name = "webp", .description = "Encode the tiles as lossless WebP instead of PNG." },
+        .{ .name = "lossy-from", .value = "level", .description = "With --webp, encode the tiles from this level up as lossy WebP: level 0 is full detail, 2 where blocks are 8 pixels wide." },
         .{ .name = "no-write", .description = "Draw and encode the tiles without writing anything, to time the rest." },
         .{ .name = "json", .description = "Print the render's times and counts on stdout as one line of JSON, for scripts." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
@@ -68,7 +69,11 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     defer if (out) |dir| dir.close(init.io);
     if (parsed.flag("jpegxl") and parsed.flag("webp")) console.fail("`--jpegxl` and `--webp`: choose one", .{});
     const format: tiles.Format = if (parsed.flag("jpegxl")) .jpegxl else if (parsed.flag("webp")) .webp else .png;
-    const output: tiles.Output = .{ .folder = out, .format = format };
+    const lossyFrom: ?u8 = if (parsed.value("lossy-from")) |text| level: {
+        if (format != .webp) console.fail("`--lossy-from`: only with `--webp`", .{});
+        break :level std.fmt.parseInt(u8, text, 10) catch console.fail("`--lossy-from`: invalid level {s}. expected: a level from 0", .{text});
+    } else null;
+    const output: tiles.Output = .{ .folder = out, .format = format, .lossyFrom = lossyFrom };
 
     const loading: std.Io.Timestamp = .now(init.io, .awake);
     var prepared = prepare.blocks(init, folders, force);

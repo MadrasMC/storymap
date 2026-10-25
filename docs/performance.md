@@ -30,6 +30,7 @@ zig run scripts/benchmark.zig -- <save-file>
 | `--write` | writes the tiles into `.benchmark/out`, so writing them is timed too |
 | `--jpegxl` | encodes the tiles as JPEG XL instead of PNG |
 | `--webp` | encodes the tiles as WebP instead of PNG |
+| `--lossy-from <level>` | with `--webp`, encodes the tiles from this level up as lossy WebP |
 
 Each tag is built by the Zig release its `build.zig.zon` names. The script looks for it in `.benchmark/zig/`, or in `--zigs <folder>`, as its archive unpacks (`zig-x86_64-windows-0.17.0/`), and downloads it there from ziglang.org if it's missing.
 
