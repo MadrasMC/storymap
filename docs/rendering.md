@@ -205,6 +205,8 @@ Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/
 | Block and item names (`gamedata`), later assets | the game version and mods | Read once at startup. |
 | Tile height arrays and pixels | the tile size | Fixed per worker, reused for every tile. |
 | PNG encoding (`lib/png`) | the tile size | Each worker's encoder sets up its buffers once, for a full tile; nothing is allocated per tile. |
+| WebP encoding (`lib/webp`) | the tile size | Each worker's encoder sets up its buffers once, with the working memory libwebp allocates from, 16.6 MB for a full tile, where tiles took up to 11.6; what doesn't fit comes from `malloc`. |
+| JPEG XL encoding (`lib/jxl`) | the tile size | The output buffer is set up once; libjxl allocates its working memory for every tile. |
 
 Stages:
 
