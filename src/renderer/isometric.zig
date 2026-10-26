@@ -359,6 +359,47 @@ test faces {
 /// Each face's light, in 256ths.
 const light = std.EnumArray(Face, u16).init(.{ .none = 0, .top = 256, .south = 208, .east = 176 });
 
+/// What a tile's depth buffer counts in: `depthSteps`ths of a block, of x + y + z of the point
+/// each pixel shows, larger nearer.
+const depthSteps = 256;
+
+/// How far into its block each pixel of a cube's square shows the cube: x + y + z of the point
+/// there on the face it shows, the block being from 0 to 1, in `depthSteps`ths. At the middle of
+/// a pixel, two cubes' faces are never less than a 64th of a block apart, so blocks keep the
+/// order whole blocks' depths gave them.
+const cubeDepths: [blockWidth][blockWidth]i16 = depths: {
+    @setEvalBranchQuota(20_000);
+    var out: [blockWidth][blockWidth]i16 = undefined;
+    const a: f32 = across;
+    const d: f32 = down;
+    const b: f32 = below;
+    for (0..blockWidth) |row| for (0..blockWidth) |column| {
+        const x = @as(f32, @floatFromInt(column)) + 0.5;
+        const y = @as(f32, @floatFromInt(row)) + 0.5;
+        // Where a point at (x, y, z) is drawn (`textureCoordinates`), turned round for each face.
+        const depth: f32 = switch (faces[row][column]) {
+            .none => 0,
+            .top => y / d + 1,
+            .south => x / a + (1 - (y - d * x / a - d) / b) + 1,
+            .east => 1 + (1 - (y - d - d * (2 - x / a)) / b) + (2 - x / a),
+        };
+        out[row][column] = @intFromFloat(@round(depth * depthSteps));
+    };
+    break :depths out;
+};
+
+test cubeDepths {
+    const w = blockWidth;
+    // The top's far corner, at the top of the square, is (0, 1, 0), and the near corner, where
+    // the three faces meet, is (1, 1, 1) on each of them.
+    try std.testing.expectApproxEqAbs(@as(f32, depthSteps), @as(f32, @floatFromInt(cubeDepths[0][w / 2])), depthSteps / 8);
+    for ([_][2]usize{ .{ w / 2 - 1, w / 2 - 1 }, .{ w / 2, w / 2 - 1 }, .{ w / 2, w / 2 } }) |at| {
+        try std.testing.expectApproxEqAbs(@as(f32, 3 * depthSteps), @as(f32, @floatFromInt(cubeDepths[at[0]][at[1]])), depthSteps / 8);
+    }
+    // The bottom corner is (1, 0, 1).
+    try std.testing.expectApproxEqAbs(@as(f32, 2 * depthSteps), @as(f32, @floatFromInt(cubeDepths[w - 1][w / 2])), depthSteps / 8);
+}
+
 /// Each map type's three face colours at each height in the relief style:
 /// `(mapType * heights.world + y) * 3`, top, south, east.
 fn reliefColours(allocator: std.mem.Allocator, palette: *const world.Palette, heights: world.Heights) ![]u32 {
@@ -389,17 +430,8 @@ const Picture = struct {
     /// The faces' tinted layers, lit but not yet tinted, each pixel's alpha how much of it the
     /// layer covers; null if no face has one.
     tinted: ?Layer,
-    /// Whether it covers the whole of a cube's square, so nothing behind the block shows.
-    fills: bool = true,
 
     const Layer = [blockWidth * blockWidth]u32;
-
-    /// Whether it shows anything at pixel `p`.
-    fn shows(self: *const Picture, p: usize) bool {
-        if (self.plain[p] & 0xff000000 != 0) return true;
-        const tinted = self.tinted orelse return false;
-        return tinted[p] & 0xff000000 != 0;
-    }
 };
 
 /// Points sampled across and down each pixel of a picture.
@@ -535,17 +567,58 @@ fn shapeVariants(shape: *const world.Shape) usize {
     return count;
 }
 
+/// How far beyond a cube's square a shape's picture reaches, in pixels, each way: parts of a
+/// shape farther out are cut off.
+const reach = blockWidth;
+
+/// The side of what a shape's picture is drawn in (`ShapeTarget`), in pixels.
+const shapeSide = blockWidth + 2 * reach;
+
 /// What a shape's picture is drawn in first: `samples` × `samples` points for each of its
-/// pixels.
+/// pixels, over the cube's square and `reach` around it.
 const ShapeTarget = rasterizer.Target;
+
+fn shapeTarget(allocator: std.mem.Allocator) !ShapeTarget {
+    return .init(allocator, shapeSide * samples, shapeSide * samples);
+}
+
+/// A block's shape drawn in its textures, its faces lit (`shapePicture`): as much as it shows of
+/// a cube's square and around it, each pixel with how far into the block its point is.
+const ShapePicture = struct {
+    /// Where its top left pixel is, from the top left of the cube's square.
+    left: i16,
+    top: i16,
+    width: u16,
+    height: u16,
+    /// Row by row, as a cube's `Picture` has them.
+    plain: []u32,
+    tinted: ?[]u32,
+    /// x + y + z of each pixel's point, the block being from 0 to 1, in `depthSteps`ths.
+    depths: []i16,
+    /// Whether it covers the whole of a cube's square, so nothing behind the block shows.
+    fills: bool,
+
+    /// Whether it shows anything at pixel `p`.
+    fn shows(self: *const ShapePicture, p: usize) bool {
+        if (self.plain[p] & 0xff000000 != 0) return true;
+        const tinted = self.tinted orelse return false;
+        return tinted[p] & 0xff000000 != 0;
+    }
+
+    fn destroy(self: *const ShapePicture, allocator: std.mem.Allocator) void {
+        allocator.free(self.depths);
+        if (self.tinted) |tinted| allocator.free(tinted);
+        allocator.free(self.plain);
+        allocator.destroy(self);
+    }
+};
 
 /// Draws `shape` in its textures, each in its variant `variant` (counting round again for one
 /// with fewer), its faces lit by the way they face. Each of its pixels is drawn at `samples` ×
 /// `samples` points: it shows if at least half of them are covered, the average of their
-/// colours. Only the cube's square is drawn: parts of the shape outside the block that fall
-/// beyond it are left out.
-fn shapePicture(shape: *const world.Shape, variant: usize, target: *ShapeTarget) Picture {
-    std.debug.assert(target.width == blockWidth * samples and target.height == blockWidth * samples);
+/// colours, the depth of the nearest. Kept in `allocator`, trimmed to the pixels it shows.
+fn shapePicture(allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, target: *ShapeTarget) !*const ShapePicture {
+    std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
     target.clear();
     const scale: f32 = samples;
     for (shape.boxes) |box| for (box.faces, 0..) |maybeFace, sideIndex| {
@@ -559,8 +632,8 @@ fn shapePicture(shape: *const world.Shape, variant: usize, target: *ShapeTarget)
             const local = [3]f32{ unit[0] * box.size[0], unit[1] * box.size[1], unit[2] * box.size[2] };
             for (point, box.transform) |*coordinate, row| coordinate.* = row[0] * local[0] + row[1] * local[1] + row[2] * local[2] + row[3];
             corner.* = .{
-                .x = (point[0] - point[2] + 1) * across * scale,
-                .y = ((point[0] + point[2]) * down - (point[1] - 1) * below) * scale,
+                .x = ((point[0] - point[2] + 1) * across + reach) * scale,
+                .y = ((point[0] + point[2]) * down - (point[1] - 1) * below + reach) * scale,
                 .depth = point[0] + point[1] + point[2],
                 .u = uv[0],
                 .v = uv[1],
@@ -571,36 +644,74 @@ fn shapePicture(shape: *const world.Shape, variant: usize, target: *ShapeTarget)
         rasterizer.triangle(target, .{ corners[0], corners[2], corners[3] }, image, lighting, tag);
     };
 
-    var out: Picture = .{ .plain = undefined, .tinted = null };
-    var tinted: Picture.Layer = @splat(tiles.transparent);
+    // The pixels it shows, and where they are.
+    var shown: [shapeSide][shapeSide]bool = undefined;
+    var first: [2]usize = .{ shapeSide, shapeSide };
+    var last: [2]usize = .{ 0, 0 };
+    var fills = true;
     var anyTinted = false;
-    for (0..blockWidth) |row| for (0..blockWidth) |column| {
-        const p = row * blockWidth + column;
-        out.plain[p] = tiles.transparent;
-        if (faces[row][column] == .none) continue;
+    for (0..shapeSide) |row| for (0..shapeSide) |column| {
+        var covered: usize = 0;
+        for (0..samples) |sy| for (0..samples) |sx| {
+            const tag = target.tags[(row * samples + sy) * target.width + column * samples + sx];
+            covered += @intFromBool(tag != 0);
+            anyTinted = anyTinted or tag == 2;
+        };
+        shown[row][column] = covered * 2 >= samples * samples;
+        const inSquare = row >= reach and row < reach + blockWidth and column >= reach and column < reach + blockWidth;
+        if (inSquare and faces[row - reach][column - reach] != .none and !shown[row][column]) fills = false;
+        if (!shown[row][column]) continue;
+        first = .{ @min(first[0], row), @min(first[1], column) };
+        last = .{ @max(last[0], row), @max(last[1], column) };
+    };
+    const height = if (first[0] > last[0]) 0 else last[0] - first[0] + 1;
+    const width = if (first[1] > last[1]) 0 else last[1] - first[1] + 1;
+
+    const out = try allocator.create(ShapePicture);
+    errdefer allocator.destroy(out);
+    const plain = try allocator.alloc(u32, width * height);
+    errdefer allocator.free(plain);
+    const tinted: ?[]u32 = if (anyTinted) try allocator.alloc(u32, width * height) else null;
+    errdefer if (tinted) |layer| allocator.free(layer);
+    const depths = try allocator.alloc(i16, width * height);
+    out.* = .{
+        .left = @as(i16, @intCast(first[1])) - reach,
+        .top = @as(i16, @intCast(first[0])) - reach,
+        .width = @intCast(width),
+        .height = @intCast(height),
+        .plain = plain,
+        .tinted = tinted,
+        .depths = depths,
+        .fills = fills,
+    };
+    for (0..height) |y| for (0..width) |x| {
+        const row = first[0] + y;
+        const column = first[1] + x;
+        const p = y * width + x;
+        plain[p] = tiles.transparent;
+        if (tinted) |layer| layer[p] = tiles.transparent;
+        depths[p] = 0;
+        if (!shown[row][column]) continue;
         var sums: [3][4]u32 = @splat(@splat(0));
+        var nearest: f32 = -std.math.inf(f32);
         for (0..samples) |sy| for (0..samples) |sx| {
             const at = (row * samples + sy) * target.width + column * samples + sx;
             const tag = target.tags[at];
             for (0..3) |c| sums[tag][c] += target.colours[at][c];
             sums[tag][3] += 1;
+            if (tag != 0) nearest = @max(nearest, target.depths[at]);
         };
         const covered = sums[1][3] + sums[2][3];
-        if (covered * 2 < samples * samples) {
-            out.fills = false;
-            continue;
-        }
         // The tinted layer covers the plain one as much as it covers the pixel; a pixel all
         // tinted takes its plain layer from it, unseen under it.
-        const plain = if (sums[1][3] > 0) sums[1] else sums[2];
-        out.plain[p] = tiles.rgba(@intCast(plain[0] / plain[3]), @intCast(plain[1] / plain[3]), @intCast(plain[2] / plain[3]), 255);
+        const under = if (sums[1][3] > 0) sums[1] else sums[2];
+        plain[p] = tiles.rgba(@intCast(under[0] / under[3]), @intCast(under[1] / under[3]), @intCast(under[2] / under[3]), 255);
         if (sums[2][3] > 0) {
-            anyTinted = true;
             const t = sums[2];
-            tinted[p] = tiles.rgba(@intCast(t[0] / t[3]), @intCast(t[1] / t[3]), @intCast(t[2] / t[3]), @intCast(t[3] * 255 / covered));
+            tinted.?[p] = tiles.rgba(@intCast(t[0] / t[3]), @intCast(t[1] / t[3]), @intCast(t[2] / t[3]), @intCast(t[3] * 255 / covered));
         }
+        depths[p] = @intFromFloat(@round(nearest * depthSteps));
     };
-    if (anyTinted) out.tinted = tinted;
     return out;
 }
 
@@ -611,18 +722,17 @@ const LazyPicture = struct {
     variant: u32,
     state: std.atomic.Value(State) = .init(.unmade),
     /// Once `state` is `made`.
-    picture: *const Picture = undefined,
+    picture: *const ShapePicture = undefined,
 
     const State = enum(u8) { unmade, making, made };
 
     /// The picture, drawn in `target` and kept in memory from `allocator` the first time, which
     /// must allow allocating from any thread.
-    fn get(self: *LazyPicture, allocator: std.mem.Allocator, target: *ShapeTarget) !*const Picture {
+    fn get(self: *LazyPicture, allocator: std.mem.Allocator, target: *ShapeTarget) !*const ShapePicture {
         if (self.state.load(.acquire) == .made) return self.picture;
         if (self.state.cmpxchgStrong(.unmade, .making, .acquire, .acquire) == null) {
             errdefer self.state.store(.unmade, .release);
-            const picture = try allocator.create(Picture);
-            picture.* = shapePicture(self.shape, self.variant, target);
+            const picture = try shapePicture(allocator, self.shape, self.variant, target);
             self.picture = picture;
             self.state.store(.made, .release);
             return picture;
@@ -703,38 +813,65 @@ fn testBox(size: [3]f32) world.Shape.Box {
     return .{ .transform = .{ .{ 1, 0, 0, 0 }, .{ 0, 1, 0, 0 }, .{ 0, 0, 1, 0 } }, .size = size, .shade = true, .faces = @splat(face) };
 }
 
+/// The index in `picture` of the pixel at (`row`, `column`) of the cube's square, or null if the
+/// picture doesn't reach it.
+fn pixelAt(picture: *const ShapePicture, row: i64, column: i64) ?usize {
+    const y = row - picture.top;
+    const x = column - picture.left;
+    if (y < 0 or y >= picture.height or x < 0 or x >= picture.width) return null;
+    return @intCast(y * picture.width + x);
+}
+
 test shapePicture {
-    var target: ShapeTarget = try .init(std.testing.allocator, blockWidth * samples, blockWidth * samples);
-    defer target.deinit(std.testing.allocator);
+    const allocator = std.testing.allocator;
+    var target = try shapeTarget(allocator);
+    defer target.deinit(allocator);
     const red: [4][4]u8 = @splat(.{ 200, 0, 0, 255 });
     const image: world.Image = .{ .width = 2, .height = 2, .pixels = &red };
     const textures = [_]world.CubeFaces.Face{.{ .plain = &.{&image} }};
     const w = blockWidth;
-    const top = (w / 4) * w + w / 2;
-    const south = (w * 5 / 8) * w + w / 4;
-    const east = (w * 5 / 8) * w + w * 3 / 4;
+    const top = [2]i64{ w / 4, w / 2 };
+    const south = [2]i64{ w * 5 / 8, w / 4 };
+    const east = [2]i64{ w * 5 / 8, w * 3 / 4 };
 
-    // A whole block's box is the cube, filling the square, its faces lit as a cube's.
-    const cube = shapePicture(&.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, &target);
+    // A whole block's box is the cube, filling the square, its faces lit as a cube's and each
+    // pixel as deep as a cube's.
+    const cube = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, &target);
+    defer cube.destroy(allocator);
+    try std.testing.expectEqual([4]i64{ 0, 0, w, w }, [4]i64{ cube.left, cube.top, cube.width, cube.height });
     try std.testing.expect(cube.fills);
     try std.testing.expectEqual(null, cube.tinted);
     const colours = faceColours(.{ 200, 0, 0 });
-    try std.testing.expectEqual(colours[0], cube.plain[top]);
-    try std.testing.expectEqual(colours[1], cube.plain[south]);
-    try std.testing.expectEqual(colours[2], cube.plain[east]);
-    try std.testing.expectEqual(tiles.transparent, cube.plain[0]);
+    for ([_][2]i64{ top, south, east }, colours) |at, colour| {
+        const p = pixelAt(cube, at[0], at[1]).?;
+        try std.testing.expectEqual(colour, cube.plain[p]);
+        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(cubeDepths[@intCast(at[0])][@intCast(at[1])])), @as(f32, @floatFromInt(cube.depths[p])), depthSteps / 16);
+    }
+    try std.testing.expect(!cube.shows(pixelAt(cube, 0, 0).?));
 
     // A slab leaves the top of the square empty, for what's behind it to show.
-    const slab = shapePicture(&.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, &target);
+    const slab = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, &target);
+    defer slab.destroy(allocator);
     try std.testing.expect(!slab.fills);
-    try std.testing.expect(!slab.shows(w * 2 + w / 2));
-    try std.testing.expectEqual(colours[1], slab.plain[(w * 3 / 4) * w + w / 4]);
+    try std.testing.expectEqual(w / 4, slab.top);
+    try std.testing.expectEqual(null, pixelAt(slab, w / 8, w / 2));
+    try std.testing.expectEqual(colours[1], slab.plain[pixelAt(slab, w * 3 / 4, w / 4).?]);
+
+    // A plank twice as long as the block reaches out of its square both ways, drawn whole.
+    var plank = testBox(.{ 2, 1.0 / 16.0, 1 });
+    plank.transform[0][3] = -0.5;
+    const long = try shapePicture(allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, &target);
+    defer long.destroy(allocator);
+    try std.testing.expectEqual(-w / 4, long.left);
+    try std.testing.expectEqual(w + w / 2, long.width);
 
     // A tinted texture goes into the tinted layer, covering the plain one.
     const tinted = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
-    const grass = shapePicture(&.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, &target);
-    try std.testing.expectEqual(colours[0], grass.tinted.?[top]);
-    try std.testing.expectEqual(colours[0], blend(grass.plain[top], grass.tinted.?[top], @splat(255)));
+    const grass = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, &target);
+    defer grass.destroy(allocator);
+    const p = pixelAt(grass, top[0], top[1]).?;
+    try std.testing.expectEqual(colours[0], grass.tinted.?[p]);
+    try std.testing.expectEqual(colours[0], blend(grass.plain[p], grass.tinted.?[p], @splat(255)));
 }
 
 test lightOf {
@@ -751,7 +888,7 @@ test lightOf {
 }
 
 test LazyPicture {
-    var target: ShapeTarget = try .init(std.testing.allocator, blockWidth * samples, blockWidth * samples);
+    var target = try shapeTarget(std.testing.allocator);
     defer target.deinit(std.testing.allocator);
     const red: [1][4]u8 = .{.{ 200, 0, 0, 255 }};
     const image: world.Image = .{ .width = 1, .height = 1, .pixels = &red };
@@ -759,7 +896,7 @@ test LazyPicture {
     var lazy: LazyPicture = .{ .shape = &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, .variant = 0 };
     // Drawn once, the first time.
     const picture = try lazy.get(std.testing.allocator, &target);
-    defer std.testing.allocator.destroy(picture);
+    defer picture.destroy(std.testing.allocator);
     try std.testing.expectEqual(picture, try lazy.get(std.testing.allocator, &target));
     try std.testing.expect(picture.fills);
 }
@@ -780,6 +917,8 @@ fn View(comptime Source: type) type {
         pictures: []Picture,
         /// Each shape's pictures, one for each variant, drawn as tiles first need them.
         shapePictures: []LazyPicture,
+        /// How far beyond its square a block's picture can reach: `reach` with shapes, else 0.
+        reach: i64,
         /// What `shapePictures` are kept in.
         allocator: std.mem.Allocator,
         height: u16,
@@ -921,6 +1060,7 @@ fn View(comptime Source: type) type {
                 .looks = lookList,
                 .colours = colours,
                 .pictures = pictureList,
+                .reach = if (shapePictures.items.len > 0) reach else 0,
                 .shapePictures = try shapePictures.toOwnedSlice(allocator),
                 .allocator = allocator,
                 .height = heights.world,
@@ -942,7 +1082,7 @@ fn View(comptime Source: type) type {
         }
 
         fn deinit(self: Self, allocator: std.mem.Allocator) void {
-            for (self.shapePictures) |*lazy| if (lazy.state.load(.acquire) == .made) allocator.destroy(lazy.picture);
+            for (self.shapePictures) |*lazy| if (lazy.state.load(.acquire) == .made) lazy.picture.destroy(allocator);
             allocator.free(self.shapePictures);
             allocator.free(self.pictures);
             allocator.free(self.colours);
@@ -975,8 +1115,9 @@ fn View(comptime Source: type) type {
             chunk: *world.Chunk,
             looks: *ChunkCache.Looks,
             cache: ChunkCache,
-            /// The depth of what each pixel shows: x + y + z of its block, larger nearer.
-            depth: *[tiles.size * tiles.size]i32,
+            /// The depth of what each pixel shows: x + y + z of its point, in `depthSteps`ths of
+            /// a block, larger nearer.
+            depth: *[tiles.size * tiles.size]i64,
             /// Where it draws the shapes' pictures it's the first to need.
             target: ShapeTarget,
 
@@ -989,9 +1130,9 @@ fn View(comptime Source: type) type {
                 errdefer allocator.destroy(looks);
                 var cache: ChunkCache = try .init(allocator, ChunkCache.defaultChunks, ChunkCache.defaultChunksWithBlocks);
                 errdefer cache.deinit(allocator);
-                const depth = try allocator.create([tiles.size * tiles.size]i32);
+                const depth = try allocator.create([tiles.size * tiles.size]i64);
                 errdefer allocator.destroy(depth);
-                const target: ShapeTarget = try .init(allocator, blockWidth * samples, blockWidth * samples);
+                const target = try shapeTarget(allocator);
                 return .{ .view = view, .reader = reader, .chunk = chunk, .looks = looks, .cache = cache, .depth = depth, .target = target };
             }
 
@@ -1008,15 +1149,17 @@ fn View(comptime Source: type) type {
             /// none has one.
             pub fn draw(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) !bool {
                 @memset(pixels, tiles.transparent);
-                @memset(self.depth, std.math.minInt(i32));
+                @memset(self.depth, std.math.minInt(i64));
                 const x0 = @as(i64, tile.x) * tiles.size;
                 const y0 = @as(i64, tile.y) * tiles.size;
                 var any = false;
-                // The lines whose squares fall on the tile (`Line.square`).
-                var u = @divFloor(x0 - blockWidth, across) + 2;
-                while (u <= @divFloor(x0 + tiles.size - 1, across) + 1) : (u += 1) {
-                    var v = @divFloor(y0 - blockWidth, down) + 3;
-                    while (v <= @divFloor(y0 + tiles.size - 1, down) + 2) : (v += 1) {
+                // The lines whose squares fall on the tile (`Line.square`), or near enough for
+                // a shape on them to reach into it.
+                const margin = self.view.reach;
+                var u = @divFloor(x0 - margin - blockWidth, across) + 2;
+                while (u <= @divFloor(x0 + tiles.size + margin - 1, across) + 1) : (u += 1) {
+                    var v = @divFloor(y0 - margin - blockWidth, down) + 3;
+                    while (v <= @divFloor(y0 + tiles.size + margin - 1, down) + 2) : (v += 1) {
                         if (@mod(u + v, 2) != 0) continue;
                         const line: Line = .{ .u = u, .v = v };
                         var y: i64 = @as(i64, self.view.height) - 1;
@@ -1048,22 +1191,31 @@ fn View(comptime Source: type) type {
                         tintedColours = faceColours(multiply(look.colour, tint));
                         break :colour .{ .faces = &tintedColours };
                     },
-                    inline .picture, .shape => |look, kind| picture: {
+                    .picture => |look| picture: {
                         const variant = if (look.variants > 1) self.view.source.variant(block.x, block.y, block.z, look.variants) else 0;
-                        const picture = switch (kind) {
-                            .picture => &self.view.pictures[look.index + variant],
-                            .shape => try self.view.shapePictures[look.index + variant].get(self.view.allocator, &self.target),
-                            else => comptime unreachable,
-                        };
-                        fills = picture.fills;
+                        const picture = &self.view.pictures[look.index + variant];
                         if (picture.tinted == null) break :picture .{ .picture = &picture.plain };
-                        const tint = if (look.tintedBy) |id| try self.reader.tint(id, block.x, block.y, block.z) else @as(world.Rgb, @splat(255));
-                        break :picture .{ .tintedPicture = .{ .picture = picture, .tint = tint } };
+                        break :picture .{ .tintedPicture = .{ .picture = picture, .tint = try self.tintOf(look, block) } };
+                    },
+                    .shape => |look| shape: {
+                        const variant = if (look.variants > 1) self.view.source.variant(block.x, block.y, block.z, look.variants) else 0;
+                        const picture = try self.view.shapePictures[look.index + variant].get(self.view.allocator, &self.target);
+                        fills = picture.fills;
+                        const tint = if (picture.tinted == null) @as(world.Rgb, @splat(255)) else try self.tintOf(look, block);
+                        break :shape .{ .shape = .{ .picture = picture, .tint = tint } };
                     },
                 };
                 const square = line.square();
-                const any = self.drawBlock(square.left - x0, square.top - y0, @intCast(block.x + block.y + block.z), paint, pixels);
+                const depth = (block.x + block.y + block.z) * depthSteps;
+                const any = self.drawBlock(square.left - x0, square.top - y0, depth, paint, pixels);
                 return .{ .any = any, .fills = fills };
+            }
+
+            /// The tint of a block drawn in pictures with a tinted layer: its own where it is, or
+            /// none to leave the layer as it is.
+            fn tintOf(self: *Worker, look: Look.Pictured, block: Block) !world.Rgb {
+                const id = look.tintedBy orelse return @splat(255);
+                return self.reader.tint(id, block.x, block.y, block.z);
             }
 
             const Block = struct { x: i64, y: i64, z: i64, look: u16 };
@@ -1075,6 +1227,8 @@ fn View(comptime Source: type) type {
                 picture: *const Picture.Layer,
                 /// A picture with its tinted layer, tinted by `tint`.
                 tintedPicture: struct { picture: *const Picture, tint: world.Rgb },
+                /// A shape's picture, its tinted layer, if it has one, tinted by `tint`.
+                shape: struct { picture: *const ShapePicture, tint: world.Rgb },
             };
 
             /// The next drawn block on a line of sight, following it down from height `y.*`, or
@@ -1144,9 +1298,32 @@ fn View(comptime Source: type) type {
                 return looks;
             }
 
-            fn drawBlock(self: *Worker, left: i64, top: i64, depth: i32, paint: Paint, pixels: *tiles.Pixels) bool {
+            /// Draws a block whose square's top left is at (`left`, `top`) in the tile, at
+            /// `depth`, x + y + z of the block in `depthSteps`ths, on each pixel where what it
+            /// shows is nearer than what's there. Returns whether it drew any.
+            fn drawBlock(self: *Worker, left: i64, top: i64, depth: i64, paint: Paint, pixels: *tiles.Pixels) bool {
                 var any = false;
                 switch (paint) {
+                    .shape => |from| {
+                        const picture = from.picture;
+                        for (0..picture.height) |row| {
+                            const py = top + picture.top + @as(i64, @intCast(row));
+                            if (py < 0 or py >= tiles.size) continue;
+                            for (0..picture.width) |column| {
+                                const px = left + picture.left + @as(i64, @intCast(column));
+                                if (px < 0 or px >= tiles.size) continue;
+                                const at = row * picture.width + column;
+                                // Where it shows nothing, what's behind it does.
+                                if (!picture.shows(at)) continue;
+                                const p: usize = @intCast(py * tiles.size + px);
+                                const pointDepth = depth + picture.depths[at];
+                                if (pointDepth <= self.depth[p]) continue;
+                                self.depth[p] = pointDepth;
+                                pixels[p] = if (picture.tinted) |tinted| blend(picture.plain[at], tinted[at], from.tint) else picture.plain[at];
+                                any = true;
+                            }
+                        }
+                    },
                     inline else => |from, kind| for (0..blockWidth) |row| {
                         const py = top + @as(i64, @intCast(row));
                         if (py < 0 or py >= tiles.size) continue;
@@ -1156,19 +1333,15 @@ fn View(comptime Source: type) type {
                             const face = faces[row][column];
                             if (face == .none) continue;
                             const at = row * blockWidth + column;
-                            // Where a picture shows nothing, what's behind it does.
-                            switch (kind) {
-                                .faces => {},
-                                .picture => if (from[at] & 0xff000000 == 0) continue,
-                                .tintedPicture => if (!from.picture.shows(at)) continue,
-                            }
                             const p: usize = @intCast(py * tiles.size + px);
-                            if (depth <= self.depth[p]) continue;
-                            self.depth[p] = depth;
+                            const pointDepth = depth + cubeDepths[row][column];
+                            if (pointDepth <= self.depth[p]) continue;
+                            self.depth[p] = pointDepth;
                             pixels[p] = switch (kind) {
                                 .faces => from[@backingInt(face) - 1],
                                 .picture => from[at],
                                 .tintedPicture => blend(from.picture.plain[at], from.picture.tinted.?[at], from.tint),
+                                .shape => comptime unreachable,
                             };
                             any = true;
                         }

@@ -167,10 +167,11 @@ The renderer draws a block's shape into its own 32-pixel picture ([`src/renderer
 
 - **Faces** are drawn as two triangles each, at 2 × 2 points for each pixel, nearer covering farther within the block ([`src/renderer/rasterizer.zig`](../src/renderer/rasterizer.zig)). A point shows the texel there, if it's at least half opaque, so a plant's leaves leave the gaps between them. A pixel shows if at least half its points do, in their average colour, plain and tinted layers apart, as a cube's are.
 - **Light** is a cube's, top, south and east, mixed by how much the face faces up, south and east; a face turned away from the viewer, as a leaf seen from behind, is lit as though turned towards it. An element with `shade: false` is lit as a top.
-- **Only the cube's square** is drawn: parts of the shape outside it, such as the tips of plants wider than their block, are cut off at its edge.
+- **Parts outside the block** are drawn too, such as the tips of plants wider than their block, up to a block beyond the cube's square each way, the picture trimmed to what it shows. In the game's block shapes the larger test world has, most pictures stay in their square or reach a pixel or two beyond it; ferns and tall grasses reach up to 30. A tile draws the blocks on lines of sight up to a block beyond its edges too, so a picture reaching into it isn't cut there; that costs no time measurably, as encoding takes most of it.
+- **Depth:** each pixel of a picture keeps how far into its block its point is, x + y + z, as a cube's pixels do by the face they're on, and a tile keeps each pixel's depth in 256ths of a block, so a part reaching into a neighbour's square shows in front of or behind it as it is. A cube's faces are never less than a 64th of a block apart at the middle of a pixel, so cubes alone come out the same as when a whole block's x + y + z ordered them. Only a part reaching out from behind a block that hides the rest of it on the same line isn't drawn, as the line stops there.
 - **What's behind shows:** a line of sight goes on past a block whose picture doesn't cover the whole square, and draws the blocks behind it where it shows nothing, down to one that covers it.
 
-Drawing shapes made the larger test world's isometric view about 11% slower, measured against the same render without them, most of it in encoding the added detail.
+Drawing shapes made the larger test world's isometric view about 11% slower, measured against the same render without them, and drawing their parts outside the block about 8% more, most of it in encoding the added detail.
 
 ### Preparing blocks
 
@@ -226,7 +227,7 @@ Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/
 | Block and item names (`gamedata`), later assets | the game version and mods | Read once at startup. |
 | Tile height arrays and pixels | the tile size | Fixed per worker, reused for every tile. |
 | PNG encoding (`lib/png`) | the tile size | Each worker's encoder sets up its buffers once, for a full tile; nothing is allocated per tile. |
-| Shapes' pictures | the blocks a world has | Each is allocated the first time a tile needs it, about 8 KB. |
+| Shapes' pictures | the blocks a world has | Each is allocated the first time a tile needs it: 6 to 10 bytes a pixel it covers, about 6 to 10 KB for one in its square, up to 92 KB. |
 | WebP encoding (`lib/webp`) | the tile size | Each worker's encoder sets up its buffers once, with the working memory libwebp allocates from, 16.6 MB for a full tile, where tiles took up to 11.6; what doesn't fit comes from `malloc`. |
 | JPEG XL encoding (`lib/jxl`) | the tile size | The output buffer is set up once; libjxl allocates its working memory for every tile. |
 
