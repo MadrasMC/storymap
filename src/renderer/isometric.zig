@@ -1,10 +1,12 @@
 //! The isometric view, looking north-west from above: every block drawn as a cube, its top,
 //! south and east faces lit differently. In the `relief` style each is in its map type's relief
 //! colour (`relief.zig`); in the `game` style, a block the game draws as a cube is in its
-//! textures (`Picture`), one the game draws in another shape is in that shape (`shapePicture`),
-//! and any other in its texture's average colour, each tinted by the climate where it is, as the
-//! game tints grass, leaves and water. Otherwise, plants aren't drawn, nor low blocks, such as
-//! loose stones, which a whole cube would make look much larger than they are.
+//! textures (`pictureOf`), one the game draws in another shape is in that shape
+//! (`shapePicture`), each picture drawn once, when the game's blocks are prepared
+//! (`drawPictures`), and any other block in its texture's average colour, each tinted by the
+//! climate where it is, as the game tints grass, leaves and water. Otherwise, plants aren't
+//! drawn, nor low blocks, such as loose stones, which a whole cube would make look much larger
+//! than they are.
 //!
 //! Each tile follows its lines of sight (`Line`) from the top of the world, and draws the first
 //! block each meets, as Mapcrafter does, and past it those behind it while one leaves parts of
@@ -17,8 +19,8 @@
 //! - `heights() world.Heights`;
 //! - `blockCount() usize`, `mapType(id: i32) world.MapType`, `isVisible(id: i32) bool` and
 //!   `isLow(id: i32) bool`, a block taking up only the bottom of its place;
-//! - for the `game` style, `colour(id: i32) world.Rgb`, `cubeFaces(id: i32) ?*const
-//!   world.CubeFaces`, `shape(id: i32) ?*const world.Shape`, `isTinted(id: i32) bool`, and
+//! - for the `game` style, `colour(id: i32) world.Rgb`, `picturesOf(id: i32) ?u32`, the
+//!   number of the block's pictures (`Options.pictures`), `isTinted(id: i32) bool`, and
 //!   `variant(x: i64, y: i64, z: i64, count: u32) u32`, which of a texture's `count` variants
 //!   the block at (x, y, z) shows;
 //! - `Reader`, one per thread: `init(source: *const Source, allocator, null) !Reader`,
@@ -33,6 +35,7 @@ const tiles = @import("tiles");
 const Style = @import("theme").Style;
 const relief = @import("relief.zig");
 const rasterizer = @import("rasterizer.zig");
+pub const Pictures = @import("Pictures.zig");
 
 pub const folder = "isometric";
 pub const title = "Isometric";
@@ -65,6 +68,9 @@ pub const Stats = struct {
 pub const Options = struct {
     /// How blocks are drawn: a theme's `isometric/style.txt`. The game has one style, `game`.
     style: Style,
+    /// The pictures the `game` style draws blocks in (`drawPictures`), each block's by the
+    /// number its source gives (`picturesOf`); without them, it draws every block in its colour.
+    pictures: ?*const Pictures = null,
 };
 
 /// Renders `source` into `output` and returns the tiles written, at every level, owned by the
@@ -72,7 +78,7 @@ pub const Options = struct {
 /// than a chunk can number error.TooManyLooks.
 pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options, stats: *Stats) ![]tiles.Written {
     const start: Io.Timestamp = .now(io, .awake);
-    var view: View(Source) = try .init(allocator, source, options.style);
+    var view: View(Source) = try .init(allocator, source, options.style, options.pictures);
     defer view.deinit(allocator);
     const list = try tileList(allocator, source.chunkColumns, source.heights().world);
     defer allocator.free(list);
@@ -423,8 +429,8 @@ fn faceColours(colour: world.Rgb) [3]u32 {
     return .{ lit(pixel, light.get(.top)), lit(pixel, light.get(.south)), lit(pixel, light.get(.east)) };
 }
 
-/// A block's square drawn in its textures, its faces lit.
-const Picture = struct {
+/// A cube's square drawn in its textures, its faces lit.
+const CubePicture = struct {
     /// The faces' plain layers: opaque on every face, and transparent where none is.
     plain: Layer,
     /// The faces' tinted layers, lit but not yet tinted, each pixel's alpha how much of it the
@@ -433,6 +439,23 @@ const Picture = struct {
 
     const Layer = [blockWidth * blockWidth]u32;
 };
+
+const Picture = Pictures.Picture;
+
+/// `cube`'s picture in its variant `variant`, kept in `allocator`.
+fn cubePicture(allocator: std.mem.Allocator, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) !Picture {
+    const drawn = pictureOf(cube, variant, fallback);
+    return .{
+        .left = 0,
+        .top = 0,
+        .width = blockWidth,
+        .height = blockWidth,
+        .plain = try allocator.dupe(u32, &drawn.plain),
+        .tinted = if (drawn.tinted) |tinted| try allocator.dupe(u32, &tinted) else null,
+        .depths = try allocator.dupe(i16, @as(*const [blockWidth * blockWidth]i16, @ptrCast(&cubeDepths))),
+        .fills = true,
+    };
+}
 
 /// Points sampled across and down each pixel of a picture.
 const samples = 2;
@@ -447,10 +470,10 @@ fn variantCount(cube: *const world.CubeFaces) usize {
 /// Draws `cube` in its textures, each layer in its variant `variant` (counting round again for
 /// a layer with fewer): each pixel of a layer is the average of its texels under it. A plain
 /// pixel over only transparent texels is `fallback`.
-fn pictureOf(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) Picture {
-    var out: Picture = .{ .plain = undefined, .tinted = null };
+fn pictureOf(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) CubePicture {
+    var out: CubePicture = .{ .plain = undefined, .tinted = null };
     const anyTinted = cube.up.tinted.len > 0 or cube.south.tinted.len > 0 or cube.east.tinted.len > 0;
-    var tinted: Picture.Layer = undefined;
+    var tinted: CubePicture.Layer = undefined;
     for (0..blockWidth) |row| for (0..blockWidth) |column| {
         const p = row * blockWidth + column;
         const face = faces[row][column];
@@ -582,42 +605,11 @@ fn shapeTarget(allocator: std.mem.Allocator) !ShapeTarget {
     return .init(allocator, shapeSide * samples, shapeSide * samples);
 }
 
-/// A block's shape drawn in its textures, its faces lit (`shapePicture`): as much as it shows of
-/// a cube's square and around it, each pixel with how far into the block its point is.
-const ShapePicture = struct {
-    /// Where its top left pixel is, from the top left of the cube's square.
-    left: i16,
-    top: i16,
-    width: u16,
-    height: u16,
-    /// Row by row, as a cube's `Picture` has them.
-    plain: []u32,
-    tinted: ?[]u32,
-    /// x + y + z of each pixel's point, the block being from 0 to 1, in `depthSteps`ths.
-    depths: []i16,
-    /// Whether it covers the whole of a cube's square, so nothing behind the block shows.
-    fills: bool,
-
-    /// Whether it shows anything at pixel `p`.
-    fn shows(self: *const ShapePicture, p: usize) bool {
-        if (self.plain[p] & 0xff000000 != 0) return true;
-        const tinted = self.tinted orelse return false;
-        return tinted[p] & 0xff000000 != 0;
-    }
-
-    fn destroy(self: *const ShapePicture, allocator: std.mem.Allocator) void {
-        allocator.free(self.depths);
-        if (self.tinted) |tinted| allocator.free(tinted);
-        allocator.free(self.plain);
-        allocator.destroy(self);
-    }
-};
-
 /// Draws `shape` in its textures, each in its variant `variant` (counting round again for one
 /// with fewer), its faces lit by the way they face. Each of its pixels is drawn at `samples` ×
 /// `samples` points: it shows if at least half of them are covered, the average of their
 /// colours, the depth of the nearest. Kept in `allocator`, trimmed to the pixels it shows.
-fn shapePicture(allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, target: *ShapeTarget) !*const ShapePicture {
+fn shapePicture(allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, target: *ShapeTarget) !Picture {
     std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
     target.clear();
     const scale: f32 = samples;
@@ -667,23 +659,11 @@ fn shapePicture(allocator: std.mem.Allocator, shape: *const world.Shape, variant
     const height = if (first[0] > last[0]) 0 else last[0] - first[0] + 1;
     const width = if (first[1] > last[1]) 0 else last[1] - first[1] + 1;
 
-    const out = try allocator.create(ShapePicture);
-    errdefer allocator.destroy(out);
     const plain = try allocator.alloc(u32, width * height);
     errdefer allocator.free(plain);
     const tinted: ?[]u32 = if (anyTinted) try allocator.alloc(u32, width * height) else null;
     errdefer if (tinted) |layer| allocator.free(layer);
     const depths = try allocator.alloc(i16, width * height);
-    out.* = .{
-        .left = @as(i16, @intCast(first[1])) - reach,
-        .top = @as(i16, @intCast(first[0])) - reach,
-        .width = @intCast(width),
-        .height = @intCast(height),
-        .plain = plain,
-        .tinted = tinted,
-        .depths = depths,
-        .fills = fills,
-    };
     for (0..height) |y| for (0..width) |x| {
         const row = first[0] + y;
         const column = first[1] + x;
@@ -712,37 +692,93 @@ fn shapePicture(allocator: std.mem.Allocator, shape: *const world.Shape, variant
         }
         depths[p] = @intFromFloat(@round(nearest * depthSteps));
     };
-    return out;
+    return .{
+        .left = @as(i16, @intCast(first[1])) - reach,
+        .top = @as(i16, @intCast(first[0])) - reach,
+        .width = @intCast(width),
+        .height = @intCast(height),
+        .plain = plain,
+        .tinted = tinted,
+        .depths = depths,
+        .fills = fills,
+    };
 }
 
-/// A shape's picture in one of its variants, drawn the first time a tile needs it, by the first
-/// worker to need it, while any other that does waits.
-const LazyPicture = struct {
-    shape: *const world.Shape,
-    variant: u32,
-    state: std.atomic.Value(State) = .init(.unmade),
-    /// Once `state` is `made`.
-    picture: *const ShapePicture = undefined,
+/// What a game's reader has for drawing one of its blocks in pictures: a cube's faces or a
+/// shape, and the colour that fills a cube's texture's holes.
+pub const Drawable = struct {
+    cube: ?*const world.CubeFaces = null,
+    shape: ?*const world.Shape = null,
+    colour: world.Rgb = @splat(0),
+};
 
-    const State = enum(u8) { unmade, making, made };
-
-    /// The picture, drawn in `target` and kept in memory from `allocator` the first time, which
-    /// must allow allocating from any thread.
-    fn get(self: *LazyPicture, allocator: std.mem.Allocator, target: *ShapeTarget) !*const ShapePicture {
-        if (self.state.load(.acquire) == .made) return self.picture;
-        if (self.state.cmpxchgStrong(.unmade, .making, .acquire, .acquire) == null) {
-            errdefer self.state.store(.unmade, .release);
-            const picture = try shapePicture(allocator, self.shape, self.variant, target);
-            self.picture = picture;
-            self.state.store(.made, .release);
-            return picture;
+/// Draws every block's pictures, one for each variant of its textures, and writes them
+/// (`Pictures`), each block's under its index in `drawables`. Blocks with the same faces or the
+/// same shape and textures share pictures. Keeps them in `arena` as it goes. Returns how many
+/// there are.
+pub fn drawPictures(arena: std.mem.Allocator, drawables: []const Drawable, w: *std.Io.Writer) !usize {
+    var pictures: std.ArrayList(Picture) = .empty;
+    const entries = try arena.alloc(Pictures.Entry, drawables.len);
+    var byFaces: std.HashMapUnmanaged(world.CubeFaces, Pictures.Entry, FacesContext, std.hash_map.default_max_load_percentage) = .empty;
+    var byShape: std.HashMapUnmanaged(*const world.Shape, Pictures.Entry, ShapeContext, std.hash_map.default_max_load_percentage) = .empty;
+    var target = try shapeTarget(arena);
+    for (entries, drawables) |*entry, drawable| {
+        entry.* = .{};
+        if (drawable.cube) |cube| {
+            const found = try byFaces.getOrPut(arena, cube.*);
+            if (!found.found_existing) {
+                const variants = variantCount(cube);
+                found.value_ptr.* = .{ .first = @intCast(pictures.items.len), .variants = @intCast(variants) };
+                for (0..variants) |variant| try pictures.append(arena, try cubePicture(arena, cube, variant, drawable.colour));
+                found.value_ptr.flags.tinted = pictures.items[found.value_ptr.first].tinted != null;
+            }
+            entry.* = found.value_ptr.*;
+        } else if (drawable.shape) |shape| {
+            const found = try byShape.getOrPut(arena, shape);
+            if (!found.found_existing) {
+                const variants = shapeVariants(shape);
+                found.value_ptr.* = .{ .first = @intCast(pictures.items.len), .variants = @intCast(variants), .flags = .{ .shape = true } };
+                for (0..variants) |variant| {
+                    const picture = try shapePicture(arena, shape, variant, &target);
+                    if (picture.tinted != null) found.value_ptr.flags.tinted = true;
+                    try pictures.append(arena, picture);
+                }
+            }
+            entry.* = found.value_ptr.*;
         }
-        while (true) switch (self.state.load(.acquire)) {
-            .made => return self.picture,
-            .making => std.atomic.spinLoopHint(),
-            // The worker drawing it failed: this one tries.
-            .unmade => return self.get(allocator, target),
-        };
+    }
+    try Pictures.write(w, entries, pictures.items);
+    return pictures.items.len;
+}
+
+/// Cube faces by their variants' slices, which a game's reader shares between blocks with the
+/// same faces.
+const FacesContext = struct {
+    pub fn hash(_: FacesContext, cube: world.CubeFaces) u64 {
+        var hasher: std.hash.Wyhash = .init(0);
+        std.hash.autoHashStrat(&hasher, cube, .Shallow);
+        return hasher.final();
+    }
+
+    pub fn eql(_: FacesContext, a: world.CubeFaces, b: world.CubeFaces) bool {
+        return std.meta.eql(a, b);
+    }
+};
+
+/// Shapes by their boxes' slice and their textures' variants' slices, which a game's reader
+/// shares between blocks with the same shape and textures.
+const ShapeContext = struct {
+    pub fn hash(_: ShapeContext, shape: *const world.Shape) u64 {
+        var hasher: std.hash.Wyhash = .init(0);
+        std.hash.autoHash(&hasher, @intFromPtr(shape.boxes.ptr));
+        for (shape.textures) |texture| std.hash.autoHashStrat(&hasher, texture, .Shallow);
+        return hasher.final();
+    }
+
+    pub fn eql(_: ShapeContext, a: *const world.Shape, b: *const world.Shape) bool {
+        if (a.boxes.ptr != b.boxes.ptr or a.textures.len != b.textures.len) return false;
+        for (a.textures, b.textures) |x, y| if (!std.meta.eql(x, y)) return false;
+        return true;
     }
 };
 
@@ -815,7 +851,7 @@ fn testBox(size: [3]f32) world.Shape.Box {
 
 /// The index in `picture` of the pixel at (`row`, `column`) of the cube's square, or null if the
 /// picture doesn't reach it.
-fn pixelAt(picture: *const ShapePicture, row: i64, column: i64) ?usize {
+fn pixelAt(picture: *const Picture, row: i64, column: i64) ?usize {
     const y = row - picture.top;
     const x = column - picture.left;
     if (y < 0 or y >= picture.height or x < 0 or x >= picture.width) return null;
@@ -823,9 +859,10 @@ fn pixelAt(picture: *const ShapePicture, row: i64, column: i64) ?usize {
 }
 
 test shapePicture {
-    const allocator = std.testing.allocator;
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     var target = try shapeTarget(allocator);
-    defer target.deinit(allocator);
     const red: [4][4]u8 = @splat(.{ 200, 0, 0, 255 });
     const image: world.Image = .{ .width = 2, .height = 2, .pixels = &red };
     const textures = [_]world.CubeFaces.Face{.{ .plain = &.{&image} }};
@@ -837,39 +874,35 @@ test shapePicture {
     // A whole block's box is the cube, filling the square, its faces lit as a cube's and each
     // pixel as deep as a cube's.
     const cube = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, &target);
-    defer cube.destroy(allocator);
     try std.testing.expectEqual([4]i64{ 0, 0, w, w }, [4]i64{ cube.left, cube.top, cube.width, cube.height });
     try std.testing.expect(cube.fills);
     try std.testing.expectEqual(null, cube.tinted);
     const colours = faceColours(.{ 200, 0, 0 });
     for ([_][2]i64{ top, south, east }, colours) |at, colour| {
-        const p = pixelAt(cube, at[0], at[1]).?;
+        const p = pixelAt(&cube, at[0], at[1]).?;
         try std.testing.expectEqual(colour, cube.plain[p]);
         try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(cubeDepths[@intCast(at[0])][@intCast(at[1])])), @as(f32, @floatFromInt(cube.depths[p])), depthSteps / 16);
     }
-    try std.testing.expect(!cube.shows(pixelAt(cube, 0, 0).?));
+    try std.testing.expect(!cube.shows(pixelAt(&cube, 0, 0).?));
 
     // A slab leaves the top of the square empty, for what's behind it to show.
     const slab = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, &target);
-    defer slab.destroy(allocator);
     try std.testing.expect(!slab.fills);
     try std.testing.expectEqual(w / 4, slab.top);
-    try std.testing.expectEqual(null, pixelAt(slab, w / 8, w / 2));
-    try std.testing.expectEqual(colours[1], slab.plain[pixelAt(slab, w * 3 / 4, w / 4).?]);
+    try std.testing.expectEqual(null, pixelAt(&slab, w / 8, w / 2));
+    try std.testing.expectEqual(colours[1], slab.plain[pixelAt(&slab, w * 3 / 4, w / 4).?]);
 
     // A plank twice as long as the block reaches out of its square both ways, drawn whole.
     var plank = testBox(.{ 2, 1.0 / 16.0, 1 });
     plank.transform[0][3] = -0.5;
     const long = try shapePicture(allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, &target);
-    defer long.destroy(allocator);
     try std.testing.expectEqual(-w / 4, long.left);
     try std.testing.expectEqual(w + w / 2, long.width);
 
     // A tinted texture goes into the tinted layer, covering the plain one.
     const tinted = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
     const grass = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, &target);
-    defer grass.destroy(allocator);
-    const p = pixelAt(grass, top[0], top[1]).?;
+    const p = pixelAt(&grass, top[0], top[1]).?;
     try std.testing.expectEqual(colours[0], grass.tinted.?[p]);
     try std.testing.expectEqual(colours[0], blend(grass.plain[p], grass.tinted.?[p], @splat(255)));
 }
@@ -887,18 +920,39 @@ test lightOf {
     try std.testing.expectEqual((light.get(.top) + light.get(.south)) / 2, lightOf(slope));
 }
 
-test LazyPicture {
-    var target = try shapeTarget(std.testing.allocator);
-    defer target.deinit(std.testing.allocator);
+test drawPictures {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const red: [1][4]u8 = .{.{ 200, 0, 0, 255 }};
     const image: world.Image = .{ .width = 1, .height = 1, .pixels = &red };
-    const textures = [_]world.CubeFaces.Face{.{ .plain = &.{&image} }};
-    var lazy: LazyPicture = .{ .shape = &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, .variant = 0 };
-    // Drawn once, the first time.
-    const picture = try lazy.get(std.testing.allocator, &target);
-    defer picture.destroy(std.testing.allocator);
-    try std.testing.expectEqual(picture, try lazy.get(std.testing.allocator, &target));
-    try std.testing.expect(picture.fills);
+    const blue: [1][4]u8 = .{.{ 0, 0, 200, 255 }};
+    const other: world.Image = .{ .width = 1, .height = 1, .pixels = &blue };
+    const plain: world.CubeFaces.Face = .{ .plain = &.{ &image, &other } };
+    const cube: world.CubeFaces = .{ .up = plain, .south = plain, .east = plain };
+    const textures = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
+    const boxes = [_]world.Shape.Box{testBox(.{ 1, 0.5, 1 })};
+    const slab: world.Shape = .{ .boxes = &boxes, .textures = &textures };
+    const sameSlab: world.Shape = .{ .boxes = &boxes, .textures = &textures };
+    // A cube with two variants, a block with neither, and two slabs sharing their pictures.
+    const drawables = [_]Drawable{ .{ .cube = &cube }, .{}, .{ .shape = &slab }, .{ .shape = &sameSlab } };
+    var file: std.Io.Writer.Allocating = .init(allocator);
+    try std.testing.expectEqual(3, try drawPictures(allocator, &drawables, &file.writer));
+    const bytes = try allocator.alignedAlloc(u8, .@"4", file.written().len);
+    @memcpy(bytes, file.written());
+
+    const pictures = try Pictures.parse(bytes);
+    try std.testing.expectEqual(3, pictures.stored.len);
+    try std.testing.expectEqual(Pictures.Entry{ .first = 0, .variants = 2 }, pictures.entry(0));
+    try std.testing.expectEqual(0, pictures.entry(1).variants);
+    try std.testing.expectEqual(Pictures.Entry{ .first = 2, .variants = 1, .flags = .{ .shape = true, .tinted = true } }, pictures.entry(2));
+    try std.testing.expectEqual(pictures.entry(2), pictures.entry(3));
+    // The cube's second variant is the blue one, each pixel as deep as a cube's.
+    const second = pictures.picture(1);
+    try std.testing.expect(second.fills);
+    try std.testing.expectEqual(faceColours(.{ 0, 0, 200 })[0], second.plain[(blockWidth / 4) * blockWidth + blockWidth / 2]);
+    try std.testing.expectEqual(cubeDepths[blockWidth / 4][blockWidth / 2], second.depths[(blockWidth / 4) * blockWidth + blockWidth / 2]);
+    try std.testing.expect(!pictures.picture(2).fills);
 }
 
 /// What every worker shares, read-only while they draw, and their totals once they're done.
@@ -914,13 +968,11 @@ fn View(comptime Source: type) type {
         /// In the `relief` style, each map type's three face colours at each height:
         /// `(mapType * height + y) * 3`, top, south, east.
         colours: []u32,
-        pictures: []Picture,
-        /// Each shape's pictures, one for each variant, drawn as tiles first need them.
-        shapePictures: []LazyPicture,
+        /// In the `game` style, the blocks' pictures; with none, every block is drawn in its
+        /// colour.
+        pictures: ?*const Pictures,
         /// How far beyond its square a block's picture can reach: `reach` with shapes, else 0.
         reach: i64,
-        /// What `shapePictures` are kept in.
-        allocator: std.mem.Allocator,
         height: u16,
         chunksRead: usize = 0,
 
@@ -932,57 +984,21 @@ fn View(comptime Source: type) type {
             colours: [3]u32,
             /// Each face in a colour times the tint of a block where it is.
             tintedColour: struct { colour: world.Rgb, block: i32 },
-            /// In its textures, as a cube: the index in `pictures` of its first picture, how
-            /// many it has, one for each variant, and the block whose tint colours its tinted
-            /// layer, or null to leave it as it is.
+            /// In its pictures: the number of the first in `pictures`, how many it has, one for
+            /// each variant, and the block whose tint colours their tinted layer, or null to
+            /// leave it as it is.
             picture: Pictured,
-            /// In its shape: the same, its pictures in `shapePictures`.
-            shape: Pictured,
 
             const Pictured = struct { index: u32, variants: u32 = 1, tintedBy: ?i32 = null };
         };
 
-        /// Cube faces by their variants' slices, which a game's reader shares between blocks
-        /// with the same faces.
-        const FacesContext = struct {
-            pub fn hash(_: FacesContext, cube: world.CubeFaces) u64 {
-                var hasher: std.hash.Wyhash = .init(0);
-                std.hash.autoHashStrat(&hasher, cube, .Shallow);
-                return hasher.final();
-            }
-
-            pub fn eql(_: FacesContext, a: world.CubeFaces, b: world.CubeFaces) bool {
-                return std.meta.eql(a, b);
-            }
-        };
-
-        /// Shapes by their boxes' slice and their textures' variants' slices, which a game's
-        /// reader shares between blocks with the same shape and textures.
-        const ShapeContext = struct {
-            pub fn hash(_: ShapeContext, shape: *const world.Shape) u64 {
-                var hasher: std.hash.Wyhash = .init(0);
-                std.hash.autoHash(&hasher, @intFromPtr(shape.boxes.ptr));
-                for (shape.textures) |texture| std.hash.autoHashStrat(&hasher, texture, .Shallow);
-                return hasher.final();
-            }
-
-            pub fn eql(_: ShapeContext, a: *const world.Shape, b: *const world.Shape) bool {
-                if (a.boxes.ptr != b.boxes.ptr or a.textures.len != b.textures.len) return false;
-                for (a.textures, b.textures) |x, y| if (!std.meta.eql(x, y)) return false;
-                return true;
-            }
-        };
-
-        fn init(allocator: std.mem.Allocator, source: *const Source, style: Style) !Self {
+        fn init(allocator: std.mem.Allocator, source: *const Source, style: Style, pictures: ?*const Pictures) !Self {
             const heights = source.heights();
             const blockLooks = try allocator.alloc(u16, source.blockCount());
             errdefer allocator.free(blockLooks);
             var looks: std.ArrayList(Look) = .empty;
             errdefer looks.deinit(allocator);
-            var pictures: std.ArrayList(Picture) = .empty;
-            errdefer pictures.deinit(allocator);
-            var shapePictures: std.ArrayList(LazyPicture) = .empty;
-            errdefer shapePictures.deinit(allocator);
+            var anyShape = false;
             var colours: []u32 = &.{};
             errdefer allocator.free(colours);
             switch (style) {
@@ -995,96 +1011,57 @@ fn View(comptime Source: type) type {
                 },
                 .game => |gameStyle| {
                     if (gameStyle != null) return error.UnknownStyle;
-                    // Blocks with the same faces share a picture, and untinted blocks that look
-                    // the same share a look. A tinted block has a look of its own, naming it,
-                    // as its tint is its own.
-                    var byFaces: std.HashMapUnmanaged(world.CubeFaces, u32, FacesContext, std.hash_map.default_max_load_percentage) = .empty;
-                    defer byFaces.deinit(allocator);
-                    var byShape: std.HashMapUnmanaged(*const world.Shape, u32, ShapeContext, std.hash_map.default_max_load_percentage) = .empty;
-                    defer byShape.deinit(allocator);
+                    // Untinted blocks that look the same share a look. A tinted block has a look
+                    // of its own, naming it, as its tint is its own.
                     var byPicture: std.AutoHashMapUnmanaged(u32, u16) = .empty;
                     defer byPicture.deinit(allocator);
-                    var byShapePicture: std.AutoHashMapUnmanaged(u32, u16) = .empty;
-                    defer byShapePicture.deinit(allocator);
                     var byColour: std.AutoHashMapUnmanaged(world.Rgb, u16) = .empty;
                     defer byColour.deinit(allocator);
                     for (blockLooks, 0..) |*look, i| {
                         const id: i32 = @intCast(i);
+                        const entry: Pictures.Entry = if (pictures) |all| (if (source.picturesOf(id)) |n| all.entry(n) else .{}) else .{};
                         // A block in a shape is drawn in it, plants and low blocks too.
-                        const shape = if (source.isVisible(id)) source.shape(id) else null;
-                        if (shape == null and !isDrawn(source, id)) {
+                        const shaped = entry.variants > 0 and entry.flags.shape and source.isVisible(id);
+                        if (!shaped and !isDrawn(source, id)) {
                             look.* = 0;
                             continue;
                         }
+                        anyShape = anyShape or shaped;
                         const colour = source.colour(id);
                         const isTinted = source.isTinted(id);
-                        if (source.cubeFaces(id)) |cube| {
-                            const variants = variantCount(cube);
-                            const picture = try byFaces.getOrPut(allocator, cube.*);
-                            if (!picture.found_existing) {
-                                picture.value_ptr.* = @intCast(pictures.items.len);
-                                for (0..variants) |variant| try pictures.append(allocator, pictureOf(cube, variant, colour));
+                        if (entry.variants > 0) {
+                            const pictured: Look.Pictured = .{ .index = entry.first, .variants = entry.variants };
+                            if (isTinted and entry.flags.tinted) {
+                                var own = pictured;
+                                own.tintedBy = id;
+                                look.* = try addLook(allocator, &looks, .{ .picture = own });
+                                continue;
                             }
-                            const pictured: Look.Pictured = .{ .index = picture.value_ptr.*, .variants = @intCast(variants) };
-                            const tinted = pictures.items[pictured.index].tinted != null;
-                            look.* = try addPictured(allocator, &looks, &byPicture, .picture, pictured, if (isTinted and tinted) id else null);
-                        } else if (shape) |drawn| {
-                            const variants = shapeVariants(drawn);
-                            const picture = try byShape.getOrPut(allocator, drawn);
-                            if (!picture.found_existing) {
-                                picture.value_ptr.* = @intCast(shapePictures.items.len);
-                                for (0..variants) |variant| try shapePictures.append(allocator, .{ .shape = drawn, .variant = @intCast(variant) });
-                            }
-                            const pictured: Look.Pictured = .{ .index = picture.value_ptr.*, .variants = @intCast(variants) };
-                            const tinted = for (drawn.textures) |texture| {
-                                if (texture.tinted.len > 0) break true;
-                            } else false;
-                            look.* = try addPictured(allocator, &looks, &byShapePicture, .shape, pictured, if (isTinted and tinted) id else null);
+                            const found = try byPicture.getOrPut(allocator, pictured.index);
+                            if (!found.found_existing) found.value_ptr.* = try addLook(allocator, &looks, .{ .picture = pictured });
+                            look.* = found.value_ptr.*;
                         } else if (isTinted) {
                             look.* = try addLook(allocator, &looks, .{ .tintedColour = .{ .colour = colour, .block = id } });
                         } else {
-                            const entry = try byColour.getOrPut(allocator, colour);
-                            if (!entry.found_existing) entry.value_ptr.* = try addLook(allocator, &looks, .{ .colours = faceColours(colour) });
-                            look.* = entry.value_ptr.*;
+                            const found = try byColour.getOrPut(allocator, colour);
+                            if (!found.found_existing) found.value_ptr.* = try addLook(allocator, &looks, .{ .colours = faceColours(colour) });
+                            look.* = found.value_ptr.*;
                         }
                     }
                 },
             }
-            const lookList = try looks.toOwnedSlice(allocator);
-            errdefer allocator.free(lookList);
-            const pictureList = try pictures.toOwnedSlice(allocator);
-            errdefer allocator.free(pictureList);
             return .{
                 .source = source,
                 .blockLooks = blockLooks,
-                .looks = lookList,
+                .looks = try looks.toOwnedSlice(allocator),
                 .colours = colours,
-                .pictures = pictureList,
-                .reach = if (shapePictures.items.len > 0) reach else 0,
-                .shapePictures = try shapePictures.toOwnedSlice(allocator),
-                .allocator = allocator,
+                .pictures = pictures,
+                .reach = if (anyShape) reach else 0,
                 .height = heights.world,
             };
         }
 
-        /// The look of a block drawn in pictures: its own, naming it, for a block whose tint
-        /// colours them (`tintedBy`), as its tint is its own; else one shared by every block in
-        /// the same pictures.
-        fn addPictured(allocator: std.mem.Allocator, looks: *std.ArrayList(Look), byPictures: *std.AutoHashMapUnmanaged(u32, u16), comptime kind: std.meta.Tag(Look), pictured: Look.Pictured, tintedBy: ?i32) !u16 {
-            if (tintedBy) |id| {
-                var own = pictured;
-                own.tintedBy = id;
-                return addLook(allocator, looks, @unionInit(Look, @tagName(kind), own));
-            }
-            const entry = try byPictures.getOrPut(allocator, pictured.index);
-            if (!entry.found_existing) entry.value_ptr.* = try addLook(allocator, looks, @unionInit(Look, @tagName(kind), pictured));
-            return entry.value_ptr.*;
-        }
-
         fn deinit(self: Self, allocator: std.mem.Allocator) void {
-            for (self.shapePictures) |*lazy| if (lazy.state.load(.acquire) == .made) lazy.picture.destroy(allocator);
-            allocator.free(self.shapePictures);
-            allocator.free(self.pictures);
             allocator.free(self.colours);
             allocator.free(self.looks);
             allocator.free(self.blockLooks);
@@ -1118,8 +1095,6 @@ fn View(comptime Source: type) type {
             /// The depth of what each pixel shows: x + y + z of its point, in `depthSteps`ths of
             /// a block, larger nearer.
             depth: *[tiles.size * tiles.size]i64,
-            /// Where it draws the shapes' pictures it's the first to need.
-            target: ShapeTarget,
 
             pub fn init(view: *const Self, allocator: std.mem.Allocator) !Worker {
                 var reader: Source.Reader = try .init(view.source, allocator, null);
@@ -1131,13 +1106,10 @@ fn View(comptime Source: type) type {
                 var cache: ChunkCache = try .init(allocator, ChunkCache.defaultChunks, ChunkCache.defaultChunksWithBlocks);
                 errdefer cache.deinit(allocator);
                 const depth = try allocator.create([tiles.size * tiles.size]i64);
-                errdefer allocator.destroy(depth);
-                const target = try shapeTarget(allocator);
-                return .{ .view = view, .reader = reader, .chunk = chunk, .looks = looks, .cache = cache, .depth = depth, .target = target };
+                return .{ .view = view, .reader = reader, .chunk = chunk, .looks = looks, .cache = cache, .depth = depth };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
-                self.target.deinit(allocator);
                 allocator.destroy(self.depth);
                 self.cache.deinit(allocator);
                 allocator.destroy(self.looks);
@@ -1193,16 +1165,10 @@ fn View(comptime Source: type) type {
                     },
                     .picture => |look| picture: {
                         const variant = if (look.variants > 1) self.view.source.variant(block.x, block.y, block.z, look.variants) else 0;
-                        const picture = &self.view.pictures[look.index + variant];
-                        if (picture.tinted == null) break :picture .{ .picture = &picture.plain };
-                        break :picture .{ .tintedPicture = .{ .picture = picture, .tint = try self.tintOf(look, block) } };
-                    },
-                    .shape => |look| shape: {
-                        const variant = if (look.variants > 1) self.view.source.variant(block.x, block.y, block.z, look.variants) else 0;
-                        const picture = try self.view.shapePictures[look.index + variant].get(self.view.allocator, &self.target);
+                        const picture = self.view.pictures.?.picture(look.index + variant);
                         fills = picture.fills;
                         const tint = if (picture.tinted == null) @as(world.Rgb, @splat(255)) else try self.tintOf(look, block);
-                        break :shape .{ .shape = .{ .picture = picture, .tint = tint } };
+                        break :picture .{ .picture = .{ .picture = picture, .tint = tint } };
                     },
                 };
                 const square = line.square();
@@ -1224,11 +1190,8 @@ fn View(comptime Source: type) type {
             /// a picture.
             const Paint = union(enum) {
                 faces: *const [3]u32,
-                picture: *const Picture.Layer,
-                /// A picture with its tinted layer, tinted by `tint`.
-                tintedPicture: struct { picture: *const Picture, tint: world.Rgb },
-                /// A shape's picture, its tinted layer, if it has one, tinted by `tint`.
-                shape: struct { picture: *const ShapePicture, tint: world.Rgb },
+                /// A picture, its tinted layer, if it has one, tinted by `tint`.
+                picture: struct { picture: Picture, tint: world.Rgb },
             };
 
             /// The next drawn block on a line of sight, following it down from height `y.*`, or
@@ -1304,8 +1267,8 @@ fn View(comptime Source: type) type {
             fn drawBlock(self: *Worker, left: i64, top: i64, depth: i64, paint: Paint, pixels: *tiles.Pixels) bool {
                 var any = false;
                 switch (paint) {
-                    .shape => |from| {
-                        const picture = from.picture;
+                    .picture => |from| {
+                        const picture = &from.picture;
                         for (0..picture.height) |row| {
                             const py = top + picture.top + @as(i64, @intCast(row));
                             if (py < 0 or py >= tiles.size) continue;
@@ -1324,7 +1287,7 @@ fn View(comptime Source: type) type {
                             }
                         }
                     },
-                    inline else => |from, kind| for (0..blockWidth) |row| {
+                    .faces => |colours| for (0..blockWidth) |row| {
                         const py = top + @as(i64, @intCast(row));
                         if (py < 0 or py >= tiles.size) continue;
                         for (0..blockWidth) |column| {
@@ -1332,17 +1295,11 @@ fn View(comptime Source: type) type {
                             if (px < 0 or px >= tiles.size) continue;
                             const face = faces[row][column];
                             if (face == .none) continue;
-                            const at = row * blockWidth + column;
                             const p: usize = @intCast(py * tiles.size + px);
                             const pointDepth = depth + cubeDepths[row][column];
                             if (pointDepth <= self.depth[p]) continue;
                             self.depth[p] = pointDepth;
-                            pixels[p] = switch (kind) {
-                                .faces => from[@backingInt(face) - 1],
-                                .picture => from[at],
-                                .tintedPicture => blend(from.picture.plain[at], from.picture.tinted.?[at], from.tint),
-                                .shape => comptime unreachable,
-                            };
+                            pixels[p] = colours[@backingInt(face) - 1];
                             any = true;
                         }
                     },

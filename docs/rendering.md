@@ -149,7 +149,7 @@ The isometric view's `game` style draws a block's top, south and east faces in i
 
 In 1.22.7 with Primitive Survival, 2,392 of the 14,781 blocks are cubes, 352 of them liquids, with 2,093 distinct face images; 544 cubes have variants, up to 10.
 
-The renderer draws each cube once when a render starts, into a 32-pixel square ([`src/renderer/isometric.zig`](../src/renderer/isometric.zig), `pictureOf`): each pixel of a face averages its texture at 2 × 2 points across it, a 32-texel texture giving about 4 texels a pixel, and is lit as the relief style lights that face. The plain and tinted layers stay apart: where a block is drawn, its tinted layer is multiplied by the block's tint there ([Climate and season tint](#climate-and-season-tint), steps 1 to 4, at the block's own height) and drawn over the plain one by how much of each pixel it covers. Blocks that aren't cubes take their average colour times the tint.
+The renderer draws each cube once, when the blocks are prepared ([Pictures](#pictures)), into a 32-pixel square ([`src/renderer/isometric.zig`](../src/renderer/isometric.zig), `pictureOf`): each pixel of a face averages its texture at 2 × 2 points across it, a 32-texel texture giving about 4 texels a pixel, and is lit as the relief style lights that face. The plain and tinted layers stay apart: where a block is drawn, its tinted layer is multiplied by the block's tint there ([Climate and season tint](#climate-and-season-tint), steps 1 to 4, at the block's own height) and drawn over the plain one by how much of each pixel it covers. Blocks that aren't cubes take their average colour times the tint.
 
 ### Shapes
 
@@ -163,7 +163,7 @@ Every other block of drawtype `JSON`, also `JSONAndSnowLayer` and `JSONAndWater`
 
 In 1.22.7 with Primitive Survival, 11,734 of the 14,781 blocks have a shape this way, the same file placed the same way 2,579 times over, in 51,007 boxes, up to 722 for one block; 57 of the textures their faces name are none of the above. 173 more blocks have shapes with nothing to draw (`block/basic/nothing`, `block/basic/invisible`). About 38% of the boxes the blocks are drawn in reach outside their block, such as plants' turned planes. Not followed yet: a shape's `alternates` and the files a `*` base starts other than the first (903 blocks), which the game picks one of for each block; `randomizeRotations` (727 blocks) and `randomDrawOffset` (448), which turn and move a block by its position; elements placed on another's by `stepParentName` (17), and shapes in other formats than the game's JSON (4). The drawtypes read without a shape: `SurfaceLayer` (336 blocks), `Cross` and `CrossAndSnowlayer` (28) and `BlockLayer` (15).
 
-The renderer draws a block's shape into its own 32-pixel picture ([`src/renderer/isometric.zig`](../src/renderer/isometric.zig), `shapePicture`), the first time a tile needs it, so only blocks a world has are drawn: 394 of the 19,197 pictures blocks of 1.22.7 with Primitive Survival can have, for the larger test world.
+The renderer draws a block's shape into its own picture ([`src/renderer/isometric.zig`](../src/renderer/isometric.zig), `shapePicture`), once, when the blocks are prepared ([Pictures](#pictures)).
 
 - **Faces** are drawn as two triangles each, at 2 × 2 points for each pixel, nearer covering farther within the block ([`src/renderer/rasterizer.zig`](../src/renderer/rasterizer.zig)). A point shows the texel there, if it's at least half opaque, so a plant's leaves leave the gaps between them. A pixel shows if at least half its points do, in their average colour, plain and tinted layers apart, as a cube's are.
 - **Light** is a cube's, top, south and east, mixed by how much the face faces up, south and east; a face turned away from the viewer, as a leaf seen from behind, is lit as though turned towards it. An element with `shade: false` is lit as a top.
@@ -183,6 +183,14 @@ Everything a map needs from the assets is prepared once, by [`src/vs/Prepared.zi
 - **A save's unknown blocks are reported:** those of mods that aren't installed, and any others the prepared set doesn't have.
 
 Preparing 1.22.7 with Primitive Survival takes about 2 s, for 14,781 blocks, most of it reading and decoding textures.
+
+### Pictures
+
+The isometric view's pictures of every prepared block are drawn once, beside them, in `<blocks folder>/<key>/pictures.bin` ([`src/renderer/Pictures.zig`](../src/renderer/Pictures.zig)): the game's reader prepares the blocks, and the renderer, which is all a picture depends on besides them, draws each block's cube or shape ([Cube faces](#cube-faces), [Shapes](#shapes)) in every variant of its textures, blocks with the same faces or the same shape and textures sharing pictures. A render maps the file and reads the pictures where they are, so a picture costs it neither drawing nor memory of its own, and the operating system reads in only the pages of the pictures its world has.
+
+- **Its own version:** the file names the version of the pictures and its layout (`Pictures.version`). A render that finds it missing, or of another version, draws it again from the prepared blocks, without reading the game's assets; preparing again draws it too.
+- **Laid out to be read in place:** a table of the blocks' pictures by their number in `blocks.txt`, a table of the pictures, then their pixels, everything at a multiple of its size, in little-endian order.
+- **Size:** for 1.22.7 with Primitive Survival, 21,561 pictures, 88 MB, drawn in about 2.3 s.
 
 ## Block entities that change how things look
 
@@ -227,7 +235,7 @@ Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/
 | Block and item names (`gamedata`), later assets | the game version and mods | Read once at startup. |
 | Tile height arrays and pixels | the tile size | Fixed per worker, reused for every tile. |
 | PNG encoding (`lib/png`) | the tile size | Each worker's encoder sets up its buffers once, for a full tile; nothing is allocated per tile. |
-| Shapes' pictures | the blocks a world has | Each is allocated the first time a tile needs it: 6 to 10 bytes a pixel it covers, about 6 to 10 KB for one in its square, up to 92 KB. |
+| Blocks' pictures | the game and mods | Drawn when the blocks are prepared, and mapped from their file (`pictures.bin`), not allocated. |
 | WebP encoding (`lib/webp`) | the tile size | Each worker's encoder sets up its buffers once, with the working memory libwebp allocates from, 16.6 MB for a full tile, where tiles took up to 11.6; what doesn't fit comes from `malloc`. |
 | JPEG XL encoding (`lib/jxl`) | the tile size | The output buffer is set up once; libjxl allocates its working memory for every tile. |
 

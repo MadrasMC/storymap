@@ -77,7 +77,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
 
     const loading: std.Io.Timestamp = .now(init.io, .awake);
     var prepared = prepare.blocks(init, folders, force);
-    defer if (prepared) |*blocks| blocks.deinit();
+    defer if (prepared) |*blocks| blocks.deinit(init.io);
     const blocksTime = loading.untilNow(init.io, .awake);
 
     const opening: std.Io.Timestamp = .now(init.io, .awake);
@@ -85,8 +85,8 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     defer save.close(allocator);
     if (season) |chosen| save.seasonProgress = chosen.progress();
     if (prepared) |*blocks| {
-        try warnUnknownBlocks(allocator, blocks, &save);
-        save.useBlocks(blocks);
+        try warnUnknownBlocks(allocator, &blocks.prepared, &save);
+        save.useBlocks(&blocks.prepared);
     }
     const openTime = opening.untilNow(init.io, .awake);
 
@@ -101,7 +101,8 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     var isometricStats: ?isometric.Stats = null;
     const writtenIsometric = if (parsed.flag("isometric")) list: {
         isometricStats = .{};
-        break :list try isometric.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.isometric }, &isometricStats.?);
+        const pictures = if (prepared) |*blocks| &blocks.pictures else null;
+        break :list try isometric.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.isometric, .pictures = pictures }, &isometricStats.?);
     } else null;
     defer if (writtenIsometric) |list| allocator.free(list);
     if (isometricStats) |stats| console.log("isometric: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });

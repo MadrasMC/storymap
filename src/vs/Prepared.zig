@@ -58,6 +58,8 @@ domains: std.StringHashMapUnmanaged(void) = .empty,
 blocks: std.StringHashMapUnmanaged(Block) = .empty,
 
 pub const Block = struct {
+    /// Its place in `blocks.txt`, from 0, which numbers what's prepared for it beside it.
+    number: u32 = 0,
     /// One of `BlockTypes.materials`, e.g. "Stone".
     material: []const u8,
     /// Its colour on the game's map, e.g. "land" or "forest" (docs/rendering.md#block-colours).
@@ -526,6 +528,7 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
                 break :shape .{ .boxes = geometry.boxes, .textures = bound };
             } else null;
             try self.blocks.put(arena, first, .{
+                .number = self.blocks.count(),
                 .material = material,
                 .colorCode = colorCode,
                 .colour = if (colour) |texture| texture.average else null,
@@ -761,6 +764,11 @@ test "prepare, load and compare with a save" {
     try std.testing.expectEqual(rock.up.tinted[0].pixels[1], soil.up.tinted[0].pixels[0]);
     try std.testing.expectEqual(rock.up.tinted[0].pixels[0], soil.south.tinted[0].pixels[0]);
     try std.testing.expectEqual(null, prepared.blocks.get("rock-granite").?.shape);
+    // Each block numbered by its place in the file.
+    var numbers: [4]bool = @splat(false);
+    var each = prepared.blocks.valueIterator();
+    while (each.next()) |block| numbers[block.number] = true;
+    try std.testing.expectEqual([4]bool{ true, true, true, true }, numbers);
 
     // The step's one box, turned a quarter about its origin, half a block high. Both its faces
     // are the granite, untinted, the same images as the rock's: one by name, and one by `all`,

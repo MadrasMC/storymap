@@ -1,8 +1,12 @@
 //! `storymap prepare`: prepares what the map needs from the game's and mods' assets into the
-//! blocks folder. A render does the same the first time it needs it (`blocks`).
+//! blocks folder, and draws the isometric view's pictures of the blocks beside them. A render
+//! does the same the first time it needs it (`blocks`).
 const std = @import("std");
 const Assets = @import("vs").Assets;
 const Prepared = @import("vs").Prepared;
+const SaveFile = @import("vs").SaveFile;
+const isometric = @import("renderer").isometric;
+const Pictures = isometric.Pictures;
 const console = @import("console");
 const args = @import("args");
 
@@ -29,13 +33,27 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .blocks = parsed.positional("folder") orelse Prepared.defaultFolder,
     };
     var prepared = blocks(init, folders, true) orelse unreachable;
-    prepared.deinit();
+    prepared.deinit(init.io);
 }
+
+/// The prepared blocks, and the isometric view's pictures of them, mapped from their file.
+pub const Blocks = struct {
+    prepared: Prepared,
+    pictures: Pictures,
+    file: std.Io.File,
+    map: std.Io.File.MemoryMap,
+
+    pub fn deinit(self: *Blocks, io: std.Io) void {
+        self.map.destroy(io);
+        self.file.close(io);
+        self.prepared.deinit();
+    }
+};
 
 /// The blocks for the installed game and mods, prepared now if they weren't yet or `force` is
 /// set. Without the game, the newest set prepared before, or else null; `force` then stops the
 /// program.
-pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Prepared {
+pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Blocks {
     const io = init.io;
     const arena = init.arena.allocator();
 
@@ -48,7 +66,7 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Prepared {
         defer folder.close(io);
         const prepared = Prepared.load(init.gpa, io, folder) catch return noBlocks();
         console.log("blocks: prepared earlier for Vintage Story {s} (game not found)", .{prepared.gameVersion});
-        return prepared;
+        return withPictures(init, prepared, folder, newest, false);
     };
 
     var assets = openAssets(init, gamePath, folders.data);
@@ -62,7 +80,8 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Prepared {
 
     const mods = assets.sources.items.len - 1;
     const modText = if (mods == 1) "mod" else "mods";
-    if (force or !Prepared.exists(io, folder)) {
+    const preparing = force or !Prepared.exists(io, folder);
+    if (preparing) {
         const start: std.Io.Timestamp = .now(io, .awake);
         var scratch: std.heap.ArenaAllocator = .init(init.gpa);
         defer scratch.deinit();
@@ -75,10 +94,70 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Prepared {
     } else {
         console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier", .{ assets.version orelse "(unknown version)", mods, modText });
     }
-    return Prepared.load(init.gpa, io, folder) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ folderPath, @errorName(err) });
+    const prepared = Prepared.load(init.gpa, io, folder) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ folderPath, @errorName(err) });
+    return withPictures(init, prepared, folder, folderPath, preparing);
 }
 
-fn noBlocks() ?Prepared {
+/// `prepared` with its pictures, from `folder`, drawn first if `draw` is set or the file isn't
+/// there or is of another version (`Pictures.version`).
+fn withPictures(init: std.process.Init, prepared: Prepared, folder: std.Io.Dir, folderPath: []const u8, draw: bool) Blocks {
+    const io = init.io;
+    if (!draw) if (mapPictures(io, folder)) |mapped| {
+        var out = mapped;
+        out.prepared = prepared;
+        return out;
+    } else |_| {};
+    const start: std.Io.Timestamp = .now(io, .awake);
+    const count = drawPictures(init, &prepared, folder) catch |err|
+        console.fail("{s}: could not draw the blocks' pictures ({s})", .{ folderPath, @errorName(err) });
+    const seconds = @as(f64, @floatFromInt(start.untilNow(io, .awake).toMilliseconds())) / 1000;
+    console.log("pictures: {} drawn in {d:.1} s", .{ count, seconds });
+    var mapped = mapPictures(io, folder) catch |err|
+        console.fail("{s}: could not read the blocks' pictures ({s})", .{ folderPath, @errorName(err) });
+    mapped.prepared = prepared;
+    return mapped;
+}
+
+/// Draws every prepared block's pictures into `folder`, written beside their name first so the
+/// file is never left half written. Returns how many there are.
+fn drawPictures(init: std.process.Init, prepared: *const Prepared, folder: std.Io.Dir) !usize {
+    const io = init.io;
+    var scratch: std.heap.ArenaAllocator = .init(init.gpa);
+    defer scratch.deinit();
+    const arena = scratch.allocator();
+    const drawables = try arena.alloc(isometric.Drawable, prepared.blocks.count());
+    var each = prepared.blocks.valueIterator();
+    while (each.next()) |block| drawables[block.number] = .{
+        .cube = if (block.cube) |*cube| cube else null,
+        .shape = if (block.shape) |*shape| shape else null,
+        .colour = SaveFile.colourOf(block),
+    };
+    const partial = Pictures.fileName ++ ".partial";
+    const file = try folder.createFile(io, partial, .{});
+    const count = count: {
+        defer file.close(io);
+        var buffer: [1 << 16]u8 = undefined;
+        var writer = file.writer(io, &buffer);
+        const count = try isometric.drawPictures(arena, drawables, &writer.interface);
+        try writer.interface.flush();
+        break :count count;
+    };
+    try folder.rename(partial, folder, Pictures.fileName, io);
+    return count;
+}
+
+/// `pictures.bin` in `folder`, mapped, without its prepared blocks yet.
+fn mapPictures(io: std.Io, folder: std.Io.Dir) !Blocks {
+    const file = try folder.openFile(io, Pictures.fileName, .{});
+    errdefer file.close(io);
+    const size = (try file.stat(io)).size;
+    if (size == 0 or size > std.math.maxInt(usize)) return error.NotPictures;
+    var map: std.Io.File.MemoryMap = try .create(io, file, .{ .len = @intCast(size), .protection = .{ .read = true }, .populate = false });
+    errdefer map.destroy(io);
+    return .{ .prepared = undefined, .pictures = try Pictures.parse(map.memory), .file = file, .map = map };
+}
+
+fn noBlocks() ?Blocks {
     console.warn("could not locate Vintage Story; drawing the map without block colours; pass `--game <folder>`", .{});
     return null;
 }

@@ -205,10 +205,9 @@ pub const Appearance = struct {
     colour: ?world.Rgb = null,
     /// Colours sampled across its texture: each column mixes in one of them.
     grain: []const world.Rgb = &.{},
-    /// Its faces' textures, for a block the game draws as a plain cube.
-    cube: ?*const world.CubeFaces = null,
-    /// Its shape, for a block the game draws in one other than the plain cube.
-    shape: ?*const world.Shape = null,
+    /// Its number among the prepared blocks (`Prepared.Block.number`), which its pictures are
+    /// under.
+    prepared: ?u32 = null,
     /// Taking up only the bottom of its block, its selection box less than half a block high, as
     /// a loose stone does. A thin layer of the ground, of snow, sand or gravel, isn't.
     low: bool = false,
@@ -229,12 +228,18 @@ pub fn colour(self: *const SaveFile, id: i32) world.Rgb {
     return blockAppearance.colour orelse palette.colours.get(blockAppearance.mapType);
 }
 
-pub fn cubeFaces(self: *const SaveFile, id: i32) ?*const world.CubeFaces {
-    return self.appearance(id).cube;
+/// Its texture's average colour, or else its type's on the game's map.
+pub fn colourOf(block: *const Prepared.Block) world.Rgb {
+    return block.colour orelse palette.colours.get(mapTypeOf(block));
 }
 
-pub fn shape(self: *const SaveFile, id: i32) ?*const world.Shape {
-    return self.appearance(id).shape;
+fn mapTypeOf(block: *const Prepared.Block) world.MapType {
+    return std.meta.stringToEnum(world.MapType, block.colorCode) orelse .land;
+}
+
+/// The number its pictures are under: its number among the prepared blocks.
+pub fn picturesOf(self: *const SaveFile, id: i32) ?u32 {
+    return self.appearance(id).prepared;
 }
 
 /// Which of a texture's `count` variants the block at (x, y, z) shows, by vsapi's
@@ -301,14 +306,13 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
         const cover = std.mem.eql(u8, block.material, "Snow");
         const ground = cover or std.mem.eql(u8, block.material, "Sand") or std.mem.eql(u8, block.material, "Gravel");
         blockAppearance.* = .{
-            .mapType = std.meta.stringToEnum(world.MapType, block.colorCode) orelse .land,
+            .mapType = mapTypeOf(block),
             .lake = std.mem.eql(u8, block.material, "Water") or (ice and !std.mem.eql(u8, code, "glacierice")),
             .cover = cover,
             .invisible = std.mem.eql(u8, block.material, "Meta"),
             .colour = block.colour,
             .grain = block.grain,
-            .cube = if (block.cube) |*cube| cube else null,
-            .shape = if (block.shape) |*blockShape| blockShape else null,
+            .prepared = block.number,
             .low = (block.height orelse 16) < 8 and !ground,
         };
     }
