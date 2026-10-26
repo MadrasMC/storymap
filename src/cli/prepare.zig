@@ -64,7 +64,7 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Blocks {
         const newest = (Prepared.newest(arena, io, blocksDir) catch null) orelse return noBlocks();
         var folder = blocksDir.openDir(io, newest, .{}) catch return noBlocks();
         defer folder.close(io);
-        const prepared = Prepared.load(init.gpa, io, folder) catch return noBlocks();
+        const prepared = Prepared.load(init.gpa, io, folder, .{ .drawing = false }) catch return noBlocks();
         console.log("blocks: prepared earlier for Vintage Story {s} (game not found)", .{prepared.gameVersion});
         return withPictures(init, prepared, folder, newest, false);
     };
@@ -94,12 +94,13 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Blocks {
     } else {
         console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier", .{ assets.version orelse "(unknown version)", mods, modText });
     }
-    const prepared = Prepared.load(init.gpa, io, folder) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ folderPath, @errorName(err) });
+    const prepared = Prepared.load(init.gpa, io, folder, .{ .drawing = false }) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ folderPath, @errorName(err) });
     return withPictures(init, prepared, folder, folderPath, preparing);
 }
 
 /// `prepared` with its pictures, from `folder`, drawn first if `draw` is set or the file isn't
-/// there or is of another version (`Pictures.version`).
+/// there or is of another version (`Pictures.version`). A render needs only the pictures, so
+/// `prepared` can leave out what drawing them needs.
 fn withPictures(init: std.process.Init, prepared: Prepared, folder: std.Io.Dir, folderPath: []const u8, draw: bool) Blocks {
     const io = init.io;
     if (!draw) if (mapPictures(io, folder)) |mapped| {
@@ -108,7 +109,7 @@ fn withPictures(init: std.process.Init, prepared: Prepared, folder: std.Io.Dir, 
         return out;
     } else |_| {};
     const start: std.Io.Timestamp = .now(io, .awake);
-    const count = drawPictures(init, &prepared, folder) catch |err|
+    const count = drawPictures(init, folder) catch |err|
         console.fail("{s}: could not draw the blocks' pictures ({s})", .{ folderPath, @errorName(err) });
     const seconds = @as(f64, @floatFromInt(start.untilNow(io, .awake).toMilliseconds())) / 1000;
     console.log("pictures: {} drawn in {d:.1} s", .{ count, seconds });
@@ -118,10 +119,12 @@ fn withPictures(init: std.process.Init, prepared: Prepared, folder: std.Io.Dir, 
     return mapped;
 }
 
-/// Draws every prepared block's pictures into `folder`, written beside their name first so the
-/// file is never left half written. Returns how many there are.
-fn drawPictures(init: std.process.Init, prepared: *const Prepared, folder: std.Io.Dir) !usize {
+/// Draws the pictures of every block prepared in `folder` into it, written beside their name
+/// first so the file is never left half written. Returns how many there are.
+fn drawPictures(init: std.process.Init, folder: std.Io.Dir) !usize {
     const io = init.io;
+    var prepared = try Prepared.load(init.gpa, io, folder, .{});
+    defer prepared.deinit();
     var scratch: std.heap.ArenaAllocator = .init(init.gpa);
     defer scratch.deinit();
     const arena = scratch.allocator();

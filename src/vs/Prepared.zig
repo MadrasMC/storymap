@@ -447,7 +447,13 @@ pub fn exists(io: Io, folder: Dir) bool {
     return true;
 }
 
-pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
+pub const LoadOptions = struct {
+    /// Whether to read what drawing the blocks needs, their faces' images (`textures.bin`) and
+    /// their shapes; without, every block's `cube` and `shape` are null.
+    drawing: bool = true,
+};
+
+pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir, options: LoadOptions) !Prepared {
     var self: Prepared = .{ .arena = .init(allocator) };
     errdefer self.deinit();
     const arena = self.arena.allocator();
@@ -455,7 +461,7 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
     var lines = std.mem.tokenizeScalar(u8, text, '\n');
     const header = lines.next() orelse return error.NotPreparedBlocks;
     if (!std.mem.eql(u8, header, std.fmt.comptimePrint("storymap blocks {}", .{formatVersion}))) return error.NotPreparedBlocks;
-    const images = try loadImages(arena, try folder.readFileAlloc(io, imageFileName, arena, .limited(1 << 30)));
+    const images = if (options.drawing) try loadImages(arena, try folder.readFileAlloc(io, imageFileName, arena, .limited(1 << 30))) else &.{};
     var textures: std.ArrayList(*const TextureColours) = .empty;
     // Null where a colour map's image can't be read, so the numbers still count.
     var colourMaps: std.ArrayList(?*const Tint.ColourMap) = .empty;
@@ -470,6 +476,7 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
     while (lines.next()) |line| {
         var words = std.mem.tokenizeScalar(u8, std.mem.trimEnd(u8, line, "\r"), ' ');
         const kind = words.next() orelse continue;
+        if (!options.drawing and (std.mem.eql(u8, kind, "shape") or std.mem.eql(u8, kind, "box"))) continue;
         const first = words.next() orelse "";
         if (std.mem.eql(u8, kind, "game")) {
             self.gameVersion = first;
@@ -511,15 +518,19 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir) !Prepared {
             const climate = try numbered(?*const Tint.ColourMap, colourMaps.items, words.next());
             const season = try numbered(?*const Tint.ColourMap, colourMaps.items, words.next());
             var faces: [3]world.CubeFaces.Face = undefined;
-            for (&faces) |*face| face.* = .{
+            for (&faces) |*face| face.* = if (options.drawing) .{
                 .plain = try variantsOf(arena, &variantLists, images, words.next()),
                 .tinted = try variantsOf(arena, &variantLists, images, words.next()),
+            } else skip: {
+                for (0..2) |_| _ = words.next() orelse return error.NotPreparedBlocks;
+                break :skip .{};
             };
             const cube = for (faces) |face| {
                 if (face.plain.len == 0 and face.tinted.len == 0) break null;
             } else world.CubeFaces{ .up = faces[0], .south = faces[1], .east = faces[2] };
             const height = try heightOf(words.next());
-            const shape: ?world.Shape = if (try numbered(Geometry, geometries.items, words.next())) |geometry| shape: {
+            const drawn = if (options.drawing) try numbered(Geometry, geometries.items, words.next()) else null;
+            const shape: ?world.Shape = if (drawn) |geometry| shape: {
                 const bound = try arena.alloc(world.CubeFaces.Face, geometry.textures);
                 for (bound) |*texture| texture.* = .{
                     .plain = try variantsOf(arena, &variantLists, images, words.next()),
@@ -730,7 +741,7 @@ test "prepare, load and compare with a save" {
     try std.testing.expectEqual(4, try prepare(arena.allocator(), io, &assets, folder));
     try std.testing.expect(exists(io, folder));
 
-    var prepared = try load(std.testing.allocator, io, folder);
+    var prepared = try load(std.testing.allocator, io, folder, .{});
     defer prepared.deinit();
     try std.testing.expectEqualStrings("1.22.7", prepared.gameVersion);
     try std.testing.expectEqualStrings("testmod.zip", prepared.mods.items[0]);
@@ -769,6 +780,20 @@ test "prepare, load and compare with a save" {
     var each = prepared.blocks.valueIterator();
     while (each.next()) |block| numbers[block.number] = true;
     try std.testing.expectEqual([4]bool{ true, true, true, true }, numbers);
+
+    // Without what drawing needs, blocks are the same but for their faces and shapes.
+    var light = try load(std.testing.allocator, io, folder, .{ .drawing = false });
+    defer light.deinit();
+    var blocks = light.blocks.iterator();
+    while (blocks.next()) |entry| {
+        const block = entry.value_ptr.*;
+        const whole = prepared.blocks.get(entry.key_ptr.*).?;
+        try std.testing.expectEqual(null, block.cube);
+        try std.testing.expectEqual(null, block.shape);
+        try std.testing.expectEqual(whole.number, block.number);
+        try std.testing.expectEqual(whole.colour, block.colour);
+        try std.testing.expectEqual(whole.height, block.height);
+    }
 
     // The step's one box, turned a quarter about its origin, half a block high. Both its faces
     // are the granite, untinted, the same images as the rock's: one by name, and one by `all`,
