@@ -877,9 +877,10 @@ test fullCube {
 }
 
 /// From its `drawtype`, which is `json` without one: a JSON block whose shape is the game's
-/// default, the plain cube, unturned, is drawn as a cube too (vsapi `Block.DrawType`,
-/// `Block.DefaultCubeShape`), and so is one whose shape at a distance holds a cube, and a
-/// liquid. Any other JSON block, also one under snow or in water, is drawn in its shape.
+/// default, the plain cube as it is (`isCubeShape`), is drawn as a cube too (vsapi
+/// `Block.DrawType`, `Block.DefaultCubeShape`), and so is one whose shape at a distance holds a
+/// cube, and a liquid. Any other JSON block, also one under snow or in water, is drawn in its
+/// shape.
 fn drawingOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes: *Shapes) !Drawing {
     const drawtype = if (try property(arena, json, "drawtype", variant)) |d| d.asString() orelse "json" else "json";
     if (std.ascii.eqlIgnoreCase(drawtype, "cube")) return .cube;
@@ -900,20 +901,32 @@ fn drawingOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shape
     return .{ .distantCube = names };
 }
 
-/// Whether a block's `shape` is the plain cube, unturned.
+/// Whether a block's `shape` is the plain cube as it is, and so is each of its `alternates`: a
+/// block of sand picks one of four cubes, turned a quarter at a time, which turns its textures.
 fn isCubeShape(arena: std.mem.Allocator, shape: Json.Value) !bool {
-    const base = (shape.get("base") orelse return false).asString() orelse return false;
-    const location: Location = try .parse(arena, base, Assets.gameDomain);
+    const base = shape.get("base");
+    if (!try isPlainCube(arena, shape, base)) return false;
+    // An alternate without a base takes the shape's (`Shapes.resolve`).
+    for (shape.getArray("alternates")) |alternate| {
+        if (!try isPlainCube(arena, alternate, alternate.get("base") orelse base)) return false;
+    }
+    return true;
+}
+
+/// Whether `composite`, with its shape file `base`, is the plain cube, neither turned, moved,
+/// scaled nor overlaid.
+fn isPlainCube(arena: std.mem.Allocator, composite: Json.Value, base: ?Json.Value) !bool {
+    const name = (base orelse return false).asString() orelse return false;
+    const location: Location = try .parse(arena, name, Assets.gameDomain);
     // `cube-nozfight`, for glacier ice, insets each pair of faces by 0.006 of a pixel.
     const cubes = [_][]const u8{ "block/basic/cube", "block/basic/cube-nozfight" };
     for (cubes) |cube| {
         if (std.mem.eql(u8, location.path, cube)) break;
     } else return false;
-    for ([_][]const u8{ "rotateX", "rotateY", "rotateZ" }) |axis| {
-        const angle = shape.get(axis) orelse continue;
-        if (angle != .number or (std.fmt.parseFloat(f64, angle.number) catch 1) != 0) return false;
+    for ([_][]const u8{ "rotateX", "rotateY", "rotateZ", "offsetX", "offsetY", "offsetZ" }) |field| {
+        if (number(composite.get(field), 0) != 0) return false;
     }
-    return true;
+    return number(composite.get("scale"), 1) == 1 and composite.getArray("overlays").len == 0;
 }
 
 /// A cube's faces from its block's textures, or null if it isn't drawn as one or a face has
@@ -1440,6 +1453,7 @@ test "the cube a block is drawn as" {
     const a = arena.allocator();
     const rock: Variant = .{ .code = .{ .domain = "game", .path = "rock-granite" }, .parts = &.{.{ .group = "rock", .state = "granite" }} };
     var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    try shapes.files.put(a, "game:block/basic/cube", try Json.parse(a, "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 16, 16 ], faces: { up: { texture: '#up' }, south: { texture: '#south' } } } ] }"));
 
     // `all` on every face, with an ore's overlay, untinted.
     const ore = (try describe(a, try Json.parse(a, "{ drawtype: 'cube', textures: { all: { base: 'block/stone/rock/{rock}1', overlays: [ 'block/stone/ore/gold1' ] } } }"), rock, &shapes)).cube.?;
@@ -1490,12 +1504,26 @@ test "the cube a block is drawn as" {
     try std.testing.expectEqualStrings("game:block/liquid/water", water.up.tinted.?.base);
     try std.testing.expectEqual(null, water.up.plain);
 
-    // Not cubes: another shape, a turned cube, another drawtype.
+    // Not cubes: another shape, a turned cube, a moved one, one with a turned alternate,
+    // another drawtype.
     for ([_][]const u8{
         "{ shape: { base: 'block/wood/log/noresin1' }, textures: { all: { base: 'x' } } }",
         "{ shape: { base: 'game:block/basic/cube', rotateY: 90 }, textures: { all: { base: 'x' } } }",
+        "{ shape: { base: 'block/basic/cube', offsetY: -0.5 }, textures: { all: { base: 'x' } } }",
+        "{ shape: { base: 'block/basic/cube', alternates: [ { base: 'block/basic/cube' }, { rotateY: 90 } ] }, textures: { all: { base: 'x' } } }",
         "{ drawtype: 'surfacelayer', textures: { all: { base: 'x' } } }",
     }) |json| try std.testing.expectEqual(null, (try describe(a, try Json.parse(a, json), rock, &shapes)).cube);
+    // A cube whose alternates are all the plain cube is one.
+    try std.testing.expect((try describe(a, try Json.parse(a, "{ shape: { base: 'block/basic/cube', alternates: [ { base: 'block/basic/cube-nozfight' } ] }, textures: { all: { base: 'x' } } }"), rock, &shapes)).cube != null);
+
+    // Sand picks one of four cubes, turned a quarter at a time, drawn in them as shapes.
+    const sand = try describe(a, try Json.parse(a, "{ shape: { base: 'block/basic/cube', alternates: [ { rotateY: 90 }, { rotateY: 180 }, { rotateY: 270 } ] }, textures: { all: { base: 'x' } } }"), rock, &shapes);
+    try std.testing.expectEqual(null, sand.cube);
+    try std.testing.expectEqual(4, sand.shapes.len);
+    // Turned a quarter, the cube's corner at (0, 0, 0) goes to (0, 0, 1).
+    const quarter = sand.shapes[1].geometry.boxes[0].transform;
+    try std.testing.expectApproxEqAbs(0, quarter[0][3], 1e-6);
+    try std.testing.expectApproxEqAbs(1, quarter[2][3], 1e-6);
 }
 
 test "the shape a block is drawn in" {
