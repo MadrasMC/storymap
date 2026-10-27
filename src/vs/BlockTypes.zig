@@ -110,6 +110,9 @@ pub const Face = struct {
 pub const Layer = struct {
     base: []const u8,
     overlays: []const []const u8 = &.{},
+    /// The texture's `alternates`, more variants of it, each with its own overlays and none of
+    /// its own alternates.
+    alternates: []const Layer = &.{},
     /// For grassy soil's grass: the half of a texture twice as wide as tall that this face takes,
     /// the left for the sides and the right for the top.
     half: ?Half = null,
@@ -965,17 +968,29 @@ fn findTexture(textures: []const Json.Field, names: []const []const u8) ?Json.Va
     return null;
 }
 
-/// A texture's base and overlays, or null without a base.
+/// A texture's base, overlays and alternates, or null without a base. The game bakes an
+/// alternate as a texture of its own and takes only that, not its alternates (vsapi
+/// `CompositeTexture.Bake`).
 fn layerOf(arena: std.mem.Allocator, texture: ?Json.Value, domain: []const u8) !?Layer {
     const value = texture orelse return null;
     const base = try textureLocation(arena, value, domain) orelse return null;
+    var alternates: std.ArrayList(Layer) = .empty;
+    for (value.getArray("alternates")) |alternate| {
+        const alternateBase = try textureLocation(arena, alternate, domain) orelse continue;
+        try alternates.append(arena, .{ .base = alternateBase, .overlays = try overlaysOf(arena, alternate, domain) });
+    }
+    return .{ .base = base, .overlays = try overlaysOf(arena, value, domain), .alternates = alternates.items };
+}
+
+/// A texture's overlays, each as "domain:path", in `domain` unless it names its own.
+fn overlaysOf(arena: std.mem.Allocator, texture: Json.Value, domain: []const u8) ![]const []const u8 {
     var overlays: std.ArrayList([]const u8) = .empty;
-    if (value.get("overlays")) |list| if (list == .array) for (list.array) |item| {
+    for (texture.getArray("overlays")) |item| {
         const path = item.asString() orelse continue;
         const location: Location = try .parse(arena, path, domain);
         try overlays.append(arena, try std.fmt.allocPrint(arena, "{s}:{s}", .{ location.domain, location.path }));
-    };
-    return .{ .base = base, .overlays = overlays.items };
+    }
+    return overlays.items;
 }
 
 /// Case-sensitive, as in the game.
@@ -1460,6 +1475,21 @@ test "the cube a block is drawn as" {
     try std.testing.expectEqualStrings("game:block/stone/rock/granite1", ore.east.plain.?.base);
     try std.testing.expectEqualStrings("game:block/stone/ore/gold1", ore.up.plain.?.overlays[0]);
     try std.testing.expectEqual(null, ore.south.tinted);
+    try std.testing.expectEqual(0, ore.up.plain.?.alternates.len);
+
+    // Its alternates, each with its own overlays and none of its own alternates; one without a
+    // base is left out.
+    const ores = (try describe(a, try Json.parse(a,
+        \\{ drawtype: 'cube', textures: { all: { base: 'block/stone/rock/{rock}1', overlays: [ 'ore1' ], alternates: [
+        \\  { base: 'block/stone/rock/{rock}2', overlays: [ 'ore2' ], alternates: [ { base: 'x' } ] }, { overlays: [ 'ore3' ] }, { base: 'mod:other' } ] } } }
+    ), rock, &shapes)).cube.?;
+    const alternates = ores.east.plain.?.alternates;
+    try std.testing.expectEqual(2, alternates.len);
+    try std.testing.expectEqualStrings("game:block/stone/rock/granite2", alternates[0].base);
+    try std.testing.expectEqualStrings("game:ore2", alternates[0].overlays[0]);
+    try std.testing.expectEqual(0, alternates[0].alternates.len);
+    try std.testing.expectEqualStrings("mod:other", alternates[1].base);
+    try std.testing.expectEqual(0, alternates[1].overlays.len);
 
     // Its own name, then its group's, then `all`; no drawtype or shape is the game's cube.
     const log = (try describe(a, try Json.parse(a, "{ textures: { all: { base: 'a' }, verticals: { base: 'v' }, south: { base: 's' } } }"), rock, &shapes)).cube.?;

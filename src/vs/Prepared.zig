@@ -19,7 +19,7 @@
 //! the plain and tinted layers of each texture the shape names, or `-` for one with nothing to
 //! draw; or `-` for a block without any:
 //!
-//!     storymap blocks 15
+//!     storymap blocks 16
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
@@ -96,7 +96,7 @@ const Image = world.Image;
 
 /// The format of `blocks.txt` and `textures.bin`, and of what goes into them: raise it when
 /// any changes, so sets prepared before are prepared again.
-const formatVersion = 15;
+const formatVersion = 16;
 const fileName = "blocks.txt";
 const imageFileName = "textures.bin";
 const colourMapFolder = "colormaps";
@@ -266,14 +266,25 @@ const Images = struct {
     numbers: std.StringHashMapUnmanaged(?usize) = .empty,
     made: std.ArrayList(Image) = .empty,
 
-    /// The numbers of the layer's images, one for each variant of its base texture that can be
-    /// made, each made the first time; null without a layer or if none can be made.
+    /// The numbers of the layer's images, one for each of its variants that can be made, each
+    /// made the first time; null without a layer or if none can be made. Its variants are in the
+    /// game's order (vsapi `CompositeTexture.Bake`): its base's first file with its overlays,
+    /// then each of its alternates' first file with the alternate's overlays, then its base's
+    /// other files, without overlays.
     fn variants(self: *Images, layer: ?BlockTypes.Layer) !?[]const usize {
         const wanted = layer orelse return null;
+        const arena = self.textures.arena;
         var found: std.ArrayList(usize) = .empty;
-        for (try self.textures.paths(wanted.base)) |path| {
-            if (try self.number(wanted, path)) |n| try found.append(self.textures.arena, n);
+        const files = try self.textures.paths(wanted.base);
+        if (files.len > 0) if (try self.number(wanted, files[0])) |n| try found.append(arena, n);
+        for (wanted.alternates) |alternate| {
+            const alternateFiles = try self.textures.paths(alternate.base);
+            if (alternateFiles.len > 0) if (try self.number(alternate, alternateFiles[0])) |n| try found.append(arena, n);
         }
+        const bare: BlockTypes.Layer = .{ .base = wanted.base, .half = wanted.half };
+        if (files.len > 1) for (files[1..]) |path| {
+            if (try self.number(bare, path)) |n| try found.append(arena, n);
+        };
         return if (found.items.len == 0) null else found.items;
     }
 
@@ -752,6 +763,7 @@ test "prepare, load and compare with a save" {
         .{ "game/assets/survival/textures/block/grass.png", @embedFile("testdata/red.png") },
         .{ "game/assets/survival/blocktypes/step.json", "{ code: 'step', shape: { base: 'block/step', alternates: [ { rotateY: 180 }, { base: 'block/missing' } ] }, textures: { all: { base: 'block/stone/granite*' } } }" },
         .{ "game/assets/survival/shapes/block/step.json", "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 8, 16 ], rotationOrigin: [ 8, 8, 8 ], rotationY: 90, faces: { north: { texture: '#all', uv: [ 0, 0, 16, 8 ] }, up: { texture: '#top' } } } ] }" },
+        .{ "game/assets/survival/blocktypes/ore.json", "{ code: 'ore', drawtype: 'Cube', textures: { all: { base: 'block/stone/granite*', overlays: [ 'block/grass' ], alternates: [ { base: 'block/grass' }, { base: 'block/missing' } ] } } }" },
         .{ "data/Mods/testmod.zip", @embedFile("testdata/testmod.zip") },
     };
     for (files) |file| {
@@ -774,8 +786,8 @@ test "prepare, load and compare with a save" {
     try std.testing.expect(!exists(io, folder));
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    // rock-granite, soil, step, and the test mod's thing.
-    try std.testing.expectEqual(4, try prepare(arena.allocator(), io, &assets, folder));
+    // rock-granite, soil, step, ore, and the test mod's thing.
+    try std.testing.expectEqual(5, try prepare(arena.allocator(), io, &assets, folder));
     try std.testing.expect(exists(io, folder));
 
     var prepared = try load(std.testing.allocator, io, folder, .{});
@@ -812,11 +824,20 @@ test "prepare, load and compare with a save" {
     try std.testing.expectEqual(rock.up.tinted[0].pixels[1], soil.up.tinted[0].pixels[0]);
     try std.testing.expectEqual(rock.up.tinted[0].pixels[0], soil.south.tinted[0].pixels[0]);
     try std.testing.expectEqual(0, prepared.blocks.get("rock-granite").?.shapes.len);
+    // The ore's variants in the game's order: granite1 under its overlay, then its alternate, the
+    // grass whole, then granite3 without the overlay, the rock's own image; the missing
+    // alternate and the granite that can't be read are left out.
+    const ore = prepared.blocks.get("ore").?.cube.?;
+    try std.testing.expectEqual(3, ore.up.plain.len);
+    try std.testing.expect(ore.up.plain[0] != rock.up.tinted[0]);
+    try std.testing.expectEqual(2, ore.up.plain[1].width);
+    try std.testing.expect(ore.up.plain[1] != rock.up.tinted[0] and ore.up.plain[1] != rock.up.tinted[1]);
+    try std.testing.expectEqual(rock.up.tinted[1], ore.up.plain[2]);
     // Each block numbered by its place in the file.
-    var numbers: [4]bool = @splat(false);
+    var numbers: [5]bool = @splat(false);
     var each = prepared.blocks.valueIterator();
     while (each.next()) |block| numbers[block.number] = true;
-    try std.testing.expectEqual([4]bool{ true, true, true, true }, numbers);
+    try std.testing.expectEqual([5]bool{ true, true, true, true, true }, numbers);
 
     // Without what drawing needs, blocks are the same but for their faces and shapes.
     var light = try load(std.testing.allocator, io, folder, .{ .drawing = false });
