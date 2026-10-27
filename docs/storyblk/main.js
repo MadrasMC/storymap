@@ -496,11 +496,13 @@ async function openSaved() {
 }
 
 async function closeFile() {
+	await closeModal(fileDialog);
 	shown = null;
 	for (const url of colourMapURLs) URL.revokeObjectURL(url);
 	colourMapURLs = [];
 	blocksView.replaceChildren();
 	showEmpty();
+	$("empty").querySelector("[data-action]").focus();
 	try {
 		await forget();
 	} catch (error) {
@@ -1105,10 +1107,12 @@ menu.addEventListener("keydown", (event) => {
 document.addEventListener("pointerdown", (event) => {
 	if (menu.matches(":popover-open") && !menu.contains(event.target) && !openButton.contains(event.target)) closeMenu(false);
 });
-$("empty").addEventListener("click", (event) => {
-	const button = event.target.closest("[data-action]");
-	if (button) pick(button.dataset.action);
-});
+for (const actions of [$("empty"), $("file-actions")]) {
+	actions.addEventListener("click", (event) => {
+		const button = event.target.closest("[data-action]");
+		if (button) pick(button.dataset.action);
+	});
+}
 $("pick-file").addEventListener("change", (event) => {
 	const input = event.target;
 	const files = [...input.files].map((file) => ({ path: file.name, file }));

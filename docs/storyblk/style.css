@@ -532,8 +532,8 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 	}
 	#detail { height: 75dvh; }
 	.detail { max-height: 88dvh; }
-	.file-body { padding-bottom: max(1.5rem, env(safe-area-inset-bottom)); }
-	.detail-meta { padding-bottom: max(0.625rem, env(safe-area-inset-bottom)); }
+	.detail-meta,
+	.file-actions { padding-bottom: max(0.625rem, env(safe-area-inset-bottom)); }
 }
 
 .file-body {
@@ -541,6 +541,13 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 	overscroll-behavior: contain;
 	padding: 0.25rem 1.25rem 1.5rem;
 }
+.file-actions {
+	display: flex;
+	justify-content: flex-end;
+	padding: 0.625rem 1.25rem;
+	border-top: 1px solid var(--line);
+}
+
 .facts h3 {
 	margin: 1.25rem 0 0.5rem;
 	font-size: 0.8125rem;
