@@ -1,12 +1,12 @@
 //! The isometric view, looking north-west from above: every block drawn as a cube, its top,
 //! south and east faces lit differently. In the `relief` style each is in its map type's relief
 //! colour (`relief.zig`); in the `game` style, a block the game draws as a cube is in its
-//! textures (`pictureOf`), one the game draws in another shape is in that shape
-//! (`shapePicture`), each picture drawn once, when the game's blocks are prepared
-//! (`drawPictures`), and any other block in its texture's average colour, each tinted by the
-//! climate where it is, as the game tints grass, leaves and water. Otherwise, plants aren't
-//! drawn, nor low blocks, such as loose stones, which a whole cube would make look much larger
-//! than they are.
+//! textures (`pictureOf`), one the game draws in another shape is in that shape, or the one of
+//! its shapes its place picks (`shapePicture`), each picture drawn once, when the game's blocks
+//! are prepared (`drawPictures`), and any other block in its texture's average colour, each
+//! tinted by the climate where it is, as the game tints grass, leaves and water. Otherwise,
+//! plants aren't drawn, nor low blocks, such as loose stones, which a whole cube would make look
+//! much larger than they are.
 //!
 //! Each tile follows its lines of sight (`Line`) from the top of the world, and draws the first
 //! block each meets, as Mapcrafter does, and past it those behind it while one leaves parts of
@@ -21,12 +21,12 @@
 //!   `isLow(id: i32) bool`, a block taking up only the bottom of its place;
 //! - for the `game` style, `colour(id: i32) world.Rgb`, `picturesOf(id: i32) ?u32`, the
 //!   number of the block's pictures (`Options.pictures`), `isTinted(id: i32) bool`, `variant(id:
-//!   i32, x: i64, y: i64, z: i64, count: u32) u32`, which of a texture's `count` variants the
-//!   block at (x, y, z) shows, `turn(id: i32, x: i64, y: i64, z: i64, count: u32) u32`, which
-//!   of its `count` turns it's drawn in, `drawOffset(id: i32, x: i64, y: i64, z: i64) ?[2]f32`,
-//!   how far east and south of the middle of its place it's drawn, in blocks, and
-//!   `isPlacedByPosition(id: i32) bool`, whether any of those depends on more than its pictures
-//!   and its position;
+//!   i32, x: i64, y: i64, z: i64, count: u32) u32`, which of `count` variants of its textures,
+//!   or of `count` shapes, the block at (x, y, z) shows, `turn(id: i32, x: i64, y: i64, z: i64,
+//!   count: u32) u32`, which of its `count` turns it's drawn in, `drawOffset(id: i32, x: i64,
+//!   y: i64, z: i64) ?[2]f32`, how far east and south of the middle of its place it's drawn, in
+//!   blocks, and `isPlacedByPosition(id: i32) bool`, whether any of those depends on more than
+//!   its pictures and its position;
 //! - `Reader`, one per thread: `init(source: *const Source, allocator, null) !Reader`,
 //!   `deinit(*Reader, allocator)`, `readChunk(*Reader, x: i32, y: i32, z: i32, chunk:
 //!   *world.Chunk) !bool`, false where there's no chunk to draw, and `chunksRead: usize`; for
@@ -724,20 +724,22 @@ fn shapePicture(allocator: std.mem.Allocator, shape: *const world.Shape, variant
     };
 }
 
-/// What a game's reader has for drawing one of its blocks in pictures: a cube's faces or a
-/// shape, the colour that fills a cube's texture's holes, and whether a shape is turned by
-/// where it is, which draws it in each of its `turns`.
+/// What a game's reader has for drawing one of its blocks in pictures: a cube's faces, or the
+/// shapes it picks one of by where it is, the colour that fills a cube's texture's holes, and
+/// whether a shape is turned by where it is, which draws it in each of its `turns`.
 pub const Drawable = struct {
     cube: ?*const world.CubeFaces = null,
-    shape: ?*const world.Shape = null,
+    shapes: []const world.Shape = &.{},
     colour: world.Rgb = @splat(0),
     turned: bool = false,
 };
 
-/// Draws every block's pictures, one for each variant of its textures in each of its turns,
-/// and writes them (`Pictures`), each block's under its index in `drawables`. Blocks with the
-/// same faces, or the same shape and textures turned alike, share pictures. Keeps them in
-/// `arena` as it goes. Returns how many there are.
+/// Draws every block's pictures, one for each variant of its textures, in each of its shapes,
+/// in each of its turns, and writes them (`Pictures`), each block's under its index in
+/// `drawables`. Blocks with the same faces, or the same shapes and textures turned alike, share
+/// pictures. A block's textures have as many variants as the most any of its shapes' has, each
+/// with fewer counting round again. Keeps them in `arena` as it goes. Returns how many there
+/// are.
 pub fn drawPictures(arena: std.mem.Allocator, drawables: []const Drawable, w: *std.Io.Writer) !usize {
     var pictures: std.ArrayList(Picture) = .empty;
     const entries = try arena.alloc(Pictures.Entry, drawables.len);
@@ -755,13 +757,20 @@ pub fn drawPictures(arena: std.mem.Allocator, drawables: []const Drawable, w: *s
                 found.value_ptr.flags.tinted = pictures.items[found.value_ptr.first].tinted != null;
             }
             entry.* = found.value_ptr.*;
-        } else if (drawable.shape) |shape| {
-            const found = try byShape.getOrPut(arena, .{ .shape = shape, .turned = drawable.turned });
+        } else if (drawable.shapes.len > 0) {
+            const found = try byShape.getOrPut(arena, .{ .shapes = drawable.shapes, .turned = drawable.turned });
             if (!found.found_existing) {
-                const variants = shapeVariants(shape);
+                var variants: usize = 1;
+                for (drawable.shapes) |*shape| variants = @max(variants, shapeVariants(shape));
                 const turnCount: u8 = if (drawable.turned) turns else 1;
-                found.value_ptr.* = .{ .first = @intCast(pictures.items.len), .variants = @intCast(variants), .turns = turnCount, .flags = .{ .shape = true } };
-                for (0..turnCount) |turn| for (0..variants) |variant| {
+                found.value_ptr.* = .{
+                    .first = @intCast(pictures.items.len),
+                    .variants = @intCast(variants),
+                    .alternates = @intCast(drawable.shapes.len),
+                    .turns = turnCount,
+                    .flags = .{ .shape = true },
+                };
+                for (0..turnCount) |turn| for (drawable.shapes) |*shape| for (0..variants) |variant| {
                     const picture = try shapePicture(arena, shape, variant, turn, &target);
                     if (picture.tinted != null) found.value_ptr.flags.tinted = true;
                     try pictures.append(arena, picture);
@@ -788,22 +797,27 @@ const FacesContext = struct {
     }
 };
 
-const ShapeKey = struct { shape: *const world.Shape, turned: bool };
+const ShapeKey = struct { shapes: []const world.Shape, turned: bool };
 
-/// Shapes by their boxes' slice and their textures' variants' slices, which a game's reader
-/// shares between blocks with the same shape and textures, and whether they're turned.
+/// A block's shapes by their boxes' slices and their textures' variants' slices, which a game's
+/// reader shares between blocks with the same shapes and textures, and whether they're turned.
 const ShapeContext = struct {
     pub fn hash(_: ShapeContext, key: ShapeKey) u64 {
         var hasher: std.hash.Wyhash = .init(0);
-        std.hash.autoHash(&hasher, @intFromPtr(key.shape.boxes.ptr));
         std.hash.autoHash(&hasher, key.turned);
-        for (key.shape.textures) |texture| std.hash.autoHashStrat(&hasher, texture, .Shallow);
+        for (key.shapes) |shape| {
+            std.hash.autoHashStrat(&hasher, shape.boxes, .Shallow);
+            for (shape.textures) |texture| std.hash.autoHashStrat(&hasher, texture, .Shallow);
+        }
         return hasher.final();
     }
 
     pub fn eql(_: ShapeContext, a: ShapeKey, b: ShapeKey) bool {
-        if (a.shape.boxes.ptr != b.shape.boxes.ptr or a.turned != b.turned or a.shape.textures.len != b.shape.textures.len) return false;
-        for (a.shape.textures, b.shape.textures) |x, y| if (!std.meta.eql(x, y)) return false;
+        if (a.turned != b.turned or a.shapes.len != b.shapes.len) return false;
+        for (a.shapes, b.shapes) |x, y| {
+            if (x.boxes.ptr != y.boxes.ptr or x.boxes.len != y.boxes.len or x.textures.len != y.textures.len) return false;
+            for (x.textures, y.textures) |p, q| if (!std.meta.eql(p, q)) return false;
+        }
         return true;
     }
 };
@@ -969,18 +983,35 @@ test drawPictures {
     const textures = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
     const boxes = [_]world.Shape.Box{testBox(.{ 1, 0.5, 1 })};
     const slab: world.Shape = .{ .boxes = &boxes, .textures = &textures };
-    const sameSlab: world.Shape = .{ .boxes = &boxes, .textures = &textures };
-    // A cube with two variants, a block with neither, two slabs sharing their pictures, and the
-    // slab turned, in pictures of its own.
-    const drawables = [_]Drawable{ .{ .cube = &cube }, .{}, .{ .shape = &slab }, .{ .shape = &sameSlab }, .{ .shape = &slab, .turned = true } };
+    const slabs = [_]world.Shape{slab};
+    const sameSlabs = [_]world.Shape{.{ .boxes = &boxes, .textures = &textures }};
+    const wholeBoxes = [_]world.Shape.Box{testBox(.{ 1, 1, 1 })};
+    const wholeTextures = [_]world.CubeFaces.Face{plain};
+    const picked = [_]world.Shape{ slab, .{ .boxes = &wholeBoxes, .textures = &wholeTextures }, .{ .boxes = &.{}, .textures = &.{} } };
+    // A cube with two variants, a block with neither, two slabs sharing their pictures, the slab
+    // turned, in pictures of its own, and a block picking the slab, a whole block in a texture
+    // with two variants, or nothing.
+    const drawables = [_]Drawable{ .{ .cube = &cube }, .{}, .{ .shapes = &slabs }, .{ .shapes = &sameSlabs }, .{ .shapes = &slabs, .turned = true }, .{ .shapes = &picked } };
     var file: std.Io.Writer.Allocating = .init(allocator);
-    try std.testing.expectEqual(3 + turns, try drawPictures(allocator, &drawables, &file.writer));
+    try std.testing.expectEqual(3 + turns + 6, try drawPictures(allocator, &drawables, &file.writer));
     const bytes = try allocator.alignedAlloc(u8, .@"4", file.written().len);
     @memcpy(bytes, file.written());
 
     const pictures = try Pictures.parse(bytes);
-    try std.testing.expectEqual(3 + turns, pictures.stored.len);
+    try std.testing.expectEqual(3 + turns + 6, pictures.stored.len);
     try std.testing.expectEqual(Pictures.Entry{ .first = 3, .variants = 1, .turns = turns, .flags = .{ .shape = true, .tinted = true } }, pictures.entry(4));
+    // Each of its shapes in as many variants as the most any has, the slab's one counting
+    // round again.
+    const choice = pictures.entry(5);
+    try std.testing.expectEqual(Pictures.Entry{ .first = 3 + turns, .variants = 2, .alternates = 3, .flags = .{ .shape = true, .tinted = true } }, choice);
+    try std.testing.expect(!pictures.picture(choice.index(1, 0, 0)).fills);
+    try std.testing.expectEqual(pictures.picture(choice.index(0, 0, 0)).plain[0], pictures.picture(choice.index(1, 0, 0)).plain[0]);
+    const whole = pictures.picture(choice.index(1, 1, 0));
+    try std.testing.expect(whole.fills);
+    try std.testing.expectEqual(faceColours(.{ 0, 0, 200 })[0], whole.plain[pixelAt(&whole, blockWidth / 4, blockWidth / 2).?]);
+    const nothing = pictures.picture(choice.index(1, 2, 0));
+    try std.testing.expectEqual(0, nothing.width);
+    try std.testing.expect(!nothing.fills);
     try std.testing.expectEqual(Pictures.Entry{ .first = 0, .variants = 2 }, pictures.entry(0));
     try std.testing.expectEqual(0, pictures.entry(1).variants);
     try std.testing.expectEqual(Pictures.Entry{ .first = 2, .variants = 1, .flags = .{ .shape = true, .tinted = true } }, pictures.entry(2));
@@ -1023,12 +1054,11 @@ fn View(comptime Source: type) type {
             colours: [3]u32,
             /// Each face in a colour times the tint of a block where it is.
             tintedColour: struct { colour: world.Rgb, block: i32 },
-            /// In its pictures: the number of the first in `pictures`, how many variants and
-            /// turns it has, the block that picks its variant, turn and offset by where it is,
-            /// and whether its tint colours their tinted layer.
+            /// In its pictures (`Pictures.Entry`), the block that picks its variant, shape, turn
+            /// and offset by where it is, and whether its tint colours their tinted layer.
             picture: Pictured,
 
-            const Pictured = struct { index: u32, variants: u32 = 1, turns: u32 = 1, block: i32, tinted: bool = false };
+            const Pictured = struct { entry: Pictures.Entry, block: i32, tinted: bool = false };
         };
 
         fn init(allocator: std.mem.Allocator, source: *const Source, style: Style, pictures: ?*const Pictures) !Self {
@@ -1071,7 +1101,7 @@ fn View(comptime Source: type) type {
                         const colour = source.colour(id);
                         const isTinted = source.isTinted(id);
                         if (entry.variants > 0) {
-                            const pictured: Look.Pictured = .{ .index = entry.first, .variants = entry.variants, .turns = entry.turns, .block = id };
+                            const pictured: Look.Pictured = .{ .entry = entry, .block = id };
                             const tinted = isTinted and entry.flags.tinted;
                             const placed = source.isPlacedByPosition(id);
                             anyPlaced = anyPlaced or placed;
@@ -1081,7 +1111,7 @@ fn View(comptime Source: type) type {
                                 look.* = try addLook(allocator, &looks, .{ .picture = own });
                                 continue;
                             }
-                            const found = try byPicture.getOrPut(allocator, pictured.index);
+                            const found = try byPicture.getOrPut(allocator, entry.first);
                             if (!found.found_existing) found.value_ptr.* = try addLook(allocator, &looks, .{ .picture = pictured });
                             look.* = found.value_ptr.*;
                         } else if (isTinted) {
@@ -1211,9 +1241,13 @@ fn View(comptime Source: type) type {
                     },
                     .picture => |look| picture: {
                         placedBy = look.block;
-                        const variant = if (look.variants > 1) self.view.source.variant(look.block, block.x, block.y, block.z, look.variants) else 0;
-                        const turn = if (look.turns > 1) self.view.source.turn(look.block, block.x, block.y, block.z, look.turns) else 0;
-                        const picture = self.view.pictures.?.picture(look.index + turn * look.variants + variant);
+                        const entry = look.entry;
+                        const source = self.view.source;
+                        const variant = if (entry.variants > 1) source.variant(look.block, block.x, block.y, block.z, entry.variants) else 0;
+                        // Shapes are picked as variants are.
+                        const alternate = if (entry.alternates > 1) source.variant(look.block, block.x, block.y, block.z, entry.alternates) else 0;
+                        const turn = if (entry.turns > 1) source.turn(look.block, block.x, block.y, block.z, entry.turns) else 0;
+                        const picture = self.view.pictures.?.picture(entry.index(variant, alternate, turn));
                         fills = picture.fills;
                         const tint = if (picture.tinted == null or !look.tinted) @as(world.Rgb, @splat(255)) else try self.reader.tint(look.block, block.x, block.y, block.z);
                         break :picture .{ .picture = .{ .picture = picture, .tint = tint } };

@@ -21,7 +21,7 @@ pub const fileName = "pictures.bin";
 
 /// The pictures and the file's layout: raise it when either changes, so files drawn before are
 /// drawn again.
-pub const version = 2;
+pub const version = 3;
 
 entries: []const Entry,
 stored: []const Stored,
@@ -38,13 +38,16 @@ pub const Header = extern struct {
 
 const magic = "SMPICTS\x00".*;
 
-/// A block's pictures: `variants` × `turns` of them from picture number `first`, one for each
-/// variant of its textures in each of its turns, turn by turn; none without a picture.
+/// A block's pictures: `variants` × `alternates` × `turns` of them from picture number
+/// `first`, one for each variant of its textures in each of the shapes it picks one of, in each
+/// of its turns: turn by turn, and in each, shape by shape; none without a picture.
 pub const Entry = extern struct {
     first: u32 = 0,
     variants: u16 = 0,
+    alternates: u16 = 1,
     turns: u8 = 1,
     flags: Flags = .{},
+    reserved: u16 = 0,
 
     pub const Flags = packed struct(u8) {
         /// Drawn in its shape, rather than as a cube.
@@ -55,7 +58,12 @@ pub const Entry = extern struct {
     };
 
     pub fn count(self: Entry) usize {
-        return @as(usize, self.variants) * self.turns;
+        return @as(usize, self.variants) * self.alternates * self.turns;
+    }
+
+    /// The number of the picture of variant `variant` of shape `alternate`, turned `turn`.
+    pub fn index(self: Entry, variant: u32, alternate: u32, turn: u32) u32 {
+        return self.first + (turn * self.alternates + alternate) * self.variants + variant;
     }
 };
 
@@ -149,7 +157,10 @@ pub fn parse(bytes: []align(4) const u8) error{NotPictures}!Pictures {
         .stored = @alignCast(std.mem.bytesAsSlice(Stored, bytes[entriesEnd..storedEnd])),
         .data = bytes[storedEnd..],
     };
-    for (self.entries) |block| if (@as(usize, block.first) + block.count() > self.stored.len) return error.NotPictures;
+    for (self.entries) |block| {
+        if (block.variants > 0 and (block.alternates == 0 or block.turns == 0)) return error.NotPictures;
+        if (@as(usize, block.first) + block.count() > self.stored.len) return error.NotPictures;
+    }
     for (self.stored) |stored| {
         const pixels = @as(usize, stored.width) * stored.height;
         const length = pixels * (if (stored.flags.tinted) @as(usize, 8) else 4) + std.mem.alignForward(usize, pixels * 2, 4);
@@ -221,5 +232,10 @@ test "write and parse" {
     // Cut short, or of another version, it isn't pictures.
     try std.testing.expectError(error.NotPictures, parse(bytes[0 .. bytes.len - 4]));
     bytes[8] +%= 1;
+    try std.testing.expectError(error.NotPictures, parse(bytes));
+    bytes[8] -%= 1;
+    // Nor is a block with pictures in none of its shapes.
+    const first: *Entry = @ptrCast(@alignCast(bytes[@sizeOf(Header)..][0..@sizeOf(Entry)]));
+    first.alternates = 0;
     try std.testing.expectError(error.NotPictures, parse(bytes));
 }

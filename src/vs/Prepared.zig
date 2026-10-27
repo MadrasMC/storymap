@@ -15,10 +15,11 @@
 //! texture's variants separated by commas, then how high its selection box reaches, in
 //! sixteenths, or `-` for the whole block, how it's moved off the middle of its place (0 for
 //! not at all), which axes pick its variants and offset (`xyz` or `xz`), 1 if it's turned by
-//! where it is, and last its shape's number, followed by the plain and tinted layers of each
-//! texture the shape names, or `-` for a block without one:
+//! where it is, and last how many shapes it picks one of, then each shape's number, followed by
+//! the plain and tinted layers of each texture the shape names, or `-` for one with nothing to
+//! draw; or `-` for a block without any:
 //!
-//!     storymap blocks 13
+//!     storymap blocks 14
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
@@ -32,9 +33,9 @@
 //!     …
 //!     block rock-granite Stone land 0 0 - - 0,1,2,3 - 0,1,2,3 - 0,1,2,3 - - 0 xyz 0 -
 //!     …
-//!     block loosestones-granite-free Stone land 0 0 - - - - - - - - 2 0 xyz 0 1890 0 -
+//!     block loosestones-granite-free Stone land 0 0 - - - - - - - - 2 0 xyz 0 12 2698 0 - 2702 0 - …
 //!     …
-//!     block mushroom-fieldmushroom-normal Plant plant - - - - - - - - - - 4 0 xyz 1 326 2924 - 2955 - 2956 -
+//!     block mushroom-fieldmushroom-normal Plant plant - - - - - - - - - - 4 0 xyz 1 4 662 2933 - 2964 - 2965 - 663 …
 //!     …
 //!
 //! `textures.bin` holds the face images one after another, each its width and height as
@@ -80,9 +81,10 @@ pub const Block = struct {
     cube: ?world.CubeFaces = null,
     /// How high its selection box reaches, in sixteenths of a block; null for the whole block.
     height: ?u8 = null,
-    /// For a block the game draws in a shape other than the plain cube, that shape; null for any
-    /// other, or one whose shape can't be read.
-    shape: ?world.Shape = null,
+    /// For a block the game draws in a shape other than the plain cube, the shapes it picks one
+    /// of for each block, by where it is (`BlockTypes.Block.shapes`), the first its own; empty for
+    /// any other, or one whose shapes can't be read. One with nothing to draw has no boxes.
+    shapes: []const world.Shape = &.{},
     /// How it's moved off the middle of its place by where it is (`BlockTypes.Block.drawOffset`).
     drawOffset: u8 = 0,
     randomizeAxes: BlockTypes.Axes = .xyz,
@@ -94,7 +96,7 @@ const Image = world.Image;
 
 /// The format of `blocks.txt` and `textures.bin`, and of what goes into them: raise it when
 /// any changes, so sets prepared before are prepared again.
-const formatVersion = 13;
+const formatVersion = 14;
 const fileName = "blocks.txt";
 const imageFileName = "textures.bin";
 const colourMapFolder = "colormaps";
@@ -162,17 +164,19 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
         if (whole) layers.* = found;
     }
     // Shapes are numbered in the order blocks first have them, and each block's textures for
-    // its shape are its images' numbers, plain and tinted, for each of them; null for a texture
-    // that can't be read, which leaves its faces out.
+    // each of its shapes are its images' numbers, plain and tinted, for each of them; null for
+    // a texture that can't be read, which leaves its faces out.
     var geometries: std.AutoArrayHashMapUnmanaged(*const BlockTypes.Geometry, void) = .empty;
-    const shapeTextures = try arena.alloc([]const [2]?[]const usize, blocks.len);
+    const shapeTextures = try arena.alloc([]const []const [2]?[]const usize, blocks.len);
     for (shapeTextures, blocks) |*bound, block| {
-        bound.* = &.{};
-        const shape = block.shape orelse continue;
-        try geometries.put(arena, shape.geometry, {});
-        const layers = try arena.alloc([2]?[]const usize, shape.textures.len);
-        for (layers, shape.textures) |*layer, texture| layer.* = .{ try images.variants(texture.plain), try images.variants(texture.tinted) };
-        bound.* = layers;
+        const each = try arena.alloc([]const [2]?[]const usize, block.shapes.len);
+        for (each, block.shapes) |*shapeBound, shape| {
+            if (shape.geometry.boxes.len > 0) try geometries.put(arena, shape.geometry, {});
+            const layers = try arena.alloc([2]?[]const usize, shape.textures.len);
+            for (layers, shape.textures) |*layer, texture| layer.* = .{ try images.variants(texture.plain), try images.variants(texture.tinted) };
+            shapeBound.* = layers;
+        }
+        bound.* = each;
     }
 
     var text: std.Io.Writer.Allocating = .init(arena);
@@ -211,9 +215,16 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
         for (layers) |layer| try writeVariants(w, layer);
         if (block.height) |height| try w.print(" {}", .{height}) else try w.writeAll(" -");
         try w.print(" {} {t} {}", .{ block.drawOffset, block.randomizeAxes, @intFromBool(block.randomizeRotations) });
-        if (block.shape) |shape| {
-            try w.print(" {}", .{geometries.getIndex(shape.geometry).?});
-            for (bound) |texture| for (texture) |layer| try writeVariants(w, layer);
+        if (block.shapes.len > 0) {
+            try w.print(" {}", .{block.shapes.len});
+            for (block.shapes, bound) |shape, shapeLayers| {
+                const index = geometries.getIndex(shape.geometry) orelse {
+                    try w.writeAll(" -");
+                    continue;
+                };
+                try w.print(" {}", .{index});
+                for (shapeLayers) |texture| for (texture) |layer| try writeVariants(w, layer);
+            }
         } else try w.writeAll(" -");
         try w.writeByte('\n');
     }
@@ -459,7 +470,7 @@ pub fn exists(io: Io, folder: Dir) bool {
 
 pub const LoadOptions = struct {
     /// Whether to read what drawing the blocks needs, their faces' images (`textures.bin`) and
-    /// their shapes; without, every block's `cube` and `shape` are null.
+    /// their shapes; without, every block's `cube` is null and its `shapes` empty.
     drawing: bool = true,
 };
 
@@ -542,15 +553,25 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir, options: LoadOpti
             const drawOffset = std.fmt.parseInt(u8, words.next() orelse "", 10) catch return error.NotPreparedBlocks;
             const randomizeAxes = std.meta.stringToEnum(BlockTypes.Axes, words.next() orelse "") orelse return error.NotPreparedBlocks;
             const randomizeRotations = std.mem.eql(u8, words.next() orelse return error.NotPreparedBlocks, "1");
-            const drawn = if (options.drawing) try numbered(Geometry, geometries.items, words.next()) else null;
-            const shape: ?world.Shape = if (drawn) |geometry| shape: {
-                const bound = try arena.alloc(world.CubeFaces.Face, geometry.textures);
-                for (bound) |*texture| texture.* = .{
-                    .plain = try variantsOf(arena, &variantLists, images, words.next()),
-                    .tinted = try variantsOf(arena, &variantLists, images, words.next()),
-                };
-                break :shape .{ .boxes = geometry.boxes, .textures = bound };
-            } else null;
+            const shapes: []const world.Shape = if (options.drawing) shapes: {
+                const listed = words.next() orelse return error.NotPreparedBlocks;
+                if (std.mem.eql(u8, listed, "-")) break :shapes &.{};
+                const count = std.fmt.parseInt(usize, listed, 10) catch return error.NotPreparedBlocks;
+                const list = try arena.alloc(world.Shape, count);
+                for (list) |*shape| {
+                    const geometry = try numbered(Geometry, geometries.items, words.next()) orelse {
+                        shape.* = .{ .boxes = &.{}, .textures = &.{} };
+                        continue;
+                    };
+                    const bound = try arena.alloc(world.CubeFaces.Face, geometry.textures);
+                    for (bound) |*texture| texture.* = .{
+                        .plain = try variantsOf(arena, &variantLists, images, words.next()),
+                        .tinted = try variantsOf(arena, &variantLists, images, words.next()),
+                    };
+                    shape.* = .{ .boxes = geometry.boxes, .textures = bound };
+                }
+                break :shapes list;
+            } else &.{};
             try self.blocks.put(arena, first, .{
                 .number = self.blocks.count(),
                 .material = material,
@@ -561,7 +582,7 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir, options: LoadOpti
                 .seasonColourMap = season orelse null,
                 .cube = cube,
                 .height = height,
-                .shape = shape,
+                .shapes = shapes,
                 .drawOffset = drawOffset,
                 .randomizeAxes = randomizeAxes,
                 .randomizeRotations = randomizeRotations,
@@ -729,7 +750,7 @@ test "prepare, load and compare with a save" {
         .{ "game/assets/survival/textures/block/stone/granite3.png", @embedFile("testdata/red.png") },
         .{ "game/assets/survival/blocktypes/soil.json", "{ code: 'soil', drawtype: 'TopSoil', textures: { all: { base: 'block/stone/granite*' }, specialSecondTexture: { base: 'block/grass' } } }" },
         .{ "game/assets/survival/textures/block/grass.png", @embedFile("testdata/red.png") },
-        .{ "game/assets/survival/blocktypes/step.json", "{ code: 'step', shape: { base: 'block/step' }, textures: { all: { base: 'block/stone/granite*' } } }" },
+        .{ "game/assets/survival/blocktypes/step.json", "{ code: 'step', shape: { base: 'block/step', alternates: [ { rotateY: 180 }, { base: 'block/missing' } ] }, textures: { all: { base: 'block/stone/granite*' } } }" },
         .{ "game/assets/survival/shapes/block/step.json", "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 8, 16 ], rotationOrigin: [ 8, 8, 8 ], rotationY: 90, faces: { north: { texture: '#all', uv: [ 0, 0, 16, 8 ] }, up: { texture: '#top' } } } ] }" },
         .{ "data/Mods/testmod.zip", @embedFile("testdata/testmod.zip") },
     };
@@ -790,7 +811,7 @@ test "prepare, load and compare with a save" {
     try std.testing.expectEqual(soil.south.tinted.ptr, soil.east.tinted.ptr);
     try std.testing.expectEqual(rock.up.tinted[0].pixels[1], soil.up.tinted[0].pixels[0]);
     try std.testing.expectEqual(rock.up.tinted[0].pixels[0], soil.south.tinted[0].pixels[0]);
-    try std.testing.expectEqual(null, prepared.blocks.get("rock-granite").?.shape);
+    try std.testing.expectEqual(0, prepared.blocks.get("rock-granite").?.shapes.len);
     // Each block numbered by its place in the file.
     var numbers: [4]bool = @splat(false);
     var each = prepared.blocks.valueIterator();
@@ -805,7 +826,7 @@ test "prepare, load and compare with a save" {
         const block = entry.value_ptr.*;
         const whole = prepared.blocks.get(entry.key_ptr.*).?;
         try std.testing.expectEqual(null, block.cube);
-        try std.testing.expectEqual(null, block.shape);
+        try std.testing.expectEqual(0, block.shapes.len);
         try std.testing.expectEqual(whole.number, block.number);
         try std.testing.expectEqual(whole.colour, block.colour);
         try std.testing.expectEqual(whole.height, block.height);
@@ -816,7 +837,8 @@ test "prepare, load and compare with a save" {
     // naming a texture the block doesn't have.
     const step = prepared.blocks.get("step").?;
     try std.testing.expectEqual(null, step.cube);
-    const shape = step.shape.?;
+    try std.testing.expectEqual(3, step.shapes.len);
+    const shape = step.shapes[0];
     try std.testing.expectEqual(1, shape.boxes.len);
     const box = shape.boxes[0];
     try std.testing.expectEqual([3]f32{ 1, 0.5, 1 }, box.size);
@@ -832,6 +854,14 @@ test "prepare, load and compare with a save" {
         try std.testing.expectEqual(0, shape.textures[face.texture].tinted.len);
     }
     try std.testing.expectEqual(null, box.faces[@backingInt(world.Shape.Side.down)]);
+    // Its alternates: the step turned half about the block's middle, in the same textures, and
+    // a shape with nothing to draw, which keeps its place.
+    const turned = step.shapes[1];
+    try std.testing.expectEqual(1, turned.boxes.len);
+    try std.testing.expect(turned.boxes.ptr != shape.boxes.ptr);
+    try std.testing.expectApproxEqAbs(1, turned.boxes[0].transform[0][3], 1e-5);
+    try std.testing.expectEqual(shape.textures[0].plain.ptr, turned.textures[0].plain.ptr);
+    try std.testing.expectEqual(0, step.shapes[2].boxes.len);
 
     const codes = [_]?[]const u8{ "air", "rock-granite", "rock-basalt", null, "testmod:thing", "othermod:x", "othermod:y" };
     const missing = try prepared.unknown(std.testing.allocator, &codes);

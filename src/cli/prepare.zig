@@ -132,7 +132,7 @@ fn drawPictures(init: std.process.Init, folder: std.Io.Dir) !usize {
     var each = prepared.blocks.valueIterator();
     while (each.next()) |block| drawables[block.number] = .{
         .cube = if (block.cube) |*cube| cube else null,
-        .shape = if (block.shape) |*shape| shape else null,
+        .shapes = block.shapes,
         .colour = SaveFile.colourOf(block),
         .turned = block.randomizeRotations,
     };

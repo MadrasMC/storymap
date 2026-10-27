@@ -24,9 +24,10 @@ pub const Block = struct {
     /// For a block the game draws as a plain cube, the textures on the faces the isometric view
     /// shows; null for any other.
     cube: ?Cube = null,
-    /// For a block the game draws in a shape other than the plain cube, that shape; null for any
-    /// other, or one whose shape can't be read.
-    shape: ?Shape = null,
+    /// For a block the game draws in a shape other than the plain cube, the shapes it picks one
+    /// of for each block, by where it is (`Shapes.resolve`), the first its own; empty for any
+    /// other, or one whose shapes can't be read.
+    shapes: []const Shape = &.{},
     /// How high its selection box reaches, the part of it a player can point at, in sixteenths of
     /// a block; null where its block type gives none, which is the whole block.
     height: ?u8 = null,
@@ -56,6 +57,9 @@ pub const Shape = struct {
     /// By `Geometry.textures`: this block's texture for each, tinted where the block or the
     /// element is, or neither layer where it has none.
     textures: []const Face,
+
+    /// A shape with nothing to draw, which a block may still pick.
+    pub const empty: Shape = .{ .geometry = &.{ .boxes = &.{}, .textures = &.{} }, .textures = &.{} };
 };
 
 /// A shape file's elements, placed in the block as a block type's `shape` places them
@@ -220,7 +224,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                 .climateColorMap = look.climateColorMap,
                 .seasonColorMap = look.seasonColorMap,
                 .cube = look.cube,
-                .shape = look.shape,
+                .shapes = look.shapes,
                 .height = look.height,
                 .drawOffset = look.drawOffset,
                 .randomizeAxes = look.randomizeAxes,
@@ -238,7 +242,7 @@ const Look = struct {
     climateColorMap: ?[]const u8 = null,
     seasonColorMap: ?[]const u8 = null,
     cube: ?Cube = null,
-    shape: ?Shape = null,
+    shapes: []const Shape = &.{},
     height: ?u8 = null,
     drawOffset: u8 = 0,
     randomizeAxes: Axes = .xyz,
@@ -275,11 +279,12 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         };
         cube = try cubeOf(arena, all, drawing, tinted, variant.code.domain);
     }
-    const shape = if (drawing == .shaped) try shapes.shapeOf(drawing.shaped, all, tinted, variant.code.domain) else null;
-    if (shape) |s| {
-        climateColorMap = climateColorMap orelse s.geometry.climateColorMap;
-        seasonColorMap = seasonColorMap orelse s.geometry.seasonColorMap;
-    }
+    const shaped: []const Shape = if (drawing == .shaped) try shapes.alternatesOf(drawing.shaped, all, tinted, variant.code.domain) else &.{};
+    for (shaped) |shape| if (shape.geometry.climateColorMap != null or shape.geometry.seasonColorMap != null) {
+        climateColorMap = climateColorMap orelse shape.geometry.climateColorMap;
+        seasonColorMap = seasonColorMap orelse shape.geometry.seasonColorMap;
+        break;
+    };
     return .{
         .material = material,
         .colorCode = colorCode orelse defaultColorCode(material),
@@ -287,7 +292,7 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         .climateColorMap = climateColorMap,
         .seasonColorMap = seasonColorMap,
         .cube = cube,
-        .shape = shape,
+        .shapes = shaped,
         .height = try heightOf(arena, json, variant),
         .drawOffset = try drawOffsetOf(arena, json, variant),
         .randomizeAxes = if (try property(arena, json, "randomizeAxes", variant)) |axes| (if (std.ascii.eqlIgnoreCase(axes.asString() orelse "", "xz")) .xz else .xyz) else .xyz,
@@ -341,6 +346,8 @@ pub const Shapes = struct {
     files: std.StringHashMapUnmanaged(?Json.Value) = .empty,
     /// Every shape file, listed the first time a location ends in `*`.
     listed: ?[]const Assets.Name = null,
+    /// The files each location ending in `*` stands for (`matching`), by the location.
+    matches: std.StringHashMapUnmanaged([]const []const u8) = .empty,
     /// Each way of placing shape files met so far (`writeKey`), and its boxes, or null if none
     /// shows a face.
     geometries: std.StringHashMapUnmanaged(?*const Geometry) = .empty,
@@ -370,25 +377,22 @@ pub const Shapes = struct {
     }
 
     /// The shape file at `location`, read the first time; null if it can't be read. A location
-    /// ending in `*` is the first file it starts, by name: the game picks one of them for each
-    /// block, as it does a texture's variants.
+    /// ending in `*`, as an overlay's may, is the first file it stands for (`matching`).
     fn file(self: *Shapes, location: Location) !?Json.Value {
         const key = try std.fmt.allocPrint(self.arena, "{s}:{s}", .{ location.domain, location.path });
         const entry = try self.files.getOrPut(self.arena, key);
         if (entry.found_existing) return entry.value_ptr.*;
         entry.value_ptr.* = null;
+        if (std.mem.endsWith(u8, location.path, "*")) {
+            const files = try self.matching(location);
+            if (files.len == 0) return null;
+            const json = try self.file(try .parse(self.arena, files[0], location.domain));
+            // Looked up again: reading the first file may have moved the table.
+            self.files.getPtr(key).?.* = json;
+            return json;
+        }
         const assets = self.assets orelse return null;
-        const path = if (std.mem.endsWith(u8, location.path, "*")) first: {
-            const start = try std.fmt.allocPrint(self.arena, "shapes/{s}", .{location.path[0 .. location.path.len - 1]});
-            const names = self.listed orelse try assets.list(self.arena, self.io, "shapes");
-            self.listed = names;
-            var first: ?[]const u8 = null;
-            for (names) |name| {
-                if (!std.mem.eql(u8, name.domain, location.domain) or !std.mem.startsWith(u8, name.path, start) or !std.mem.endsWith(u8, name.path, ".json")) continue;
-                if (first == null or std.mem.lessThan(u8, name.path, first.?)) first = name.path;
-            }
-            break :first first orelse return null;
-        } else try std.fmt.allocPrint(self.arena, "shapes/{s}.json", .{location.path});
+        const path = try std.fmt.allocPrint(self.arena, "shapes/{s}.json", .{location.path});
         // A path no file can have, such as one with a second `:`, names none.
         const text = assets.read(self.arena, self.io, location.domain, path) catch |err| switch (err) {
             error.OutOfMemory => return err,
@@ -396,6 +400,105 @@ pub const Shapes = struct {
         } orelse return null;
         entry.value_ptr.* = Json.parse(self.arena, text) catch return null;
         return entry.value_ptr.*;
+    }
+
+    /// The shape files a location ending in `*` stands for, each as "domain:path" without
+    /// `shapes/` and from its last `.` on: those in its domain whose path starts with its own, in
+    /// folders below too, whatever their format, each then read as the game's JSON (vsapi
+    /// `CompositeShape.resolveShapeWildCards`). The game lists them in no set order; by name is a
+    /// guess. For an alternate's own base, vsapi cuts the path to its shape's base's length
+    /// instead, which no asset relies on, as it either fails or matches more than meant.
+    fn matching(self: *Shapes, location: Location) ![]const []const u8 {
+        const key = try std.fmt.allocPrint(self.arena, "{s}:{s}", .{ location.domain, location.path });
+        const entry = try self.matches.getOrPut(self.arena, key);
+        if (entry.found_existing) return entry.value_ptr.*;
+        entry.value_ptr.* = &.{};
+        const names = self.listed orelse if (self.assets) |assets| try assets.list(self.arena, self.io, "shapes") else return &.{};
+        self.listed = names;
+        const start = try std.fmt.allocPrint(self.arena, "shapes/{s}", .{location.path[0 .. location.path.len - 1]});
+        var found: std.ArrayList([]const u8) = .empty;
+        for (names) |name| {
+            if (!std.mem.eql(u8, name.domain, location.domain) or !std.mem.startsWith(u8, name.path, start)) continue;
+            const end = std.mem.lastIndexOfScalar(u8, name.path, '.') orelse name.path.len;
+            const path = name.path["shapes/".len..end];
+            try found.append(self.arena, try std.fmt.allocPrint(self.arena, "{s}:{s}", .{ name.domain, path }));
+        }
+        entry.value_ptr.* = found.items;
+        return found.items;
+    }
+
+    /// The shapes the game picks one of for each block of a block type's `shape`, in the order
+    /// vsapi `CompositeShape.LoadAlternates` lists them:
+    /// - the shape itself, its base's first file if that ends in `*`, or the plain cube if it
+    ///   stands for none;
+    /// - its base's other files, turned, scaled and picking elements as the shape does, but
+    ///   neither moved nor overlaid;
+    /// - each of its `alternates`, or for one whose base ends in `*`, each file it stands for,
+    ///   as above. An alternate without a base takes the shape's, and without
+    ///   `quantityElements`, `selectiveElements` or `ignoreElements`, the shape's; everything
+    ///   else is its own.
+    /// A shape listed twice is picked twice as often.
+    fn resolve(self: *Shapes, composite: Json.Value, domain: []const u8) ![]const Json.Value {
+        const arena = self.arena;
+        const base = (composite.get("base") orelse return arena.dupe(Json.Value, &.{composite})).asString() orelse return arena.dupe(Json.Value, &.{composite});
+        var list: std.ArrayList(Json.Value) = .empty;
+        if (std.mem.endsWith(u8, base, "*")) {
+            const files = try self.matching(try .parse(arena, base, domain));
+            if (files.len == 0) try list.append(arena, try withFields(arena, composite, &.{.{ .key = "base", .value = .{ .string = "game:block/basic/cube" } }}));
+            for (files, 0..) |path, i| {
+                const shape = if (i == 0) try withFields(arena, composite, &.{.{ .key = "base", .value = .{ .string = path } }}) else try fileOf(arena, composite, path);
+                try list.append(arena, shape);
+            }
+        } else try list.append(arena, composite);
+        for (composite.getArray("alternates")) |alternate| {
+            if (alternate != .object) continue;
+            const own = if (alternate.get("base")) |b| (if (b.asString()) |text| text else null) else null;
+            const placed = if (own == null) try withFields(arena, alternate, &.{.{ .key = "base", .value = .{ .string = base } }}) else alternate;
+            const alternateBase = own orelse base;
+            if (!std.mem.endsWith(u8, alternateBase, "*")) {
+                try list.append(arena, placed);
+                continue;
+            }
+            for (try self.matching(try .parse(arena, alternateBase, domain))) |path| try list.append(arena, try fileOf(arena, placed, path));
+        }
+        for (list.items[1..]) |*shape| for (elementFilters) |key| {
+            if (shape.get(key) != null) continue;
+            const value = composite.get(key) orelse continue;
+            shape.* = try withFields(arena, shape.*, &.{.{ .key = key, .value = value }});
+        };
+        return list.items;
+    }
+
+    const elementFilters = [_][]const u8{ "quantityElements", "selectiveElements", "ignoreElements" };
+
+    /// One of the files a shape's base ending in `*` stands for, at `path`, turned, scaled and
+    /// picking elements as `shape` does.
+    fn fileOf(arena: std.mem.Allocator, shape: Json.Value, path: []const u8) !Json.Value {
+        var fields: std.ArrayList(Json.Field) = .empty;
+        try fields.append(arena, .{ .key = "base", .value = .{ .string = path } });
+        for ([_][]const u8{ "rotateX", "rotateY", "rotateZ", "scale" } ++ elementFilters) |key| {
+            if (shape.get(key)) |value| try fields.append(arena, .{ .key = key, .value = value });
+        }
+        return .{ .object = fields.items };
+    }
+
+    /// `object` with `fields`, which take the place of any of the same name it has.
+    fn withFields(arena: std.mem.Allocator, object: Json.Value, fields: []const Json.Field) !Json.Value {
+        const own: []const Json.Field = if (object == .object) object.object else &.{};
+        return .{ .object = try std.mem.concat(arena, Json.Field, &.{ own, fields }) };
+    }
+
+    /// The shapes the game picks one of for each block of a block type's `shape` (`resolve`),
+    /// each with the block's textures for it; empty if none shows a face.
+    fn alternatesOf(self: *Shapes, composite: Json.Value, textures: []const Json.Field, tinted: bool, domain: []const u8) ![]const Shape {
+        const list = try self.resolve(composite, domain);
+        const found = try self.arena.alloc(Shape, list.len);
+        var any = false;
+        for (found, list) |*shape, placed| {
+            shape.* = try self.shapeOf(placed, textures, tinted, domain) orelse .empty;
+            any = any or shape.geometry.boxes.len > 0;
+        }
+        return if (any) found else &.{};
     }
 
     /// A block type's `shape` (vsapi `CompositeShape`) with its overlays, and the block's
@@ -1414,7 +1517,8 @@ test "the shape a block is drawn in" {
     ));
     const textures = "textures: { horizontals: { base: 'side' }, up: { base: 'top' } }";
     const look = try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/step' }, " ++ textures ++ " }"), variant, &shapes);
-    const shape = look.shape.?;
+    try std.testing.expectEqual(1, look.shapes.len);
+    const shape = look.shapes[0];
     const boxes = shape.geometry.boxes;
     try std.testing.expectEqual(3, boxes.len);
     try std.testing.expectEqual(null, look.cube);
@@ -1450,10 +1554,10 @@ test "the shape a block is drawn in" {
 
     // Placed the same, blocks share the boxes; turned a quarter about the block's middle, its
     // corner at (0, 0, 0) goes to (0, 0, 1).
-    const again = (try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/step' }, textures: { all: { base: 'x' } } }"), variant, &shapes)).shape.?;
+    const again = (try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/step' }, textures: { all: { base: 'x' } } }"), variant, &shapes)).shapes[0];
     try std.testing.expectEqual(shape.geometry, again.geometry);
     try std.testing.expectEqualStrings("game:x", again.textures[west.texture].tinted.?.base);
-    const turned = (try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/step', rotateY: 90 }, " ++ textures ++ " }"), variant, &shapes)).shape.?;
+    const turned = (try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/step', rotateY: 90 }, " ++ textures ++ " }"), variant, &shapes)).shapes[0];
     try std.testing.expect(turned.geometry != shape.geometry);
     try std.testing.expectApproxEqAbs(0, turned.geometry.boxes[0].transform[0][3], 1e-6);
     try std.testing.expectApproxEqAbs(1, turned.geometry.boxes[0].transform[2][3], 1e-6);
@@ -1466,8 +1570,81 @@ test "the shape a block is drawn in" {
     };
     for (picked) |case| {
         const json = try std.fmt.allocPrint(a, "{{ shape: {{ base: 'block/test/step', selectiveElements: {s} }}, {s} }}", .{ case.list, textures });
-        try std.testing.expectEqual(case.boxes, (try describe(a, try Json.parse(a, json), variant, &shapes)).shape.?.geometry.boxes.len);
+        try std.testing.expectEqual(case.boxes, (try describe(a, try Json.parse(a, json), variant, &shapes)).shapes[0].geometry.boxes.len);
     }
+}
+
+test "the shapes a block picks from" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const variant: Variant = .{ .code = .{ .domain = "game", .path = "bush" }, .parts = &.{} };
+    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    // Two bushes, the second in a folder below, a third in another format, a pot, and a bush
+    // in another domain.
+    shapes.listed = &.{
+        .{ .domain = "game", .path = "shapes/block/test/bush1.json" },
+        .{ .domain = "game", .path = "shapes/block/test/bush2/tall.json" },
+        .{ .domain = "game", .path = "shapes/block/test/bush3.obj" },
+        .{ .domain = "game", .path = "shapes/block/test/pot.json" },
+        .{ .domain = "mod", .path = "shapes/block/test/bush4.json" },
+    };
+    const cube = "{ elements: [ { name: 'Leaf', from: [ 0, 0, 0 ], to: [ 16, 16, 16 ], faces: { up: { texture: '#all' } } } ] }";
+    for ([_][]const u8{ "game:block/test/bush1", "game:block/test/bush2/tall", "game:block/test/pot", "game:block/basic/cube" }) |location| {
+        try shapes.files.put(a, location, try Json.parse(a, cube));
+    }
+
+    // The bush's own shape first, then its other files, then each alternate: one taking the
+    // bush's base, and all its files, one of its own, and one standing for no file at all.
+    const composite = try Json.parse(a,
+        \\{ base: 'block/test/bush*', rotateY: 90, offsetX: 0.5, selectiveElements: [ 'Leaf' ],
+        \\  overlays: [ { base: 'block/test/pot' } ],
+        \\  alternates: [ { rotateY: 180 }, { base: 'block/test/pot', selectiveElements: [] }, { base: 'block/test/none*' } ] }
+    );
+    const list = try shapes.resolve(composite, "game");
+    const expected = [_]struct { base: []const u8, rotateY: f32, offsetX: f32, overlaid: bool, selective: usize }{
+        .{ .base = "game:block/test/bush1", .rotateY = 90, .offsetX = 0.5, .overlaid = true, .selective = 1 },
+        .{ .base = "game:block/test/bush2/tall", .rotateY = 90, .offsetX = 0, .overlaid = false, .selective = 1 },
+        .{ .base = "game:block/test/bush3", .rotateY = 90, .offsetX = 0, .overlaid = false, .selective = 1 },
+        .{ .base = "game:block/test/bush1", .rotateY = 180, .offsetX = 0, .overlaid = false, .selective = 1 },
+        .{ .base = "game:block/test/bush2/tall", .rotateY = 180, .offsetX = 0, .overlaid = false, .selective = 1 },
+        .{ .base = "game:block/test/bush3", .rotateY = 180, .offsetX = 0, .overlaid = false, .selective = 1 },
+        .{ .base = "block/test/pot", .rotateY = 0, .offsetX = 0, .overlaid = false, .selective = 0 },
+    };
+    try std.testing.expectEqual(expected.len, list.len);
+    for (expected, list) |want, shape| {
+        try std.testing.expectEqualStrings(want.base, shape.get("base").?.asString().?);
+        try std.testing.expectEqual(want.rotateY, number(shape.get("rotateY"), 0));
+        try std.testing.expectEqual(want.offsetX, number(shape.get("offsetX"), 0));
+        try std.testing.expectEqual(want.overlaid, shape.get("overlays") != null);
+        try std.testing.expectEqual(want.selective, shape.getArray("selectiveElements").len);
+    }
+
+    // Each is drawn: the bush and its overlaid pot, then the second bush alone, the third, with
+    // no JSON file, as nothing, and the pot.
+    const look = try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/bush*', overlays: [ { base: 'block/test/pot' } ], alternates: [ { base: 'block/test/pot' } ] }, textures: { all: { base: 'leaf' } } }"), variant, &shapes);
+    try std.testing.expectEqual(4, look.shapes.len);
+    try std.testing.expectEqual(2, look.shapes[0].geometry.boxes.len);
+    try std.testing.expectEqual(1, look.shapes[1].geometry.boxes.len);
+    try std.testing.expectEqual(0, look.shapes[2].geometry.boxes.len);
+    try std.testing.expectEqualStrings("game:leaf", look.shapes[3].textures[0].plain.?.base);
+
+    // A base standing for no file is the plain cube; an alternate with nothing to draw keeps its
+    // place, and a block none of whose shapes has anything to draw has none.
+    const none = try shapes.resolve(try Json.parse(a, "{ base: 'block/test/none*', rotateY: 90 }"), "game");
+    try std.testing.expectEqual(1, none.len);
+    try std.testing.expectEqualStrings("game:block/basic/cube", none[0].get("base").?.asString().?);
+    try std.testing.expectEqual(90, number(none[0].get("rotateY"), 0));
+    const hollow = try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/pot', alternates: [ { base: 'block/test/missing' } ] }, textures: { all: { base: 'leaf' } } }"), variant, &shapes);
+    try std.testing.expectEqual(2, hollow.shapes.len);
+    try std.testing.expectEqual(0, hollow.shapes[1].geometry.boxes.len);
+    const empty = try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/missing' }, textures: { all: { base: 'leaf' } } }"), variant, &shapes);
+    try std.testing.expectEqual(0, empty.shapes.len);
+
+    // A block type naming no colour maps takes those of the first of its shapes naming any.
+    try shapes.files.put(a, "game:block/test/fern", try Json.parse(a, "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 16, 0 ], climateColorMap: 'climatePlantTint', faces: { north: { texture: '#all' } } } ] }"));
+    const fern = try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/missing', alternates: [ { base: 'block/test/pot' }, { base: 'block/test/fern' } ] }, textures: { all: { base: 'leaf' } } }"), variant, &shapes);
+    try std.testing.expectEqualStrings("climatePlantTint", fern.climateColorMap.?);
 }
 
 test "how high a block's selection box reaches" {
