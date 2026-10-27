@@ -22,7 +22,7 @@
 <link rel="stylesheet" href="style.css">
 <script type="module" src="main.js"></script>
 </head>
-<body>
+<body class="empty">
 
 <header class="bar">
 	<h1 class="title">
@@ -47,7 +47,8 @@
 	<button type="button" role="menuitem" data-action="close" id="close-file">Close</button>
 </div>
 
-<main id="empty" class="state">
+<!-- Hidden until it's known that no file was kept from before (main.js openSaved). -->
+<main id="empty" class="state" hidden>
 	<div class="panel">
 		<h2>Drop a .storyblk here</h2>
 		<p><code>prepared.storyblk</code></p>
