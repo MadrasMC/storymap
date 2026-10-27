@@ -1,31 +1,48 @@
-// Shows the pictures in a Storymap pictures.bin, the isometric view's pictures of a game's blocks,
-// as src/renderer/Pictures.zig writes them. A prepared blocks folder's blocks.txt and colormaps,
-// when given with it, name the blocks and tint them.
+// Shows the sprites in a .storyblk file, Storymap's prepared blocks as spec.md beside this page
+// specifies: each block's sprites for the isometric view, tinted by its colour maps.
 
-const MAGIC = "SMPICTS\0";
-// The layout is the same from version 3 on; later versions only changed what's drawn. A changed
-// layout fails parse's size checks.
-const FIRST_VERSION = 3;
-const HEADER_SIZE = 24;
-const ENTRY_SIZE = 12;
-const STORED_SIZE = 16;
+const MAGIC = "STORYBLK";
+const CONTAINER_VERSION = 1;
+const HEADER_LENGTH = 24;
+// The sections this viewer reads, each with the layout version it reads of it (spec §7). It skips
+// any others.
+const SECTIONS = new Map([
+	["blocks", 1],
+	["materials", 1],
+	["colour_codes", 1],
+	["texture_colours", 1],
+	["colour_maps", 1],
+	["sprites", 1],
+	["sprite_layers", 1],
+]);
+const TEXTURE_COLOURS_LENGTH = 93;
+const SPRITE_LENGTH = 16;
+const NONE8 = 0xff;
+const NONE32 = 0xffffffff;
+// Block flags, and Sprite flags (spec §4).
+const SHAPE = 4;
+const TINTED = 8;
+const SPRITE_TINTED = 1;
+const GAMES = new Map([["vintagestory", "Vintage Story"]]);
 
-// A tile's box is this many picture pixels across at 1×: a cube's square and a little around it.
-const BOX = 48;
+// A tile's box at 1×, in cube's squares: the square and half as much again around it.
+const BOX = 1.5;
 
 // Tinted layers are tinted as at a temperate place at sea level in midsummer (src/vs/Tint.zig).
 const TEMPERATURE = 165;
 const RAINFALL = 110;
 const PROGRESS = 0.5;
-// The tint without blocks.txt or its colour maps: climatePlantTint and seasonalGrass there.
-const DEFAULT_TINT = [133, 165, 13];
 const WHITE = [255, 255, 255];
 
-const DATABASE = "storymap-pictures";
-const STORE = "sets";
+const DATABASE = "storyblk";
+const STORE = "files";
 const KEY = "current";
+// Where this viewer kept a pictures.bin before it read .storyblk files.
+const OLD_DATABASE = "storymap-pictures";
 
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+// A String's text is its bytes as they are: a leading byte order mark is part of it.
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 const $ = (id) => document.getElementById(id);
 const blocksView = $("blocks");
@@ -35,85 +52,222 @@ const openButton = $("open");
 const dropOverlay = $("drop");
 const toastElement = $("toast");
 
-let shown = null; // { set, record, blocks, groups }
+let shown = null; // { contents, file, box, blocks, groups }
 let zoom = 2;
 let current = null; // the block open in the dialog
 let closing = false;
 
-// Reading pictures.bin
+// Reading a .storyblk
 
-function parse(buffer) {
-	if (buffer.byteLength < HEADER_SIZE) throw new Error("This isn't a pictures.bin: it's too short.");
-	const view = new DataView(buffer);
-	const magic = String.fromCharCode(...new Uint8Array(buffer, 0, 8));
-	if (magic !== MAGIC) throw new Error("This isn't a pictures.bin.");
-	const version = view.getUint32(8, true);
-	const entryCount = view.getUint32(12, true);
-	const pictureCount = view.getUint32(16, true);
-	const dataLength = view.getUint32(20, true);
-	if (version < FIRST_VERSION) throw new Error(`This pictures.bin is version ${version}, older than this viewer reads. Render again to redraw it.`);
-	const storedAt = HEADER_SIZE + entryCount * ENTRY_SIZE;
-	const dataAt = storedAt + pictureCount * STORED_SIZE;
-	if (buffer.byteLength !== dataAt + dataLength) throw new Error(`This pictures.bin (version ${version}) isn't laid out as this viewer reads.`);
+function rejectFile(what) {
+	throw new Error(`This .storyblk is damaged: ${what}.`);
+}
 
-	const entries = [];
-	for (let i = 0; i < entryCount; i++) {
-		const at = HEADER_SIZE + i * ENTRY_SIZE;
-		const entry = {
-			first: view.getUint32(at, true),
-			variants: view.getUint16(at + 4, true),
-			alternates: view.getUint16(at + 6, true),
-			turns: view.getUint8(at + 8),
-			flags: view.getUint8(at + 9),
-		};
-		if (entry.variants > 0 && (entry.alternates === 0 || entry.turns === 0)) throw new Error(`Block ${i} in this pictures.bin has no shapes or turns.`);
-		if (entry.first + entry.variants * entry.alternates * entry.turns > pictureCount) throw new Error(`Block ${i} in this pictures.bin names pictures it doesn't have.`);
-		entries.push(entry);
+// Takes little-endian fields one after another from `at`, rejecting the file at `end`.
+class Fields {
+	constructor(view, at, end, part) {
+		this.view = view;
+		this.at = at;
+		this.end = end;
+		this.part = part;
 	}
 
-	const stored = {
-		offset: new Uint32Array(pictureCount),
-		left: new Int16Array(pictureCount),
-		top: new Int16Array(pictureCount),
-		width: new Uint16Array(pictureCount),
-		height: new Uint16Array(pictureCount),
-		flags: new Uint32Array(pictureCount),
+	// Moves past `length` bytes, returning where they start.
+	advance(length) {
+		if (length > this.end - this.at) rejectFile(`${this.part} is cut short`);
+		const at = this.at;
+		this.at += length;
+		return at;
+	}
+
+	takeU8() {
+		return this.view.getUint8(this.advance(1));
+	}
+
+	takeU16() {
+		return this.view.getUint16(this.advance(2), true);
+	}
+
+	takeU32() {
+		return this.view.getUint32(this.advance(4), true);
+	}
+
+	// Past what a number holds exactly, Infinity, which lies past any file.
+	takeU64() {
+		const value = this.view.getBigUint64(this.advance(8), true);
+		return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : Infinity;
+	}
+
+	takeBytes(length) {
+		return new Uint8Array(this.view.buffer, this.advance(length), length);
+	}
+
+	takeString() {
+		return decoder.decode(this.takeBytes(this.takeU16()));
+	}
+
+	takeStrings() {
+		const out = [];
+		for (let n = this.takeU8(); n > 0; n--) out.push(this.takeString());
+		return out;
+	}
+}
+
+// The file's sections this viewer reads, checked as spec §5 says.
+function parse(buffer) {
+	const view = new DataView(buffer);
+	if (buffer.byteLength < HEADER_LENGTH || decoder.decode(new Uint8Array(buffer, 0, 8)) !== MAGIC) throw new Error("This isn't a .storyblk file.");
+	const version = view.getUint8(8);
+	if (version !== CONTAINER_VERSION) throw new Error(`This .storyblk is container version ${version}, which this viewer doesn't read.`);
+	const sectionCount = view.getUint16(10, true);
+	const infoLength = view.getUint32(12, true);
+	if (infoLength > buffer.byteLength - HEADER_LENGTH) rejectFile("its info is cut short");
+
+	const info = new Fields(view, HEADER_LENGTH, HEADER_LENGTH + infoLength, "its info");
+	const game = info.takeString();
+	const gameVersion = info.takeString();
+	const mods = [];
+	for (let n = info.takeU16(); n > 0; n--) mods.push({ file: info.takeString(), id: info.takeString(), name: info.takeString(), version: info.takeString() });
+
+	const table = new Fields(view, HEADER_LENGTH + infoLength, buffer.byteLength, "its section table");
+	const listed = [];
+	for (let n = 0; n < sectionCount; n++) {
+		listed.push({ offset: table.takeU64(), length: table.takeU32(), layoutVersion: table.takeU8(), generatorVersion: table.takeU16(), name: table.takeString() });
+	}
+	const sections = new Map();
+	for (const section of listed) {
+		const layout = SECTIONS.get(section.name);
+		if (layout === undefined) continue;
+		if (sections.has(section.name)) rejectFile(`it has two ${section.name} sections`);
+		if (section.layoutVersion !== layout) throw new Error(`This .storyblk's ${section.name} section is layout version ${section.layoutVersion}, which this viewer doesn't read.`);
+		if (section.offset < table.at || section.offset % 8 !== 0 || section.length > buffer.byteLength - section.offset) rejectFile(`its ${section.name} section isn't where its table says`);
+		sections.set(section.name, section);
+	}
+	for (const name of SECTIONS.keys()) if (!sections.has(name)) rejectFile(`it has no ${name} section`);
+	const openSection = (name) => {
+		const section = sections.get(name);
+		return new Fields(view, section.offset, section.offset + section.length, `its ${name} section`);
 	};
-	for (let i = 0; i < pictureCount; i++) {
-		const at = storedAt + i * STORED_SIZE;
+
+	const materials = openSection("materials").takeStrings();
+	const colourCodes = openSection("colour_codes").takeStrings();
+
+	const textures = openSection("texture_colours");
+	const textureCount = textures.takeU32();
+	if (sections.get("texture_colours").length !== 4 + TEXTURE_COLOURS_LENGTH * textureCount) rejectFile("its texture_colours section isn't the length its count gives");
+	const textureColours = textures.takeBytes(TEXTURE_COLOURS_LENGTH * textureCount);
+
+	const maps = openSection("colour_maps");
+	const colourMaps = [];
+	for (let n = maps.takeU8(); n > 0; n--) {
+		const code = maps.takeString();
+		const padding = maps.takeU8();
+		const flags = maps.takeU8();
+		colourMaps.push({ code, padding, tropical: (flags & 1) !== 0, image: maps.takeBytes(maps.takeU32()) });
+	}
+
+	const spriteSection = sections.get("sprites");
+	const spriteFields = openSection("sprites");
+	const spriteCount = spriteFields.takeU32();
+	const blockWidth = spriteFields.takeU16();
+	if (spriteSection.length !== 8 + SPRITE_LENGTH * spriteCount) rejectFile("its sprites section isn't the length its count gives");
+	const layerSection = sections.get("sprite_layers");
+	const sprites = {
+		count: spriteCount,
+		offset: new Uint32Array(spriteCount),
+		left: new Int16Array(spriteCount),
+		top: new Int16Array(spriteCount),
+		width: new Uint16Array(spriteCount),
+		height: new Uint16Array(spriteCount),
+		flags: new Uint32Array(spriteCount),
+	};
+	for (let i = 0; i < spriteCount; i++) {
+		const at = spriteSection.offset + 8 + i * SPRITE_LENGTH;
 		const offset = view.getUint32(at, true);
 		const width = view.getUint16(at + 8, true);
 		const height = view.getUint16(at + 10, true);
 		const flags = view.getUint32(at + 12, true);
 		const pixels = width * height;
-		const length = pixels * (flags & 1 ? 8 : 4) + Math.ceil((pixels * 2) / 4) * 4;
-		if (offset % 4 !== 0 || offset + length > dataLength) throw new Error(`Picture ${i} in this pictures.bin runs past its end.`);
-		stored.offset[i] = offset;
-		stored.left[i] = view.getInt16(at + 4, true);
-		stored.top[i] = view.getInt16(at + 6, true);
-		stored.width[i] = width;
-		stored.height[i] = height;
-		stored.flags[i] = flags;
+		const length = pixels * (flags & SPRITE_TINTED ? 8 : 4) + Math.ceil((pixels * 2) / 4) * 4;
+		if (offset % 4 !== 0) rejectFile(`sprite ${i}'s layers don't start on a multiple of 4`);
+		if (offset + length > layerSection.length) rejectFile(`sprite ${i} goes past the end of its sprite_layers section`);
+		sprites.offset[i] = offset;
+		sprites.left[i] = view.getInt16(at + 4, true);
+		sprites.top[i] = view.getInt16(at + 6, true);
+		sprites.width[i] = width;
+		sprites.height[i] = height;
+		sprites.flags[i] = flags;
 	}
-	return { version, entries, stored, data: new Uint8Array(buffer, dataAt, dataLength) };
+
+	const blockFields = openSection("blocks");
+	const blocks = [];
+	const isOutside = (value, count, none) => value !== none && value >= count;
+	for (let index = 0, count = blockFields.takeU32(); index < count; index++) {
+		const block = {
+			index,
+			code: blockFields.takeString(),
+			material: blockFields.takeU8(),
+			colourCode: blockFields.takeU8(),
+			colour: blockFields.takeU32(),
+			grain: blockFields.takeU32(),
+			climateColourMap: blockFields.takeU8(),
+			seasonColourMap: blockFields.takeU8(),
+			height: blockFields.takeU8(),
+			drawOffset: blockFields.takeU8(),
+			flags: blockFields.takeU8(),
+			first: blockFields.takeU32(),
+			variants: blockFields.takeU16(),
+			alternates: blockFields.takeU16(),
+			turns: blockFields.takeU8(),
+		};
+		if (
+			block.material >= materials.length ||
+			block.colourCode >= colourCodes.length ||
+			isOutside(block.colour, textureCount, NONE32) ||
+			isOutside(block.grain, textureCount, NONE32) ||
+			isOutside(block.climateColourMap, colourMaps.length, NONE8) ||
+			isOutside(block.seasonColourMap, colourMaps.length, NONE8)
+		) {
+			rejectFile(`block ${index} names an entry its tables don't have`);
+		}
+		if (block.variants > 0 && (block.alternates === 0 || block.turns === 0)) rejectFile(`block ${index} has variants but no shapes or turns`);
+		block.count = block.variants * block.alternates * block.turns;
+		if (block.count > 0 && block.first + block.count > spriteCount) rejectFile(`block ${index}'s sprites go past the last sprite`);
+		blocks.push(block);
+	}
+
+	return {
+		game,
+		gameVersion,
+		mods,
+		materials,
+		colourCodes,
+		textureColours,
+		colourMaps,
+		blockWidth,
+		sprites,
+		layers: new Uint8Array(buffer, layerSection.offset, layerSection.length),
+		blocks,
+	};
 }
 
-// Picture `index`, its tinted layer tinted by `tint`, drawn over its plain one as the renderer
+// Sprite `index`, its tinted layer tinted by `tint`, drawn over its plain one as the renderer
 // blends them (isometric.blend).
-function drawPicture(canvas, set, index, tint) {
-	const width = set.stored.width[index];
-	const height = set.stored.height[index];
+function drawSprite(canvas, contents, index, tint) {
+	const sprites = contents.sprites;
+	const width = sprites.width[index];
+	const height = sprites.height[index];
 	canvas.width = width;
 	canvas.height = height;
 	if (width === 0 || height === 0) return;
 	const pixels = width * height;
-	const at = set.stored.offset[index];
-	const plain = set.data.subarray(at, at + pixels * 4);
+	const at = sprites.offset[index];
+	const plain = contents.layers.subarray(at, at + pixels * 4);
 	const image = new ImageData(width, height);
 	const out = image.data;
 	out.set(plain);
-	if (set.stored.flags[index] & 1) {
-		const layer = set.data.subarray(at + pixels * 4, at + pixels * 8);
+	if (sprites.flags[index] & SPRITE_TINTED) {
+		const layer = contents.layers.subarray(at + pixels * 4, at + pixels * 8);
 		for (let p = 0; p < pixels * 4; p += 4) {
 			const a = layer[p + 3];
 			if (a === 0) continue;
@@ -127,42 +281,45 @@ function drawPicture(canvas, set, index, tint) {
 	canvas.getContext("2d").putImageData(image, 0, 0);
 }
 
-// Reading blocks.txt and the colour maps
+// Tints
 
-function parseBlocks(text) {
-	if (!text.startsWith("storymap blocks ")) throw new Error("This blocks.txt isn't one Storymap prepared.");
-	const names = [];
-	const climates = [];
-	const seasons = [];
-	const maps = [];
-	let start = 0;
-	while (start < text.length) {
-		let end = text.indexOf("\n", start);
-		if (end < 0) end = text.length;
-		if (text.startsWith("block ", start)) {
-			// Only the first fields are needed; a block's line can run to thousands of characters.
-			const fields = text.slice(start, Math.min(end, start + 512)).split(" ", 8);
-			names.push(fields[1]);
-			climates.push(fields[6]);
-			seasons.push(fields[7]);
-		} else if (text.startsWith("colormap ", start)) {
-			const fields = text.slice(start, end).trim().split(" ");
-			maps.push({ code: fields[1], padding: Number(fields[2]), tropical: fields[3] === "1" });
-		}
-		start = end + 1;
+let pixelReader = null;
+
+// The bitmap's pixels as its PNG holds them, as the renderer reads them (src/vs/Tint.zig): a 2D
+// canvas would multiply their colours by their alpha. WebGL reads them unchanged.
+function readPixels(bitmap) {
+	const { width, height } = bitmap;
+	pixelReader ??= new OffscreenCanvas(1, 1).getContext("webgl");
+	const gl = pixelReader;
+	if (!gl) {
+		const context = new OffscreenCanvas(width, height).getContext("2d");
+		context.drawImage(bitmap, 0, 0);
+		return context.getImageData(0, 0, width, height).data;
 	}
-	return { names, climates, seasons, maps };
+	const texture = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, texture);
+	gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+	gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
+	const framebuffer = gl.createFramebuffer();
+	gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+	const pixels = new Uint8Array(width * height * 4);
+	gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	gl.deleteFramebuffer(framebuffer);
+	gl.deleteTexture(texture);
+	return pixels;
 }
 
-async function decodeColourMap(file, padding, tropical) {
-	const bitmap = await createImageBitmap(file);
-	const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-	const context = canvas.getContext("2d");
-	context.drawImage(bitmap, 0, 0);
-	const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+async function decodeColourMap(map) {
+	const png = new Blob([map.image], { type: "image/png" });
+	const bitmap = await createImageBitmap(png, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+	const { width, height } = bitmap;
+	const pixels = readPixels(bitmap);
 	bitmap.close();
-	if (bitmap.width <= 2 * padding || bitmap.height <= 2 * padding) return null;
-	return { width: canvas.width, height: canvas.height, pixels, padding, tropical };
+	if (width <= 2 * map.padding || height <= 2 * map.padding) return null;
+	return { width, height, pixels, padding: map.padding, tropical: map.tropical };
 }
 
 function colourAt(map, across, down) {
@@ -206,70 +363,33 @@ function tint(climate, season) {
 	return out.map((value) => clamp(Math.round(value), 0, 255));
 }
 
-// Each block's tint, three bytes a block: white for one without colour maps, as the renderer
-// leaves it.
-async function tintsOf(blocks, colourMapFiles) {
-	const maps = await Promise.all(
-		blocks.maps.map(async (map) => {
-			const file = colourMapFiles.get(map.code);
-			if (!file) return null;
-			try {
-				return await decodeColourMap(file, map.padding, map.tropical);
-			} catch {
-				return null;
-			}
-		}),
-	);
+// Gives each block its tint: white for one without colour maps, as the renderer leaves it.
+async function tintBlocks(contents) {
+	const maps = await Promise.all(contents.colourMaps.map((map) => decodeColourMap(map).catch(() => null)));
 	const byPair = new Map();
-	const tints = new Uint8Array(blocks.names.length * 3);
-	for (let n = 0; n < blocks.names.length; n++) {
-		const pair = blocks.climates[n] + " " + blocks.seasons[n];
+	for (const block of contents.blocks) {
+		const pair = block.climateColourMap * 256 + block.seasonColourMap;
 		let colour = byPair.get(pair);
 		if (!colour) {
-			const climate = blocks.climates[n] === "-" ? undefined : maps[Number(blocks.climates[n])];
-			const season = blocks.seasons[n] === "-" ? undefined : maps[Number(blocks.seasons[n])];
-			if (climate === undefined && season === undefined) colour = WHITE;
-			else if (!climate && !season) colour = DEFAULT_TINT;
-			else colour = tint(climate, season);
+			const climate = block.climateColourMap === NONE8 ? null : maps[block.climateColourMap];
+			const season = block.seasonColourMap === NONE8 ? null : maps[block.seasonColourMap];
+			colour = climate || season ? tint(climate, season) : WHITE;
 			byPair.set(pair, colour);
 		}
-		tints.set(colour, n * 3);
+		block.tint = colour;
 	}
-	return tints;
 }
 
 // Choosing what to open
 
-function baseName(path) {
-	return path.slice(path.lastIndexOf("/") + 1);
-}
-
-function folderOf(path) {
-	const slash = path.lastIndexOf("/");
-	return slash < 0 ? "" : path.slice(0, slash);
-}
-
-// From what was dropped or chosen, the newest pictures.bin and the blocks.txt and colour maps
-// beside it: a whole blocks folder can hold several prepared sets.
+// The newest .storyblk among what was dropped or chosen; a single file of another name is tried
+// as one.
 function choose(files) {
-	const pictures = files.filter((f) => baseName(f.path) === "pictures.bin");
-	if (pictures.length === 0) throw new Error("There's no pictures.bin in what was opened.");
-	pictures.sort((a, b) => b.file.lastModified - a.file.lastModified);
-	const bin = pictures[0];
-	const folder = folderOf(bin.path);
-	const allBlocks = files.filter((f) => baseName(f.path) === "blocks.txt");
-	const blocks = allBlocks.find((f) => folderOf(f.path) === folder) ?? (allBlocks.length === 1 ? allBlocks[0] : null);
-	const colourMaps = new Map();
-	const mapsFolder = folder ? folder + "/colormaps" : "colormaps";
-	const images = files.filter((f) => f.path.toLowerCase().endsWith(".png"));
-	images.sort((a, b) => (folderOf(b.path) === mapsFolder) - (folderOf(a.path) === mapsFolder));
-	for (const image of images) {
-		const code = baseName(image.path).slice(0, -4);
-		if (!colourMaps.has(code)) colourMaps.set(code, image.file);
-	}
-	// The prepared set's folder is named by its key; files opened on their own have no name.
-	const name = folder ? baseName(folder) : "";
-	return { name, bin: bin.file, blocks: blocks?.file ?? null, colourMaps };
+	const found = files.filter((f) => f.path.toLowerCase().endsWith(".storyblk"));
+	if (found.length === 0 && files.length === 1) return files[0].file;
+	if (found.length === 0) throw new Error("There's no .storyblk in what was opened.");
+	found.sort((a, b) => b.file.lastModified - a.file.lastModified);
+	return found[0].file;
 }
 
 async function filesOfDrop(dataTransfer) {
@@ -277,66 +397,51 @@ async function filesOfDrop(dataTransfer) {
 	const entries = [...dataTransfer.items].filter((item) => item.kind === "file").map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
 	if (entries.length === 0) return [...dataTransfer.files].map((file) => ({ path: file.name, file }));
 	const files = [];
-	await Promise.all(entries.map((entry) => walk(entry, files)));
+	await Promise.all(entries.map((entry) => collect(entry, files, true)));
 	return files;
 }
 
-async function walk(entry, files) {
+// Adds a dropped file, or a dropped folder's own files but not its subfolders': a render's tiles
+// can lie beside the .storyblk.
+async function collect(entry, files, descend) {
 	if (entry.isFile) {
 		const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
 		files.push({ path: entry.fullPath.replace(/^\//, ""), file });
 		return;
 	}
-	if (!entry.isDirectory) return;
+	if (!entry.isDirectory || !descend) return;
 	const reader = entry.createReader();
 	for (;;) {
 		const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
 		if (batch.length === 0) break;
-		await Promise.all(batch.map((child) => walk(child, files)));
+		await Promise.all(batch.map((child) => collect(child, files, false)));
 	}
-}
-
-function filesOfInput(input) {
-	return [...input.files].map((file) => ({ path: file.webkitRelativePath || file.name, file }));
 }
 
 // Opening
 
+async function read(file) {
+	const contents = parse(await file.arrayBuffer());
+	await tintBlocks(contents);
+	return contents;
+}
+
 async function open(files) {
-	let chosen;
+	let file;
 	try {
-		chosen = choose(files);
+		file = choose(files);
 	} catch (error) {
 		toast(error.message, true);
 		return;
 	}
-	const title = `Reading ${chosen.name || "pictures.bin"}`;
-	showLoading(title, `pictures.bin, ${formatBytes(chosen.bin.size)}`);
+	showLoading(`Reading ${file.name}`, formatBytes(file.size));
 	try {
-		const set = parse(await chosen.bin.arrayBuffer());
-		let names = null;
-		let tints = null;
-		let warning = null;
-		if (chosen.blocks) {
-			showLoading(title, `blocks.txt, ${formatBytes(chosen.blocks.size)}`);
-			try {
-				const blocks = parseBlocks(await chosen.blocks.text());
-				if (blocks.names.length !== set.entries.length) {
-					warning = "That blocks.txt is for another pictures.bin, so blocks are shown by number.";
-				} else {
-					names = blocks.names;
-					tints = await tintsOf(blocks, chosen.colourMaps);
-				}
-			} catch (error) {
-				warning = `${error.message} Blocks are shown by number.`;
-			}
-		}
-		const record = { name: chosen.name, pictures: chosen.bin, names, tints };
-		show(set, record);
-		if (warning) toast(warning, true);
+		show(await read(file), file);
 		try {
-			await save(record);
+			await save(file);
 		} catch (error) {
+			// Or the file this one replaced would come back next time.
+			forget().catch(() => {});
 			toast(`It couldn't be kept for next time: ${error.message}`, true);
 		}
 	} catch (error) {
@@ -346,27 +451,27 @@ async function open(files) {
 }
 
 async function openSaved() {
-	let record;
+	let file;
 	try {
-		record = await load();
+		file = await load();
 	} catch {
-		record = null;
+		file = null;
 	}
-	if (!record) {
+	if (!(file instanceof Blob)) {
 		showEmpty();
 		return;
 	}
-	showLoading(`Opening ${record.name || "pictures.bin"}`, `pictures.bin, ${formatBytes(record.pictures.size)}`);
+	showLoading(`Opening ${file.name}`, formatBytes(file.size));
 	try {
-		show(parse(await record.pictures.arrayBuffer()), record);
+		show(await read(file), file);
 	} catch (error) {
 		showEmpty();
-		toast(`The saved pictures.bin can't be read: ${error.message}`, true);
+		toast(`The saved .storyblk can't be read: ${error.message}`, true);
 		forget().catch(() => {});
 	}
 }
 
-async function closeSet() {
+async function closeFile() {
 	shown = null;
 	blocksView.replaceChildren();
 	showEmpty();
@@ -403,7 +508,7 @@ async function transact(mode, act) {
 	}
 }
 
-const save = (record) => transact("readwrite", (store) => store.put(record, KEY));
+const save = (file) => transact("readwrite", (store) => store.put(file, KEY));
 const load = () => transact("readonly", (store) => store.get(KEY));
 const forget = () => transact("readwrite", (store) => store.delete(KEY));
 
@@ -411,7 +516,8 @@ const forget = () => transact("readwrite", (store) => store.delete(KEY));
 
 function showEmpty() {
 	document.body.classList.add("empty");
-	$("set-name").textContent = "";
+	$("file-name").textContent = "";
+	$("file-name").title = "";
 	$("empty").hidden = false;
 	$("loading").hidden = true;
 	blocksView.hidden = true;
@@ -431,41 +537,38 @@ function restoreView() {
 	else showEmpty();
 }
 
+// The file's name, game and mods, and each mod's name and version.
+function describeFile(contents, file) {
+	const game = [GAMES.get(contents.game) ?? contents.game, contents.gameVersion].filter(Boolean).join(" ");
+	const parts = [file.name, game];
+	if (contents.mods.length > 0) parts.push(`${contents.mods.length.toLocaleString("en")} ${contents.mods.length === 1 ? "mod" : "mods"}`);
+	const mods = contents.mods.map((mod) => [mod.name || mod.id || mod.file, mod.version].filter(Boolean).join(" "));
+	return { text: parts.filter(Boolean).join(" · "), mods: mods.join("\n") };
+}
+
 function showBlocks() {
 	document.body.classList.remove("empty");
-	$("set-name").textContent = shown.record.name;
+	const described = describeFile(shown.contents, shown.file);
+	$("file-name").textContent = described.text;
+	$("file-name").title = described.mods;
 	$("empty").hidden = true;
 	$("loading").hidden = true;
 	blocksView.hidden = false;
 }
 
-function describe(set, record) {
+function describe(contents) {
 	const blocks = [];
-	set.entries.forEach((entry, number) => {
-		if (entry.variants === 0) return;
-		const code = record.names ? record.names[number] : null;
-		let group = "Blocks";
-		let label = `#${number}`;
-		if (code) {
-			const colon = code.indexOf(":");
-			const domain = colon < 0 ? "" : code.slice(0, colon + 1);
-			const name = code.slice(colon + 1);
-			const dash = name.indexOf("-");
-			group = domain + (dash < 0 ? name : name.slice(0, dash));
-			label = dash < 0 ? name : name.slice(dash + 1);
-		}
-		const colour = record.tints ? [...record.tints.subarray(number * 3, number * 3 + 3)] : entry.flags & 2 ? DEFAULT_TINT : WHITE;
-		blocks.push({
-			number,
-			code: code ?? `Block ${number}`,
-			search: (code ?? "").toLowerCase() + " #" + number,
-			group,
-			label,
-			tint: colour,
-			...entry,
-			count: entry.variants * entry.alternates * entry.turns,
-		});
-	});
+	for (const block of contents.blocks) {
+		if (block.variants === 0) continue;
+		const colon = block.code.indexOf(":");
+		const domain = colon < 0 ? "" : block.code.slice(0, colon + 1);
+		const name = block.code.slice(colon + 1);
+		const dash = name.indexOf("-");
+		block.group = domain + (dash < 0 ? name : name.slice(0, dash));
+		block.label = dash < 0 ? name : name.slice(dash + 1);
+		block.search = block.code.toLowerCase() + " #" + block.index;
+		blocks.push(block);
+	}
 	return blocks;
 }
 
@@ -475,28 +578,29 @@ const tileObserver = new IntersectionObserver(
 			if (!entry.isIntersecting) continue;
 			tileObserver.unobserve(entry.target);
 			const block = entry.target.block;
-			drawPicture(block.canvas, shown.set, block.first, block.tint);
+			drawSprite(block.canvas, shown.contents, block.first, block.tint);
 		}
 	},
 	{ rootMargin: "800px 0px" },
 );
 
 function fit(width, height) {
-	return Math.max(1, Math.min(zoom, Math.floor((BOX * zoom) / Math.max(width, height, 1))));
+	return Math.max(1, Math.min(zoom, Math.floor((shown.box * zoom) / Math.max(width, height, 1))));
 }
 
 function sizeTile(block) {
-	const stored = shown.set.stored;
-	const width = stored.width[block.first];
-	const height = stored.height[block.first];
+	const sprites = shown.contents.sprites;
+	const width = sprites.width[block.first];
+	const height = sprites.height[block.first];
 	const scale = fit(width, height);
 	block.canvas.style.width = width * scale + "px";
 	block.canvas.style.height = height * scale + "px";
 }
 
-function show(set, record) {
+function show(contents, file) {
 	tileObserver.disconnect();
-	shown = { set, record, blocks: describe(set, record), groups: [] };
+	shown = { contents, file, box: Math.round(contents.blockWidth * BOX), blocks: describe(contents), groups: [] };
+	document.documentElement.style.setProperty("--box", shown.box * zoom + "px");
 	const byGroup = new Map();
 	for (const block of shown.blocks) {
 		if (!byGroup.has(block.group)) byGroup.set(block.group, []);
@@ -531,7 +635,7 @@ function tileOf(block) {
 	const frame = document.createElement("span");
 	frame.className = "frame";
 	block.canvas = document.createElement("canvas");
-	block.canvas.className = "picture";
+	block.canvas.className = "sprite";
 	sizeTile(block);
 	frame.append(block.canvas);
 	const label = document.createElement("span");
@@ -552,11 +656,11 @@ function tileOf(block) {
 
 const filters = {
 	all: () => true,
-	shape: (b) => (b.flags & 1) !== 0,
+	shape: (b) => (b.flags & SHAPE) !== 0,
 	alternates: (b) => b.alternates > 1,
 	turns: (b) => b.turns > 1,
 	variants: (b) => b.variants > 1,
-	tinted: (b) => (b.flags & 2) !== 0,
+	tinted: (b) => (b.flags & TINTED) !== 0,
 };
 
 function applyFilter() {
@@ -564,9 +668,9 @@ function applyFilter() {
 	const text = $("search").value.trim().toLowerCase();
 	const filter = filters[$("filter").value];
 	let blockCount = 0;
-	let pictureCount = 0;
-	// Blocks drawn alike share their pictures.
-	const counted = new Set();
+	let spriteCount = 0;
+	// Blocks drawn alike share their sprites, which count once.
+	const counted = new Uint8Array(shown.contents.sprites.count);
 	for (const group of shown.groups) {
 		let inGroup = 0;
 		for (const block of group.blocks) {
@@ -574,8 +678,10 @@ function applyFilter() {
 			block.tile.hidden = !visible;
 			if (!visible) continue;
 			inGroup++;
-			if (!counted.has(block.first)) pictureCount += block.count;
-			counted.add(block.first);
+			for (let i = block.first; i < block.first + block.count; i++) {
+				spriteCount += 1 - counted[i];
+				counted[i] = 1;
+			}
 		}
 		group.section.hidden = inGroup === 0;
 		group.count.textContent = inGroup.toLocaleString("en");
@@ -583,15 +689,15 @@ function applyFilter() {
 	}
 	const blocks = document.createElement("span");
 	blocks.textContent = `${blockCount.toLocaleString("en")} blocks`;
-	const pictures = document.createElement("span");
-	pictures.textContent = `${pictureCount.toLocaleString("en")} pictures`;
-	$("count").replaceChildren(blocks, pictures);
+	const sprites = document.createElement("span");
+	sprites.textContent = `${spriteCount.toLocaleString("en")} sprites`;
+	$("count").replaceChildren(blocks, sprites);
 }
 
 function setZoom(value) {
 	zoom = value;
-	document.documentElement.style.setProperty("--box", BOX * zoom + "px");
 	if (!shown) return;
+	document.documentElement.style.setProperty("--box", shown.box * zoom + "px");
 	for (const block of shown.blocks) sizeTile(block);
 	if (dialog.open) fillDetail(current);
 }
@@ -602,33 +708,54 @@ function visibleBlocks() {
 	return shown.blocks.filter((block) => !block.tile.hidden && !block.tile.closest(".group").hidden);
 }
 
+function formatHex(bytes) {
+	return "#" + [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function fillDetail(block) {
 	current = block;
-	const set = shown.set;
-	const stored = set.stored;
+	const contents = shown.contents;
+	const sprites = contents.sprites;
 	$("detail-code").textContent = block.code;
-	const parts = [];
-	if (block.variants > 1) parts.push(`${block.variants} variants`);
-	if (block.alternates > 1) parts.push(`${block.alternates} shapes`);
-	if (block.turns > 1) parts.push(`${block.turns} turns`);
-	parts.push(`#${block.first}`);
-	$("detail-meta").textContent = parts.join(" · ");
+	const meta = [];
+	const addItem = (text) => {
+		const span = document.createElement("span");
+		span.textContent = text;
+		meta.push(span);
+		return span;
+	};
+	if (block.variants > 1) addItem(`${block.variants} variants`);
+	if (block.alternates > 1) addItem(`${block.alternates} shapes`);
+	if (block.turns > 1) addItem(`${block.turns} turns`);
+	const material = addItem(contents.materials[block.material]);
+	if (block.colour !== NONE32) {
+		const at = block.colour * TEXTURE_COLOURS_LENGTH;
+		const colour = formatHex(contents.textureColours.subarray(at, at + 3));
+		const swatch = document.createElement("i");
+		swatch.className = "swatch";
+		swatch.style.background = colour;
+		swatch.title = colour;
+		material.prepend(swatch);
+	}
+	addItem(contents.colourCodes[block.colourCode]);
+	addItem(`#${block.first}`);
+	$("detail-meta").replaceChildren(...meta);
 
 	// Every cell the same size, the cube's square at the same place in each.
 	let left = 0;
 	let top = 0;
-	let right = 32;
-	let bottom = 32;
+	let right = contents.blockWidth;
+	let bottom = contents.blockWidth;
 	for (let i = block.first; i < block.first + block.count; i++) {
-		left = Math.min(left, stored.left[i]);
-		top = Math.min(top, stored.top[i]);
-		right = Math.max(right, stored.left[i] + stored.width[i]);
-		bottom = Math.max(bottom, stored.top[i] + stored.height[i]);
+		left = Math.min(left, sprites.left[i]);
+		top = Math.min(top, sprites.top[i]);
+		right = Math.max(right, sprites.left[i] + sprites.width[i]);
+		bottom = Math.max(bottom, sprites.top[i] + sprites.height[i]);
 	}
 	const scale = fit(right - left, bottom - top);
 
 	const perTurn = block.variants * block.alternates;
-	const container = $("detail-pictures");
+	const container = $("detail-sprites");
 	container.replaceChildren();
 	for (let turn = 0; turn < block.turns; turn++) {
 		const row = document.createElement("div");
@@ -651,13 +778,13 @@ function fillDetail(block) {
 			cell.style.height = (bottom - top) * scale + "px";
 			if (block.variants > 1 && alternate > 0 && variant === 0) cell.classList.add("shape-start");
 			const canvas = document.createElement("canvas");
-			canvas.className = "picture";
+			canvas.className = "sprite";
 			canvas.style.position = "absolute";
-			canvas.style.left = (stored.left[index] - left) * scale + "px";
-			canvas.style.top = (stored.top[index] - top) * scale + "px";
-			canvas.style.width = stored.width[index] * scale + "px";
-			canvas.style.height = stored.height[index] * scale + "px";
-			drawPicture(canvas, set, index, block.tint);
+			canvas.style.left = (sprites.left[index] - left) * scale + "px";
+			canvas.style.top = (sprites.top[index] - top) * scale + "px";
+			canvas.style.width = sprites.width[index] * scale + "px";
+			canvas.style.height = sprites.height[index] * scale + "px";
+			drawSprite(canvas, contents, index, block.tint);
 			const title = [`#${index}`];
 			if (block.variants > 1) title.push(`variant ${variant + 1}`);
 			if (block.alternates > 1) title.push(`shape ${alternate + 1}`);
@@ -718,7 +845,7 @@ const menuFrames = [{ opacity: 0, transform: "translateY(-0.25rem)" }, { opacity
 
 function openMenu() {
 	if (menu.matches(":popover-open")) return;
-	$("close-set").hidden = !shown;
+	$("close-file").hidden = !shown;
 	menu.showPopover();
 	const button = openButton.getBoundingClientRect();
 	const right = Math.min(button.right, document.documentElement.clientWidth - 8);
@@ -782,9 +909,8 @@ function formatBytes(bytes) {
 // Wiring
 
 function pick(action) {
-	if (action === "folder") $("pick-folder").click();
-	else if (action === "files") $("pick-files").click();
-	else if (action === "close") closeSet();
+	if (action === "file") $("pick-file").click();
+	else if (action === "close") closeFile();
 }
 
 openButton.addEventListener("click", () => {
@@ -813,13 +939,12 @@ $("empty").addEventListener("click", (event) => {
 	const button = event.target.closest("[data-action]");
 	if (button) pick(button.dataset.action);
 });
-for (const input of [$("pick-files"), $("pick-folder")]) {
-	input.addEventListener("change", () => {
-		const files = filesOfInput(input);
-		input.value = "";
-		if (files.length > 0) open(files);
-	});
-}
+$("pick-file").addEventListener("change", (event) => {
+	const input = event.target;
+	const files = [...input.files].map((file) => ({ path: file.name, file }));
+	input.value = "";
+	if (files.length > 0) open(files);
+});
 
 $("search").addEventListener("input", applyFilter);
 $("search").addEventListener("keydown", (event) => {
@@ -893,4 +1018,7 @@ window.addEventListener("drop", async (event) => {
 	open(await files);
 });
 
+try {
+	indexedDB.deleteDatabase(OLD_DATABASE);
+} catch {}
 openSaved();

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Storymap pictures</title>
-<meta name="description" content="Browse the block pictures Storymap draws for its isometric view, from a pictures.bin.">
+<title>.storyblk viewer</title>
+<meta name="description" content="Browse the block sprites Storymap draws for its isometric view, from a .storyblk file.">
 <meta name="theme-color" content="#f6f6f3">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="preload" href="geist.woff2" as="font" type="font/woff2" crossorigin>
@@ -17,8 +17,8 @@
 <header class="bar">
 	<h1 class="title">
 		<img src="icon.svg" alt="" width="20" height="20">
-		<span>pictures.bin</span>
-		<small id="set-name"></small>
+		<span>.storyblk</span>
+		<small id="file-name"></small>
 	</h1>
 	<input id="search" class="search" type="search" placeholder="Block code" aria-label="Block code" autocomplete="off" spellcheck="false">
 	<select id="filter" class="filter" aria-label="Filter">
@@ -40,18 +40,16 @@
 </header>
 
 <div id="open-menu" class="menu" popover="manual" role="menu">
-	<button type="button" role="menuitem" data-action="folder">Folder…</button>
-	<button type="button" role="menuitem" data-action="files">Files…</button>
-	<button type="button" role="menuitem" data-action="close" id="close-set">Close</button>
+	<button type="button" role="menuitem" data-action="file">File…</button>
+	<button type="button" role="menuitem" data-action="close" id="close-file">Close</button>
 </div>
 
 <main id="empty" class="state">
 	<div class="panel">
-		<h2>Drop a pictures.bin here</h2>
-		<p>Drop a prepared blocks folder, or its <code>pictures.bin</code>, anywhere on this page. Its <code>blocks.txt</code> and <code>colormaps</code> add block names and tints.</p>
+		<h2>Drop a .storyblk here</h2>
+		<p><code>prepared.storyblk</code></p>
 		<div class="actions">
-			<button type="button" class="button primary" data-action="folder">Choose folder</button>
-			<button type="button" class="button" data-action="files">Choose files</button>
+			<button type="button" class="button primary" data-action="file">Choose file</button>
 		</div>
 	</div>
 </main>
@@ -76,7 +74,7 @@
 			<button id="next" class="icon-button" type="button" aria-label="Next block">›</button>
 			<button id="close" class="icon-button" type="button" aria-label="Close">×</button>
 		</header>
-		<div id="detail-pictures" class="detail-pictures"></div>
+		<div id="detail-sprites" class="detail-sprites"></div>
 	</div>
 </dialog>
 
@@ -86,8 +84,7 @@
 
 <div id="toast" class="toast" popover="manual" role="status" aria-live="polite"></div>
 
-<input id="pick-files" type="file" multiple hidden>
-<input id="pick-folder" type="file" webkitdirectory multiple hidden>
+<input id="pick-file" type="file" hidden>
 
 </body>
 </html>
