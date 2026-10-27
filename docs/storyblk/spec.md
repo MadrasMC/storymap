@@ -2,7 +2,7 @@
 
 A `.storyblk` file holds what a render needs to know about a game's blocks, prepared once from the game's and mods' assets ([Preparing blocks](../rendering.md#preparing-blocks)), with the isometric view's sprites of them. A render maps the file and reads its sprites in place, and [viewer.html](viewer.html) shows its sprites in a browser.
 
-Neither Storymap nor viewer.html reads or writes this format yet; this is its specification.
+Storymap doesn't read or write this format yet; this is its specification.
 
 ## 1. Use
 
@@ -185,7 +185,7 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 | `alternates` | u16 | at least 1 when `variants` isn't 0 |
 | `turns` | u8 | at least 1 when `variants` isn't 0 |
 
-A block's sprites are a run of `variants` × `alternates` × `turns` Sprites in `sprites.entries` (§2). The Sprite at index `first_sprite + (turn × alternates + alternate) × variants + variant` is that variant of that alternate, in that turn. Blocks drawn alike share their sprites: their `first_sprite`, `variants`, `alternates` and `turns` are the same.
+A block's sprites are a run of `variants` × `alternates` × `turns` Sprites in `sprites.entries` (§2). The Sprite at index `first_sprite + (turn × alternates + alternate) × variants + variant` is that variant of that alternate, in that turn. Blocks drawn from the same textures, in the same shapes and turns, share their sprites: their `first_sprite`, `variants`, `alternates` and `turns` are the same. Blocks drawn from different textures have sprites of their own, even where those look the same.
 
 ### Sprite
 
