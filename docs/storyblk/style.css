@@ -96,26 +96,24 @@ code {
 	white-space: nowrap;
 }
 .title img { flex: none; }
-.title small {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	color: var(--faint);
-	font: 400 0.75rem var(--mono);
-}
 
-.search, .filter, .zoom {
+.search, .filter {
 	height: 2.25rem;
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	background: var(--panel);
 	padding: 0 0.625rem;
 }
-.search { width: 16rem; min-width: 0; }
+.search {
+	flex: 1;
+	min-width: 0;
+	max-width: 36rem;
+	margin-left: 0.5rem;
+}
 
 /* The browser's own arrow sits wherever the browser puts it: draw one at a set distance instead,
    and keep the native list, which phones show as their own picker. */
-.filter, .zoom {
+.filter {
 	appearance: none;
 	padding-right: 2rem;
 	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%2366665f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -124,18 +122,9 @@ code {
 	background-size: 0.75rem;
 	cursor: pointer;
 }
-.filter:hover, .zoom:hover { background-color: var(--sunken); }
+.filter:hover { background-color: var(--sunken); }
 .search::placeholder { color: var(--faint); }
-
-.count {
-	margin-left: auto;
-	color: var(--muted);
-	font: 0.75rem/1.3 var(--mono);
-	font-variant-numeric: tabular-nums;
-	text-align: right;
-	white-space: nowrap;
-}
-.count span + span::before { content: " · "; }
+.open { margin-left: auto; }
 
 .button {
 	height: 2.25rem;
@@ -156,28 +145,112 @@ code {
 
 body.empty .search,
 body.empty .filter,
-body.empty .zoom,
-body.empty .count { display: none; }
-body.empty .open { margin-left: auto; }
+body.empty .status { display: none; }
 
-/* The phone bar: title and Open, then search, then filter, zoom and count. */
+/* The phone bar: title and Open, then search and filter. */
 @media (max-width: 47.99rem) {
 	.bar {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto auto;
+		grid-template-columns: minmax(0, 1fr) auto;
 		grid-template-areas:
-			"title title open"
-			"search search search"
-			"filter zoom count";
+			"title open"
+			"search filter";
 		gap: 0.5rem;
 	}
-	body.empty .bar { grid-template-areas: "title title open"; }
+	body.empty .bar { grid-template-areas: "title open"; }
 	.title { grid-area: title; }
 	.open { grid-area: open; justify-self: end; }
-	.search { grid-area: search; width: 100%; }
-	.filter { grid-area: filter; width: 100%; }
-	.zoom { grid-area: zoom; }
-	.count { grid-area: count; }
+	.search { grid-area: search; max-width: none; margin: 0; }
+	.filter { grid-area: filter; }
+}
+
+/* Status bar: the file, the counts and the zoom */
+
+.status {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem 0.75rem;
+	padding: 0.5rem var(--gutter);
+	padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+	background: color-mix(in srgb, var(--bg) 90%, transparent);
+	backdrop-filter: blur(0.5rem);
+	border-top: 1px solid var(--line);
+}
+
+.file-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	min-width: 0;
+	height: 2.125rem;
+	padding: 0 0.75rem 0 0.625rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--panel);
+	color: var(--muted);
+	font-size: 0.8125rem;
+	cursor: pointer;
+}
+.file-button:hover { background: var(--sunken); }
+.file-button .icon {
+	flex: none;
+	width: 1rem;
+	height: 1rem;
+}
+.file-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.file-label b {
+	color: var(--text);
+	font-weight: 500;
+}
+
+.count {
+	margin-left: auto;
+	color: var(--muted);
+	font: 0.75rem/1.3 var(--mono);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.count span + span::before { content: " · "; }
+
+.zoom {
+	display: inline-flex;
+	flex: none;
+	padding: 0.125rem;
+	border-radius: var(--radius);
+	background: var(--sunken);
+}
+.zoom button {
+	min-width: 2.25rem;
+	height: 1.875rem;
+	padding: 0 0.5rem;
+	border: 0;
+	border-radius: 0.375rem;
+	background: none;
+	color: var(--muted);
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+	cursor: pointer;
+}
+.zoom button:hover { color: var(--text); }
+.zoom button[aria-pressed="true"] {
+	background: var(--panel);
+	color: var(--text);
+	box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgb(0 0 0 / 0.06);
+}
+
+/* The phone status bar: the file, then the counts and the zoom. */
+@media (max-width: 47.99rem) {
+	.file-button { flex: 1 1 100%; }
+	.count { margin: 0 auto 0 0; }
 	.count span { display: block; }
 	.count span + span::before { content: none; }
 }
@@ -240,8 +313,8 @@ body.empty .open { margin-left: auto; }
 /* Blocks */
 
 #blocks {
-	padding: 0.25rem var(--gutter) 3rem;
-	padding-bottom: max(3rem, env(safe-area-inset-bottom));
+	flex: 1;
+	padding: 0.25rem var(--gutter) 2rem;
 }
 
 .group {
@@ -406,6 +479,110 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 	gap: 0.375rem;
 }
 .cells .shape-start { margin-left: 0.875rem; }
+
+/* File details */
+
+#file { width: min(52rem, calc(100vw - 2rem)); }
+
+/* On phones, both dialogs are sheets from the bottom. */
+@media (max-width: 47.99rem) {
+	dialog,
+	#file {
+		inset: auto 0 0;
+		width: 100%;
+		min-width: 0;
+		max-width: none;
+		max-height: 88dvh;
+		margin: 0;
+		border-radius: 0.875rem 0.875rem 0 0;
+	}
+	.detail { max-height: 88dvh; }
+	.detail-sprites,
+	.file-body { padding-bottom: max(1.5rem, env(safe-area-inset-bottom)); }
+}
+
+.file-body {
+	overflow: auto;
+	padding: 0.25rem 1.25rem 1.5rem;
+}
+.facts h3 {
+	margin: 1.25rem 0 0.5rem;
+	font-size: 0.8125rem;
+	font-weight: 600;
+}
+
+.pairs {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 0.25rem 1.5rem;
+	align-items: baseline;
+	margin: 0;
+}
+.pairs dt { color: var(--muted); }
+.pairs dd {
+	margin: 0;
+	font: 0.75rem var(--mono);
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+
+.table { overflow-x: auto; }
+.table table {
+	border-collapse: collapse;
+	font: 0.75rem var(--mono);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.table th {
+	color: var(--muted);
+	font: 500 0.75rem var(--font);
+	text-align: left;
+}
+.table th, .table td {
+	padding: 0.3125rem 0 0.3125rem 1.5rem;
+	border-bottom: 1px solid var(--line);
+}
+.table th:first-child, .table td:first-child { padding-left: 0; }
+.table .number { text-align: right; }
+.table tr.muted td { color: var(--faint); }
+
+.names {
+	margin: 0;
+	font: 0.75rem/1.7 var(--mono);
+	overflow-wrap: anywhere;
+}
+.names span + span::before { content: " · "; color: var(--faint); }
+
+.colour-maps {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+	gap: 1rem;
+}
+.colour-map {
+	min-width: 0;
+	margin: 0;
+}
+.colour-map code {
+	max-width: 100%;
+	overflow-wrap: anywhere;
+}
+.colour-map img {
+	display: block;
+	width: 8rem;
+	height: auto;
+	border-radius: 0.25rem;
+	box-shadow: 0 0 0 1px var(--line);
+	image-rendering: pixelated;
+}
+.colour-map figcaption {
+	display: flex;
+	flex-direction: column;
+	align-items: start;
+	gap: 0.125rem;
+	margin-top: 0.375rem;
+	color: var(--muted);
+	font-size: 0.75rem;
+}
 
 /* Drop overlay and toast: popovers, so they sit above an open dialog too. */
 

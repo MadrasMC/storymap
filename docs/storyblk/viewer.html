@@ -28,7 +28,6 @@
 	<h1 class="title">
 		<img src="icon.svg" alt="" width="20" height="20">
 		<span>.storyblk</span>
-		<small id="file-name"></small>
 	</h1>
 	<input id="search" class="search" type="search" placeholder="Block code" aria-label="Block code" autocomplete="off" spellcheck="false">
 	<select id="filter" class="filter" aria-label="Filter">
@@ -39,13 +38,6 @@
 		<option value="variants">Variants</option>
 		<option value="tinted">Tinted</option>
 	</select>
-	<select id="zoom" class="zoom" aria-label="Zoom">
-		<option value="1">1×</option>
-		<option value="2" selected>2×</option>
-		<option value="3">3×</option>
-		<option value="4">4×</option>
-	</select>
-	<span id="count" class="count"></span>
 	<button id="open" class="button open" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="open-menu">Open</button>
 </header>
 
@@ -73,6 +65,20 @@
 
 <main id="blocks" hidden></main>
 
+<footer class="status">
+	<button id="file-name" class="file-button" type="button" aria-haspopup="dialog" title="Details" hidden>
+		<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 7.5V11M8 5h.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+		<span id="file-label" class="file-label"></span>
+	</button>
+	<span id="count" class="count"></span>
+	<div id="zoom" class="zoom" role="group" aria-label="Zoom">
+		<button type="button" data-zoom="1" aria-pressed="false">1×</button>
+		<button type="button" data-zoom="2" aria-pressed="true">2×</button>
+		<button type="button" data-zoom="3" aria-pressed="false">3×</button>
+		<button type="button" data-zoom="4" aria-pressed="false">4×</button>
+	</div>
+</footer>
+
 <dialog id="detail" aria-labelledby="detail-code">
 	<div class="detail">
 		<header class="detail-bar">
@@ -85,6 +91,18 @@
 			<button id="close" class="icon-button" type="button" aria-label="Close">×</button>
 		</header>
 		<div id="detail-sprites" class="detail-sprites"></div>
+	</div>
+</dialog>
+
+<dialog id="file" aria-labelledby="file-title">
+	<div class="detail">
+		<header class="detail-bar">
+			<div class="detail-title">
+				<h2 id="file-title"></h2>
+			</div>
+			<button id="file-close" class="icon-button" type="button" aria-label="Close">×</button>
+		</header>
+		<div id="file-body" class="file-body"></div>
 	</div>
 </dialog>
 

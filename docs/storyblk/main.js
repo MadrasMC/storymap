@@ -46,7 +46,8 @@ const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 const $ = (id) => document.getElementById(id);
 const blocksView = $("blocks");
-const dialog = $("detail");
+const blockDialog = $("detail");
+const fileDialog = $("file");
 const menu = $("open-menu");
 const openButton = $("open");
 const dropOverlay = $("drop");
@@ -54,8 +55,8 @@ const toastElement = $("toast");
 
 let shown = null; // { contents, file, box, blocks, groups }
 let zoom = 2;
-let current = null; // the block open in the dialog
-let closing = false;
+let current = null; // the block open in its dialog
+let colourMapURLs = []; // the colour map images the file's details show
 
 // Reading a .storyblk
 
@@ -134,13 +135,14 @@ function parse(buffer) {
 	for (let n = 0; n < sectionCount; n++) {
 		listed.push({ offset: table.takeU64(), length: table.takeU32(), layoutVersion: table.takeU8(), generatorVersion: table.takeU16(), name: table.takeString() });
 	}
+	const isInPlace = (section) => section.offset >= table.at && section.offset % 8 === 0 && section.length <= buffer.byteLength - section.offset;
 	const sections = new Map();
 	for (const section of listed) {
 		const layout = SECTIONS.get(section.name);
 		if (layout === undefined) continue;
 		if (sections.has(section.name)) rejectFile(`it has two ${section.name} sections`);
 		if (section.layoutVersion !== layout) throw new Error(`This .storyblk's ${section.name} section is layout version ${section.layoutVersion}, which this viewer doesn't read.`);
-		if (section.offset < table.at || section.offset % 8 !== 0 || section.length > buffer.byteLength - section.offset) rejectFile(`its ${section.name} section isn't where its table says`);
+		if (!isInPlace(section)) rejectFile(`its ${section.name} section isn't where its table says`);
 		sections.set(section.name, section);
 	}
 	for (const name of SECTIONS.keys()) if (!sections.has(name)) rejectFile(`it has no ${name} section`);
@@ -236,10 +238,29 @@ function parse(buffer) {
 		blocks.push(block);
 	}
 
+	// Domains aren't needed to show sprites, only to list in the file's details: read when they can
+	// be, and left out when they can't.
+	const domainSections = listed.filter((section) => section.name === "domains");
+	let domains = null;
+	if (domainSections.length === 1 && domainSections[0].layoutVersion === 1 && isInPlace(domainSections[0])) {
+		const section = domainSections[0];
+		try {
+			const fields = new Fields(view, section.offset, section.offset + section.length, "its domains section");
+			domains = [];
+			for (let n = fields.takeU16(); n > 0; n--) domains.push(fields.takeString());
+		} catch {
+			domains = null;
+		}
+	}
+
 	return {
+		version,
+		hash: view.getBigUint64(16, true),
+		sections: listed,
 		game,
 		gameVersion,
 		mods,
+		domains,
 		materials,
 		colourCodes,
 		textureColours,
@@ -366,6 +387,9 @@ function tint(climate, season) {
 // Gives each block its tint: white for one without colour maps, as the renderer leaves it.
 async function tintBlocks(contents) {
 	const maps = await Promise.all(contents.colourMaps.map((map) => decodeColourMap(map).catch(() => null)));
+	// Null for a map that can't tint: one that can't be decoded, or is no wider or taller than twice
+	// its padding.
+	contents.colourMaps.forEach((map, i) => (map.size = maps[i] ? [maps[i].width, maps[i].height] : null));
 	const byPair = new Map();
 	for (const block of contents.blocks) {
 		const pair = block.climateColourMap * 256 + block.seasonColourMap;
@@ -473,6 +497,8 @@ async function openSaved() {
 
 async function closeFile() {
 	shown = null;
+	for (const url of colourMapURLs) URL.revokeObjectURL(url);
+	colourMapURLs = [];
 	blocksView.replaceChildren();
 	showEmpty();
 	try {
@@ -516,8 +542,8 @@ const forget = () => transact("readwrite", (store) => store.delete(KEY));
 
 function showEmpty() {
 	document.body.classList.add("empty");
-	$("file-name").textContent = "";
-	$("file-name").title = "";
+	$("file-label").replaceChildren();
+	$("file-name").hidden = true;
 	$("empty").hidden = false;
 	$("loading").hidden = true;
 	blocksView.hidden = true;
@@ -537,20 +563,22 @@ function restoreView() {
 	else showEmpty();
 }
 
-// The file's name, game and mods, and each mod's name and version.
+function nameGame(contents) {
+	return GAMES.get(contents.game) ?? contents.game;
+}
+
+// The file's name in bold, then its game and how many mods.
 function describeFile(contents, file) {
-	const game = [GAMES.get(contents.game) ?? contents.game, contents.gameVersion].filter(Boolean).join(" ");
-	const parts = [file.name, game];
+	const parts = [[nameGame(contents), contents.gameVersion].filter(Boolean).join(" ")];
 	if (contents.mods.length > 0) parts.push(`${contents.mods.length.toLocaleString("en")} ${contents.mods.length === 1 ? "mod" : "mods"}`);
-	const mods = contents.mods.map((mod) => [mod.name || mod.id || mod.file, mod.version].filter(Boolean).join(" "));
-	return { text: parts.filter(Boolean).join(" · "), mods: mods.join("\n") };
+	const rest = parts.filter(Boolean).join(" · ");
+	return [make("b", "", file.name), ...(rest ? [" · " + rest] : [])];
 }
 
 function showBlocks() {
 	document.body.classList.remove("empty");
-	const described = describeFile(shown.contents, shown.file);
-	$("file-name").textContent = described.text;
-	$("file-name").title = described.mods;
+	$("file-label").replaceChildren(...describeFile(shown.contents, shown.file));
+	$("file-name").hidden = false;
 	$("empty").hidden = true;
 	$("loading").hidden = true;
 	blocksView.hidden = false;
@@ -699,7 +727,7 @@ function setZoom(value) {
 	if (!shown) return;
 	document.documentElement.style.setProperty("--box", shown.box * zoom + "px");
 	for (const block of shown.blocks) sizeTile(block);
-	if (dialog.open) fillDetail(current);
+	if (blockDialog.open) fillDetail(current);
 }
 
 // Detail
@@ -804,18 +832,156 @@ function fillDetail(block) {
 
 function openDetail(block) {
 	fillDetail(block);
-	if (dialog.open) return;
-	dialog.showModal();
-	animate(dialog, true, [{ opacity: 0, transform: "translateY(0.625rem) scale(0.98)" }, { opacity: 1, transform: "none" }], { backdrop: true });
+	openModal(blockDialog);
 }
 
 async function closeDetail() {
-	if (!dialog.open || closing) return;
-	closing = true;
-	await animate(dialog, false, [{ opacity: 0, transform: "translateY(0.625rem) scale(0.98)" }, { opacity: 1, transform: "none" }], { backdrop: true });
-	dialog.close();
-	closing = false;
+	if (!(await closeModal(blockDialog))) return;
 	if (current?.tile.isConnected && !current.tile.hidden) current.tile.focus();
+}
+
+// The file's details
+
+function make(tag, className, ...children) {
+	const node = document.createElement(tag);
+	if (className) node.className = className;
+	node.append(...children);
+	return node;
+}
+
+function makeSection(title, ...content) {
+	return make("section", "facts", make("h3", "", title), ...content);
+}
+
+function makePairs(pairs) {
+	return make("dl", "pairs", ...pairs.flatMap(([term, value]) => [make("dt", "", term), make("dd", "", String(value))]));
+}
+
+// A table of `rows`, its columns from `numeric` on aligned right; rows with `muted` set are greyed.
+function makeTable(headers, rows, numeric) {
+	const cell = (tag, text, i) => make(tag, i >= numeric ? "number" : "", String(text));
+	const head = make("thead", "", make("tr", "", ...headers.map((text, i) => cell("th", text, i))));
+	const body = make("tbody", "", ...rows.map((row) => make("tr", row.muted ? "muted" : "", ...row.cells.map((text, i) => cell("td", text, i)))));
+	return make("div", "table", make("table", "", head, body));
+}
+
+function makeNames(names) {
+	return names.length > 0 ? make("p", "names", ...names.map((name) => make("span", "", name))) : make("p", "names", "–");
+}
+
+function formatCount(count) {
+	return count === null || count === undefined ? "–" : count.toLocaleString("en");
+}
+
+function fillFileDetails() {
+	const { contents, file } = shown;
+	for (const url of colourMapURLs) URL.revokeObjectURL(url);
+	colourMapURLs = [];
+	$("file-title").textContent = file.name;
+
+	const counts = new Map([
+		["blocks", contents.blocks.length],
+		["materials", contents.materials.length],
+		["colour_codes", contents.colourCodes.length],
+		["texture_colours", contents.textureColours.length / TEXTURE_COLOURS_LENGTH],
+		["colour_maps", contents.colourMaps.length],
+		["domains", contents.domains?.length],
+		["sprites", contents.sprites.count],
+	]);
+	const isRead = (name) => SECTIONS.has(name) || (name === "domains" && contents.domains !== null);
+	const sections = contents.sections.map((section) => ({
+		muted: !isRead(section.name),
+		cells: [section.name, formatCount(isRead(section.name) ? counts.get(section.name) : null), formatCount(section.offset), formatCount(section.length), section.layoutVersion, section.generatorVersion],
+	}));
+
+	const blocks = contents.blocks;
+	let tintedSprites = 0;
+	for (let i = 0; i < contents.sprites.count; i++) if (contents.sprites.flags[i] & SPRITE_TINTED) tintedSprites++;
+
+	const maps = contents.colourMaps.map((map) => {
+		const url = URL.createObjectURL(new Blob([map.image], { type: "image/png" }));
+		colourMapURLs.push(url);
+		const image = make("img", "");
+		image.src = url;
+		image.alt = "";
+		const facts = map.size ? [`${map.size[0]} × ${map.size[1]}`, `padding ${map.padding}`] : ["can't tint"];
+		if (map.tropical) facts.push("tropical");
+		return make("figure", "colour-map", make("div", "colour-map-image", image), make("figcaption", "", make("code", "", map.code), make("span", "", facts.join(" · "))));
+	});
+
+	$("file-body").replaceChildren(
+		makeSection(
+			"File",
+			makePairs([
+				["Size", `${formatBytes(file.size)} (${formatCount(file.size)} bytes)`],
+				["Container version", contents.version],
+				["Hash", contents.hash.toString(16).padStart(16, "0")],
+				["Game", [nameGame(contents), contents.gameVersion].filter(Boolean).join(" ") || "–"],
+			]),
+		),
+		makeSection("Sections", makeTable(["Section", "Count", "Offset", "Length", "Layout version", "Generator version"], sections, 1)),
+		makeSection(
+			"Blocks",
+			makePairs([
+				["With sprites", formatCount(blocks.filter((b) => b.variants > 0).length)],
+				["In shapes", formatCount(blocks.filter((b) => b.flags & SHAPE).length)],
+				["Tinted", formatCount(blocks.filter((b) => b.flags & TINTED).length)],
+				["Turned", formatCount(blocks.filter((b) => b.turns > 1).length)],
+			]),
+		),
+		makeSection(
+			"Sprites",
+			makePairs([
+				["Block width", `${contents.blockWidth} px`],
+				["Tinted", formatCount(tintedSprites)],
+				["Layers", formatBytes(contents.layers.length)],
+			]),
+		),
+		makeSection(
+			"Mods",
+			contents.mods.length > 0
+				? makeTable(["File", "ID", "Name", "Version"], contents.mods.map((mod) => ({ cells: [mod.file, mod.id || "–", mod.name || "–", mod.version || "–"] })), 4)
+				: make("p", "names", "–"),
+		),
+		makeSection("Materials", makeNames(contents.materials)),
+		makeSection("Colour codes", makeNames(contents.colourCodes)),
+		makeSection("Domains", makeNames(contents.domains ?? [])),
+		makeSection("Colour maps", make("div", "colour-maps", ...maps)),
+	);
+	$("file-body").scrollTop = 0;
+}
+
+function openFileDetails() {
+	if (!shown) return;
+	fillFileDetails();
+	openModal(fileDialog);
+}
+
+async function closeFileDetails() {
+	if (await closeModal(fileDialog)) $("file-name").focus();
+}
+
+// Dialogs
+
+// On phones, dialogs are sheets from the bottom (style.css), and slide up from it.
+const phone = matchMedia("(max-width: 47.99rem)");
+const dialogFrames = [{ opacity: 0, transform: "translateY(0.625rem) scale(0.98)" }, { opacity: 1, transform: "none" }];
+const sheetFrames = [{ transform: "translateY(100%)" }, { transform: "none" }];
+
+function openModal(modal) {
+	if (modal.open) return;
+	modal.showModal();
+	animate(modal, true, phone.matches ? sheetFrames : dialogFrames, { backdrop: true });
+}
+
+// Whether it closed: false if it wasn't open or was already closing.
+async function closeModal(modal) {
+	if (!modal.open || modal.closing) return false;
+	modal.closing = true;
+	await animate(modal, false, phone.matches ? sheetFrames : dialogFrames, { backdrop: true });
+	modal.close();
+	modal.closing = false;
+	return true;
 }
 
 function step(direction) {
@@ -957,7 +1123,12 @@ $("search").addEventListener("keydown", (event) => {
 	}
 });
 $("filter").addEventListener("change", applyFilter);
-$("zoom").addEventListener("change", (event) => setZoom(Number(event.target.value)));
+$("zoom").addEventListener("click", (event) => {
+	const button = event.target.closest("button");
+	if (!button) return;
+	for (const each of $("zoom").querySelectorAll("button")) each.setAttribute("aria-pressed", String(each === button));
+	setZoom(Number(button.dataset.zoom));
+});
 
 blocksView.addEventListener("click", (event) => {
 	const tile = event.target.closest(".tile");
@@ -966,24 +1137,31 @@ blocksView.addEventListener("click", (event) => {
 $("close").addEventListener("click", closeDetail);
 $("previous").addEventListener("click", () => step(-1));
 $("next").addEventListener("click", () => step(1));
-dialog.addEventListener("cancel", (event) => {
-	event.preventDefault();
-	closeDetail();
-});
-dialog.addEventListener("click", (event) => {
-	// The dialog has no padding, so a click on the dialog itself is on its backdrop.
-	if (event.target === dialog) closeDetail();
-});
-dialog.addEventListener("keydown", (event) => {
+blockDialog.addEventListener("keydown", (event) => {
 	if (event.key === "ArrowRight") step(1);
 	else if (event.key === "ArrowLeft") step(-1);
 	else return;
 	event.preventDefault();
 });
+$("file-name").addEventListener("click", openFileDetails);
+$("file-close").addEventListener("click", closeFileDetails);
+for (const [modal, close] of [
+	[blockDialog, closeDetail],
+	[fileDialog, closeFileDetails],
+]) {
+	modal.addEventListener("cancel", (event) => {
+		event.preventDefault();
+		close();
+	});
+	modal.addEventListener("click", (event) => {
+		// The dialog has no padding, so a click on the dialog itself is on its backdrop.
+		if (event.target === modal) close();
+	});
+}
 
 document.addEventListener("keydown", (event) => {
 	if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
-	if (dialog.open || !shown || event.target.closest?.("input, select, textarea")) return;
+	if (blockDialog.open || fileDialog.open || !shown || event.target.closest?.("input, select, textarea")) return;
 	event.preventDefault();
 	$("search").focus();
 });
@@ -1015,6 +1193,7 @@ window.addEventListener("drop", async (event) => {
 	const files = filesOfDrop(event.dataTransfer);
 	closeMenu(false);
 	closeDetail();
+	closeModal(fileDialog);
 	open(await files);
 });
 
