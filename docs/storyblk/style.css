@@ -104,6 +104,15 @@ code {
 }
 .title img { flex: none; }
 
+.spec {
+	padding: 0.25rem 0.5rem;
+	border-radius: 0.375rem;
+	color: var(--muted);
+	font-size: 0.8125rem;
+	text-decoration: none;
+}
+.spec:hover { background: var(--sunken); color: var(--text); }
+
 .search, .filter {
 	height: 2.25rem;
 	border: 1px solid var(--line);
@@ -112,10 +121,9 @@ code {
 	padding: 0 0.625rem;
 }
 .search {
-	flex: 1;
+	flex: 0 1 28rem;
 	min-width: 0;
-	max-width: 36rem;
-	margin-left: 0.5rem;
+	margin-left: auto;
 }
 
 /* The browser's own arrow sits wherever the browser puts it: draw one at a set distance instead,
@@ -131,7 +139,6 @@ code {
 }
 .filter:hover { background-color: var(--sunken); }
 .search::placeholder { color: var(--faint); }
-.open { margin-left: auto; }
 
 .button {
 	height: 2.25rem;
@@ -153,21 +160,23 @@ code {
 body.empty .search,
 body.empty .filter,
 body.empty .status { display: none; }
+body.empty .open { margin-left: auto; }
 
-/* The phone bar: title and Open, then search and filter. */
+/* The phone bar: title, spec and Open, then search and filter. */
 @media (max-width: 47.99rem) {
 	.bar {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-columns: auto minmax(0, 1fr) auto;
 		grid-template-areas:
-			"title open"
-			"search filter";
+			"title spec open"
+			"search search filter";
 		gap: 0.5rem;
 	}
-	body.empty .bar { grid-template-areas: "title open"; }
+	body.empty .bar { grid-template-areas: "title spec open"; }
 	.title { grid-area: title; }
+	.spec { grid-area: spec; justify-self: start; }
 	.open { grid-area: open; justify-self: end; }
-	.search { grid-area: search; max-width: none; margin: 0; }
+	.search { grid-area: search; margin: 0; }
 	.filter { grid-area: filter; }
 }
 
