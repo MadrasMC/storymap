@@ -252,21 +252,20 @@ pub fn picturesOf(self: *const SaveFile, id: i32) ?u32 {
 /// `GameMath.MurmurHash3Mod`, with height 0 for a block whose `randomizeAxes` is x and z. The
 /// game picks variants in closed code; that it hashes the position this way isn't checked.
 pub fn variant(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
-    return self.byPosition(id, x, y, z, count, murmurSeed);
+    return self.byPosition(id, x, y, z, count);
 }
 
-/// Which of its `count` turns block `id` at (x, y, z) is drawn in. The game turns blocks in
-/// closed code: this picks a turn as `variant` picks a variant, from a hash of its own, so the
-/// two don't go together.
+/// Which of its `count` turns block `id` at (x, y, z) is drawn in: picked as `variant` picks a
+/// variant, but with −x, as vssurvivalmod's `BEBehaviorCropProp` picks the turn of the crop it
+/// draws in place of the game's, so a block's turn and its variant don't go together. The game
+/// turns blocks in closed code.
 pub fn turn(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
-    return self.byPosition(id, x, y, z, count, turnSeed);
+    return self.byPosition(id, -%x, y, z, count);
 }
 
-const turnSeed = 1013;
-
-fn byPosition(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32, seed: u32) u32 {
+fn byPosition(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
     const height = if (self.appearance(id).randomizeAxes == .xz) 0 else y;
-    const hash = murmurHash3(seed, @truncate(x), @truncate(height), @truncate(z));
+    const hash = murmurHash3(@truncate(x), @truncate(height), @truncate(z));
     return @intCast(@mod(hash, @as(i32, @intCast(count))));
 }
 
@@ -322,13 +321,12 @@ test drawOffset {
     try std.testing.expectEqual(null, save.drawOffset(2, 100, 64, -37));
 }
 
-/// vsapi `GameMath.MurmurHash3`, of three integers, with `murmurSeed`: MurmurHash3's 32-bit
-/// mixing, but finished with the count of integers, 3, where MurmurHash3 takes the length in
-/// bytes.
-fn murmurHash3(seed: u32, x: i32, y: i32, z: i32) i32 {
+/// vsapi `GameMath.MurmurHash3`, of three integers: MurmurHash3's 32-bit mixing with seed 144,
+/// but finished with the count of integers, 3, where MurmurHash3 takes the length in bytes.
+fn murmurHash3(x: i32, y: i32, z: i32) i32 {
     const c1: u32 = 0xcc9e2d51;
     const c2: u32 = 0x1b873593;
-    var h: u32 = seed;
+    var h: u32 = 144;
     for ([_]i32{ x, y, z }) |value| {
         h ^= std.math.rotl(u32, @as(u32, @bitCast(value)) *% c1, 15) *% c2;
         h = std.math.rotl(u32, h, 13) *% 5 +% 0xe6546b64;
@@ -338,8 +336,6 @@ fn murmurHash3(seed: u32, x: i32, y: i32, z: i32) i32 {
     h = (h ^ h >> 13) *% 0xc2b2ae35;
     return @bitCast(h ^ h >> 16);
 }
-
-const murmurSeed = 144;
 
 test variant {
     // Every variant comes up, and the same place always shows the same one.
@@ -354,7 +350,9 @@ test variant {
     // Picked by x and z alone, a column shows the same one all the way up.
     for (0..20) |y| try std.testing.expectEqual(save.variant(1, 3, 0, 11, 4), save.variant(1, 3, @intCast(y), 11, 4));
     for (0..20) |y| try std.testing.expectEqual(save.turn(1, 3, 0, 11, 8), save.turn(1, 3, @intCast(y), 11, 8));
-    // Turns are picked apart from variants: with as many of each, they don't always agree.
+    // A turn is picked as a variant is, at −x, so with as many of each, a block's turn and
+    // variant don't always agree.
+    try std.testing.expectEqual(save.variant(0, -3, -7, 11, 8), save.turn(0, 3, -7, 11, 8));
     var differ: usize = 0;
     z = -50;
     while (z < 50) : (z += 1) differ += @intFromBool(save.turn(0, 25000, 110, z, 4) != save.variant(0, 25000, 110, z, 4));

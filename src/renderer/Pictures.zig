@@ -21,7 +21,7 @@ pub const fileName = "pictures.bin";
 
 /// The pictures and the file's layout: raise it when either changes, so files drawn before are
 /// drawn again.
-pub const version = 3;
+pub const version = 4;
 
 entries: []const Entry,
 stored: []const Stored,

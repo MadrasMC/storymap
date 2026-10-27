@@ -613,20 +613,21 @@ fn shapeTarget(allocator: std.mem.Allocator) !ShapeTarget {
     return .init(allocator, shapeSide * samples, shapeSide * samples);
 }
 
-/// How many ways a block turned by where it is can be turned (`Drawable.turned`): by an eighth
-/// of a full turn each, about the vertical line through the middle of its place.
+/// How many ways a block turned by where it is can be turned (`Drawable.turned`), about the
+/// vertical line through the middle of its place: turn i by −22.5° + 45° · i, as vsapi
+/// `TesselationMetaData.randomRotations` lists them, from east towards north.
 pub const turns = 8;
 
 /// Draws `shape` in its textures, each in its variant `variant` (counting round again for one
-/// with fewer), turned `turn` of `turns` eighths, its faces lit by the way they face. Each of
-/// its pixels is drawn at `samples` × `samples` points: it shows if at least half of them are
-/// covered, the average of their colours, the depth of the nearest. Kept in `allocator`,
-/// trimmed to the pixels it shows.
-fn shapePicture(allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, turn: usize, target: *ShapeTarget) !Picture {
+/// with fewer), in turn `turn` of `turns`, or unturned for null, its faces lit by the way they
+/// face. Each of its pixels is drawn at `samples` × `samples` points: it shows if at least half
+/// of them are covered, the average of their colours, the depth of the nearest. Kept in
+/// `allocator`, trimmed to the pixels it shows.
+fn shapePicture(allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, turn: ?usize, target: *ShapeTarget) !Picture {
     std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
     target.clear();
     const scale: f32 = samples;
-    const angle = @as(f32, @floatFromInt(turn)) * std.math.tau / turns;
+    const angle = if (turn) |i| (@as(f32, @floatFromInt(i)) - 0.5) * std.math.tau / turns else 0;
     const cos = @cos(angle);
     const sin = @sin(angle);
     for (shape.boxes) |box| for (box.faces, 0..) |maybeFace, sideIndex| {
@@ -771,7 +772,7 @@ pub fn drawPictures(arena: std.mem.Allocator, drawables: []const Drawable, w: *s
                     .flags = .{ .shape = true },
                 };
                 for (0..turnCount) |turn| for (drawable.shapes) |*shape| for (0..variants) |variant| {
-                    const picture = try shapePicture(arena, shape, variant, turn, &target);
+                    const picture = try shapePicture(arena, shape, variant, if (drawable.turned) turn else null, &target);
                     if (picture.tinted != null) found.value_ptr.flags.tinted = true;
                     try pictures.append(arena, picture);
                 };
@@ -913,7 +914,7 @@ test shapePicture {
 
     // A whole block's box is the cube, filling the square, its faces lit as a cube's and each
     // pixel as deep as a cube's.
-    const cube = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, 0, &target);
+    const cube = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, &target);
     try std.testing.expectEqual([4]i64{ 0, 0, w, w }, [4]i64{ cube.left, cube.top, cube.width, cube.height });
     try std.testing.expect(cube.fills);
     try std.testing.expectEqual(null, cube.tinted);
@@ -926,7 +927,7 @@ test shapePicture {
     try std.testing.expect(!cube.shows(pixelAt(&cube, 0, 0).?));
 
     // A slab leaves the top of the square empty, for what's behind it to show.
-    const slab = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, 0, &target);
+    const slab = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, &target);
     try std.testing.expect(!slab.fills);
     try std.testing.expectEqual(w / 4, slab.top);
     try std.testing.expectEqual(null, pixelAt(&slab, w / 8, w / 2));
@@ -935,26 +936,39 @@ test shapePicture {
     // A plank twice as long as the block reaches out of its square both ways, drawn whole.
     var plank = testBox(.{ 2, 1.0 / 16.0, 1 });
     plank.transform[0][3] = -0.5;
-    const long = try shapePicture(allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, 0, &target);
+    const long = try shapePicture(allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, &target);
     try std.testing.expectEqual(-w / 4, long.left);
     try std.testing.expectEqual(w + w / 2, long.width);
 
     // A tinted texture goes into the tinted layer, covering the plain one.
     const tinted = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
-    const grass = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, 0, &target);
+    const grass = try shapePicture(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, &target);
     const p = pixelAt(&grass, top[0], top[1]).?;
     try std.testing.expectEqual(colours[0], grass.tinted.?[p]);
     try std.testing.expectEqual(colours[0], blend(grass.plain[p], grass.tinted.?[p], @splat(255)));
 
-    // A wall along the east of its place, turned half of a full turn, is along the west: its
-    // face towards the middle shows where it didn't, lit as an east face.
+    // A wall along the east of its place, in turn 4, 157.5°, is along the west: its face towards
+    // the middle shows where, unturned, nothing did.
     var wall = testBox(.{ 0.25, 1, 1 });
     wall.transform[0][3] = 0.75;
     const shape: world.Shape = .{ .boxes = &.{wall}, .textures = &textures };
     const middle = [2]i64{ w / 2, w * 5 / 16 };
-    try std.testing.expectEqual(null, pixelAt(&try shapePicture(allocator, &shape, 0, 0, &target), middle[0], middle[1]));
+    try std.testing.expectEqual(null, pixelAt(&try shapePicture(allocator, &shape, 0, null, &target), middle[0], middle[1]));
     const turned = try shapePicture(allocator, &shape, 0, turns / 2, &target);
-    try std.testing.expectEqual(colours[2], turned.plain[pixelAt(&turned, middle[0], middle[1]).?]);
+    try std.testing.expect(turned.shows(pixelAt(&turned, middle[0], middle[1]).?));
+
+    // Turns 0 and 7, −22.5° and −67.5°, are as far either side of south-east, where the view
+    // looks from, so a post east of the middle is drawn as far right of the middle in one as
+    // left in the other.
+    var post = testBox(.{ 0.125, 1, 0.125 });
+    post.transform[0][3] = 0.8125;
+    post.transform[2][3] = 0.4375;
+    const postShape: world.Shape = .{ .boxes = &.{post}, .textures = &textures };
+    const right = try shapePicture(allocator, &postShape, 0, 0, &target);
+    const left = try shapePicture(allocator, &postShape, 0, 7, &target);
+    try std.testing.expect(right.left > w / 2);
+    try std.testing.expectEqual(@as(i32, w) - right.left - right.width, left.left);
+    try std.testing.expectEqual(right.top, left.top);
 }
 
 test lightOf {
