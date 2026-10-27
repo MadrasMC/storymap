@@ -13,10 +13,12 @@
 //! or `-` for none, then, for a block drawn as a cube, the images of its faces' plain and
 //! tinted layers (`world.CubeFaces`), top, south and east, by number in `textures.bin`, a
 //! texture's variants separated by commas, then how high its selection box reaches, in
-//! sixteenths, or `-` for the whole block, and last its shape's number, followed by the plain
-//! and tinted layers of each texture the shape names, or `-` for a block without one:
+//! sixteenths, or `-` for the whole block, how it's moved off the middle of its place (0 for
+//! not at all) and which axes pick its variants and offset (`xyz` or `xz`), and last its
+//! shape's number, followed by the plain and tinted layers of each texture the shape names, or
+//! `-` for a block without one:
 //!
-//!     storymap blocks 11
+//!     storymap blocks 12
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
@@ -28,9 +30,9 @@
 //!     shape 2 1
 //!     box 0.70711 0 0.70711 0.10225 0 1 0 0 -0.70711 0 0.70711 0.45581 0.3125 0.125 0.25 1 0:0.3125,0.625:0.3125,0.5:0,0.5:0,0.625 …
 //!     …
-//!     block rock-granite Stone land 0 0 - - 0,1,2,3 - 0,1,2,3 - 0,1,2,3 - - -
+//!     block rock-granite Stone land 0 0 - - 0,1,2,3 - 0,1,2,3 - 0,1,2,3 - - 0 xyz -
 //!     …
-//!     block loosestones-granite-free Stone land 0 0 - - - - - - - - 2 1890 0 -
+//!     block loosestones-granite-free Stone land 0 0 - - - - - - - - 2 0 xyz 1890 0 -
 //!     …
 //!
 //! `textures.bin` holds the face images one after another, each its width and height as
@@ -79,13 +81,16 @@ pub const Block = struct {
     /// For a block the game draws in a shape other than the plain cube, that shape; null for any
     /// other, or one whose shape can't be read.
     shape: ?world.Shape = null,
+    /// How it's moved off the middle of its place by where it is (`BlockTypes.Block.drawOffset`).
+    drawOffset: u8 = 0,
+    randomizeAxes: BlockTypes.Axes = .xyz,
 };
 
 const Image = world.Image;
 
 /// The format of `blocks.txt` and `textures.bin`, and of what goes into them: raise it when
 /// any changes, so sets prepared before are prepared again.
-const formatVersion = 11;
+const formatVersion = 12;
 const fileName = "blocks.txt";
 const imageFileName = "textures.bin";
 const colourMapFolder = "colormaps";
@@ -201,6 +206,7 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets, folder: 
         const layers: [6]?[]const usize = cube orelse @splat(null);
         for (layers) |layer| try writeVariants(w, layer);
         if (block.height) |height| try w.print(" {}", .{height}) else try w.writeAll(" -");
+        try w.print(" {} {t}", .{ block.drawOffset, block.randomizeAxes });
         if (block.shape) |shape| {
             try w.print(" {}", .{geometries.getIndex(shape.geometry).?});
             for (bound) |texture| for (texture) |layer| try writeVariants(w, layer);
@@ -529,6 +535,8 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir, options: LoadOpti
                 if (face.plain.len == 0 and face.tinted.len == 0) break null;
             } else world.CubeFaces{ .up = faces[0], .south = faces[1], .east = faces[2] };
             const height = try heightOf(words.next());
+            const drawOffset = std.fmt.parseInt(u8, words.next() orelse "", 10) catch return error.NotPreparedBlocks;
+            const randomizeAxes = std.meta.stringToEnum(BlockTypes.Axes, words.next() orelse "") orelse return error.NotPreparedBlocks;
             const drawn = if (options.drawing) try numbered(Geometry, geometries.items, words.next()) else null;
             const shape: ?world.Shape = if (drawn) |geometry| shape: {
                 const bound = try arena.alloc(world.CubeFaces.Face, geometry.textures);
@@ -549,6 +557,8 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir, options: LoadOpti
                 .cube = cube,
                 .height = height,
                 .shape = shape,
+                .drawOffset = drawOffset,
+                .randomizeAxes = randomizeAxes,
             });
         }
     }

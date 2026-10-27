@@ -30,7 +30,15 @@ pub const Block = struct {
     /// How high its selection box reaches, the part of it a player can point at, in sixteenths of
     /// a block; null where its block type gives none, which is the whole block.
     height: ?u8 = null,
+    /// How it's moved off the middle of its place, by where it is (`randomDrawOffset`): 0 not at
+    /// all; the larger, the less.
+    drawOffset: u8 = 0,
+    /// Which of its position's coordinates pick its variants and offset (`randomizeAxes`): all,
+    /// or only x and z, so a column of it is the same all the way up.
+    randomizeAxes: Axes = .xyz,
 };
+
+pub const Axes = enum { xyz, xz };
 
 /// A cube's top, south and east faces: those seen looking north-west from above.
 pub const Cube = struct {
@@ -212,6 +220,8 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                 .cube = look.cube,
                 .shape = look.shape,
                 .height = look.height,
+                .drawOffset = look.drawOffset,
+                .randomizeAxes = look.randomizeAxes,
             });
         }
     }
@@ -227,6 +237,8 @@ const Look = struct {
     cube: ?Cube = null,
     shape: ?Shape = null,
     height: ?u8 = null,
+    drawOffset: u8 = 0,
+    randomizeAxes: Axes = .xyz,
 };
 
 /// A variant's `Look`, from its block type's properties with their `…ByType` forms resolved.
@@ -273,6 +285,18 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         .cube = cube,
         .shape = shape,
         .height = try heightOf(arena, json, variant),
+        .drawOffset = try drawOffsetOf(arena, json, variant),
+        .randomizeAxes = if (try property(arena, json, "randomizeAxes", variant)) |axes| (if (std.ascii.eqlIgnoreCase(axes.asString() orelse "", "xz")) .xz else .xyz) else .xyz,
+    };
+}
+
+/// A block type's `randomDrawOffset`: `true` is 1, and `false` or none 0.
+fn drawOffsetOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !u8 {
+    const value = try property(arena, json, "randomDrawOffset", variant) orelse return 0;
+    return switch (value) {
+        .bool => |on| @intFromBool(on),
+        .number => |n| std.math.cast(u8, std.fmt.parseInt(i64, n, 10) catch 0) orelse 0,
+        else => 0,
     };
 }
 
@@ -1454,6 +1478,25 @@ test "how high a block's selection box reaches" {
         .{ .json = "{ code: 'rock' }", .height = null },
     };
     for (cases) |case| try std.testing.expectEqual(case.height, (try describe(a, try Json.parse(a, case.json), variant, &shapes)).height);
+}
+
+test "how a block is placed by where it is" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const variant: Variant = .{ .code = .{ .domain = "game", .path = "tallgrass-tall" }, .parts = &.{} };
+    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    const cases = [_]struct { json: []const u8, offset: u8, axes: Axes }{
+        .{ .json = "{ randomDrawOffset: true, randomizeAxes: 'xz' }", .offset = 1, .axes = .xz },
+        .{ .json = "{ RandomDrawOffset: 14, randomizeAxes: 'XZ' }", .offset = 14, .axes = .xz },
+        .{ .json = "{ randomDrawOffsetByType: { '*-tall': false } }", .offset = 0, .axes = .xyz },
+        .{ .json = "{ code: 'rock' }", .offset = 0, .axes = .xyz },
+    };
+    for (cases) |case| {
+        const look = try describe(a, try Json.parse(a, case.json), variant, &shapes);
+        try std.testing.expectEqual(case.offset, look.drawOffset);
+        try std.testing.expectEqual(case.axes, look.randomizeAxes);
+    }
 }
 
 test "the colour maps that tint a block" {

@@ -12,6 +12,7 @@ const Compression = @import("Compression.zig");
 const MapChunk = @import("MapChunk.zig");
 const GameData = @import("GameData.zig");
 const Prepared = @import("Prepared.zig");
+const BlockTypes = @import("BlockTypes.zig");
 const Tint = @import("Tint.zig");
 const ChiseledBlock = @import("ChiseledBlock.zig");
 const ProtoBuf = @import("protobuf");
@@ -211,6 +212,10 @@ pub const Appearance = struct {
     /// Taking up only the bottom of its block, its selection box less than half a block high, as
     /// a loose stone does. A thin layer of the ground, of snow, sand or gravel, isn't.
     low: bool = false,
+    /// How it's moved off the middle of its place (`drawOffset`), and which of its position's
+    /// axes pick its variants (`variant`) and offset.
+    drawOffset: u8 = 0,
+    randomizeAxes: BlockTypes.Axes = .xyz,
 };
 
 /// An unknown ID is land.
@@ -242,13 +247,65 @@ pub fn picturesOf(self: *const SaveFile, id: i32) ?u32 {
     return self.appearance(id).prepared;
 }
 
-/// Which of a texture's `count` variants the block at (x, y, z) shows, by vsapi's
-/// `GameMath.MurmurHash3Mod`. The game picks variants in closed code; that it hashes the
-/// position this way isn't checked.
-pub fn variant(self: *const SaveFile, x: i64, y: i64, z: i64, count: u32) u32 {
-    _ = self;
-    const hash = murmurHash3(@truncate(x), @truncate(y), @truncate(z));
+/// Which of a texture's `count` variants block `id` at (x, y, z) shows, by vsapi's
+/// `GameMath.MurmurHash3Mod`, with height 0 for a block whose `randomizeAxes` is x and z. The
+/// game picks variants in closed code; that it hashes the position this way isn't checked.
+pub fn variant(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
+    const height = if (self.appearance(id).randomizeAxes == .xz) 0 else y;
+    const hash = murmurHash3(@truncate(x), @truncate(height), @truncate(z));
     return @intCast(@mod(hash, @as(i32, @intCast(count))));
+}
+
+/// Whether block `id` is moved off the middle of its place, by where it is (`drawOffset`), or
+/// picks its variants without its height: blocks that look alike may then still be drawn
+/// differently.
+pub fn isPlacedByPosition(self: *const SaveFile, id: i32) bool {
+    const blockAppearance = self.appearance(id);
+    return blockAppearance.drawOffset > 0 or blockAppearance.randomizeAxes == .xz;
+}
+
+/// How far block `id` at (x, y, z) is drawn off the middle of its place, east and south, in
+/// blocks; null for a block drawn in the middle. The game moves a block's selection box by this
+/// (vsapi `Block.GetSelectionBoxes`), and its shape presumably too, by its x and z alone.
+pub fn drawOffset(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64) ?[2]f32 {
+    _ = y;
+    const by = self.appearance(id).drawOffset;
+    if (by == 0) return null;
+    const divisor = 24 + 12 * @as(f32, @floatFromInt(by));
+    const east = @rem(oaatHash(@truncate(x), 0, @truncate(z)), 12);
+    const south = @rem(oaatHash(@truncate(x), 1, @truncate(z)), 12);
+    return .{ @as(f32, @floatFromInt(east)) / divisor, @as(f32, @floatFromInt(south)) / divisor };
+}
+
+/// vsapi `GameMath.oaatHash` of three integers: three rounds of Bob Jenkins' one-at-a-time
+/// mixing of each, XORed together.
+fn oaatHash(x: i32, y: i32, z: i32) i32 {
+    return oaatMix(x) ^ oaatMix(y) ^ oaatMix(z);
+}
+
+fn oaatMix(value: i32) i32 {
+    var x: u32 = @bitCast(value);
+    for (0..3) |_| {
+        x +%= x << 10;
+        x ^= @bitCast(@as(i32, @bitCast(x)) >> 6);
+        x +%= x << 3;
+        x ^= @bitCast(@as(i32, @bitCast(x)) >> 11);
+        x +%= x << 15;
+    }
+    return @bitCast(x);
+}
+
+test drawOffset {
+    // Reference values worked out separately, with C#'s wrapping integers.
+    try std.testing.expectEqual(@as(i32, 597024088), oaatHash(0, 1, 0));
+    try std.testing.expectEqual(@as(i32, -771329624), oaatHash(100, 0, -37));
+    try std.testing.expectEqual(@as(i32, -2013564529), oaatHash(512001, 1, 511997));
+    var save: SaveFile = undefined;
+    var appearances = [_]Appearance{ .{ .mapType = .plant, .drawOffset = 1 }, .{ .mapType = .plant, .drawOffset = 14 }, .{ .mapType = .land } };
+    save.appearances = &appearances;
+    try std.testing.expectEqual([2]f32{ -8.0 / 36.0, -8.0 / 36.0 }, save.drawOffset(0, 100, 64, -37).?);
+    try std.testing.expectEqual([2]f32{ -9.0 / 192.0, -1.0 / 192.0 }, save.drawOffset(1, 512001, 64, 511997).?);
+    try std.testing.expectEqual(null, save.drawOffset(2, 100, 64, -37));
 }
 
 /// vsapi `GameMath.MurmurHash3`, of three integers: MurmurHash3's 32-bit mixing with seed 144,
@@ -271,9 +328,14 @@ test variant {
     // Every variant comes up, and the same place always shows the same one.
     var seen: [4]bool = @splat(false);
     var z: i64 = -50;
-    while (z < 50) : (z += 1) seen[variant(undefined, 25000, 110, z, 4)] = true;
+    var save: SaveFile = undefined;
+    var appearances = [_]Appearance{ .{ .mapType = .land }, .{ .mapType = .plant, .randomizeAxes = .xz } };
+    save.appearances = &appearances;
+    while (z < 50) : (z += 1) seen[save.variant(0, 25000, 110, z, 4)] = true;
     try std.testing.expectEqual([4]bool{ true, true, true, true }, seen);
-    try std.testing.expectEqual(variant(undefined, 3, -7, 11, 4), variant(undefined, 3, -7, 11, 4));
+    try std.testing.expectEqual(save.variant(0, 3, -7, 11, 4), save.variant(0, 3, -7, 11, 4));
+    // Picked by x and z alone, a column shows the same one all the way up.
+    for (0..20) |y| try std.testing.expectEqual(save.variant(1, 3, 0, 11, 4), save.variant(1, 3, @intCast(y), 11, 4));
 }
 
 pub fn isLow(self: *const SaveFile, id: i32) bool {
@@ -314,6 +376,8 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
             .grain = block.grain,
             .prepared = block.number,
             .low = (block.height orelse 16) < 8 and !ground,
+            .drawOffset = block.drawOffset,
+            .randomizeAxes = block.randomizeAxes,
         };
     }
     for (self.tints, self.gameData.blockCodes) |*tint, maybeCode| {

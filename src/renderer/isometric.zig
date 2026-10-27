@@ -20,9 +20,12 @@
 //! - `blockCount() usize`, `mapType(id: i32) world.MapType`, `isVisible(id: i32) bool` and
 //!   `isLow(id: i32) bool`, a block taking up only the bottom of its place;
 //! - for the `game` style, `colour(id: i32) world.Rgb`, `picturesOf(id: i32) ?u32`, the
-//!   number of the block's pictures (`Options.pictures`), `isTinted(id: i32) bool`, and
-//!   `variant(x: i64, y: i64, z: i64, count: u32) u32`, which of a texture's `count` variants
-//!   the block at (x, y, z) shows;
+//!   number of the block's pictures (`Options.pictures`), `isTinted(id: i32) bool`, `variant(id:
+//!   i32, x: i64, y: i64, z: i64, count: u32) u32`, which of a texture's `count` variants the
+//!   block at (x, y, z) shows, `drawOffset(id: i32, x: i64, y: i64, z: i64) ?[2]f32`, how far
+//!   east and south of the middle of its place it's drawn, in blocks, and
+//!   `isPlacedByPosition(id: i32) bool`, whether either of those depends on more than its
+//!   pictures and its position;
 //! - `Reader`, one per thread: `init(source: *const Source, allocator, null) !Reader`,
 //!   `deinit(*Reader, allocator)`, `readChunk(*Reader, x: i32, y: i32, z: i32, chunk:
 //!   *world.Chunk) !bool`, false where there's no chunk to draw, and `chunksRead: usize`; for
@@ -594,6 +597,10 @@ fn shapeVariants(shape: *const world.Shape) usize {
 /// shape farther out are cut off.
 const reach = blockWidth;
 
+/// How far a block moved off the middle of its place (`drawOffset`), less than half a block
+/// east and south, can move its picture, in pixels.
+const shift = blockWidth / 2;
+
 /// The side of what a shape's picture is drawn in (`ShapeTarget`), in pixels.
 const shapeSide = blockWidth + 2 * reach;
 
@@ -971,7 +978,8 @@ fn View(comptime Source: type) type {
         /// In the `game` style, the blocks' pictures; with none, every block is drawn in its
         /// colour.
         pictures: ?*const Pictures,
-        /// How far beyond its square a block's picture can reach: `reach` with shapes, else 0.
+        /// How far beyond its square a block's picture can reach: `reach` with shapes, and
+        /// `shift` more with blocks moved off the middle of their place.
         reach: i64,
         height: u16,
         chunksRead: usize = 0,
@@ -985,11 +993,11 @@ fn View(comptime Source: type) type {
             /// Each face in a colour times the tint of a block where it is.
             tintedColour: struct { colour: world.Rgb, block: i32 },
             /// In its pictures: the number of the first in `pictures`, how many it has, one for
-            /// each variant, and the block whose tint colours their tinted layer, or null to
-            /// leave it as it is.
+            /// each variant, the block that picks its variant and offset by where it is, and
+            /// whether its tint colours their tinted layer.
             picture: Pictured,
 
-            const Pictured = struct { index: u32, variants: u32 = 1, tintedBy: ?i32 = null };
+            const Pictured = struct { index: u32, variants: u32 = 1, block: i32, tinted: bool = false };
         };
 
         fn init(allocator: std.mem.Allocator, source: *const Source, style: Style, pictures: ?*const Pictures) !Self {
@@ -999,6 +1007,7 @@ fn View(comptime Source: type) type {
             var looks: std.ArrayList(Look) = .empty;
             errdefer looks.deinit(allocator);
             var anyShape = false;
+            var anyPlaced = false;
             var colours: []u32 = &.{};
             errdefer allocator.free(colours);
             switch (style) {
@@ -1012,7 +1021,8 @@ fn View(comptime Source: type) type {
                 .game => |gameStyle| {
                     if (gameStyle != null) return error.UnknownStyle;
                     // Untinted blocks that look the same share a look. A tinted block has a look
-                    // of its own, naming it, as its tint is its own.
+                    // of its own, naming it, as its tint is its own, and so does one placed by
+                    // where it is.
                     var byPicture: std.AutoHashMapUnmanaged(u32, u16) = .empty;
                     defer byPicture.deinit(allocator);
                     var byColour: std.AutoHashMapUnmanaged(world.Rgb, u16) = .empty;
@@ -1030,10 +1040,13 @@ fn View(comptime Source: type) type {
                         const colour = source.colour(id);
                         const isTinted = source.isTinted(id);
                         if (entry.variants > 0) {
-                            const pictured: Look.Pictured = .{ .index = entry.first, .variants = entry.variants };
-                            if (isTinted and entry.flags.tinted) {
+                            const pictured: Look.Pictured = .{ .index = entry.first, .variants = entry.variants, .block = id };
+                            const tinted = isTinted and entry.flags.tinted;
+                            const placed = source.isPlacedByPosition(id);
+                            anyPlaced = anyPlaced or placed;
+                            if (tinted or placed) {
                                 var own = pictured;
-                                own.tintedBy = id;
+                                own.tinted = tinted;
                                 look.* = try addLook(allocator, &looks, .{ .picture = own });
                                 continue;
                             }
@@ -1056,7 +1069,7 @@ fn View(comptime Source: type) type {
                 .looks = try looks.toOwnedSlice(allocator),
                 .colours = colours,
                 .pictures = pictures,
-                .reach = if (anyShape) reach else 0,
+                .reach = @as(i64, if (anyShape) reach else 0) + @as(i64, if (anyPlaced) shift else 0),
                 .height = heights.world,
             };
         }
@@ -1152,6 +1165,8 @@ fn View(comptime Source: type) type {
             fn drawLook(self: *Worker, line: Line, block: Block, x0: i64, y0: i64, pixels: *tiles.Pixels) !struct { any: bool, fills: bool } {
                 var tintedColours: [3]u32 = undefined;
                 var fills = true;
+                // The block that picks a picture's variant and offset.
+                var placedBy: ?i32 = null;
                 const paint: Paint = switch (self.view.looks[block.look - 1]) {
                     .relief => |mapType| relief: {
                         const at = (@as(usize, @backingInt(mapType)) * self.view.height + @as(usize, @intCast(block.y))) * 3;
@@ -1164,24 +1179,28 @@ fn View(comptime Source: type) type {
                         break :colour .{ .faces = &tintedColours };
                     },
                     .picture => |look| picture: {
-                        const variant = if (look.variants > 1) self.view.source.variant(block.x, block.y, block.z, look.variants) else 0;
+                        placedBy = look.block;
+                        const variant = if (look.variants > 1) self.view.source.variant(look.block, block.x, block.y, block.z, look.variants) else 0;
                         const picture = self.view.pictures.?.picture(look.index + variant);
                         fills = picture.fills;
-                        const tint = if (picture.tinted == null) @as(world.Rgb, @splat(255)) else try self.tintOf(look, block);
+                        const tint = if (picture.tinted == null or !look.tinted) @as(world.Rgb, @splat(255)) else try self.reader.tint(look.block, block.x, block.y, block.z);
                         break :picture .{ .picture = .{ .picture = picture, .tint = tint } };
                     },
                 };
                 const square = line.square();
-                const depth = (block.x + block.y + block.z) * depthSteps;
-                const any = self.drawBlock(square.left - x0, square.top - y0, depth, paint, pixels);
+                var left = square.left - x0;
+                var top = square.top - y0;
+                var depth = (block.x + block.y + block.z) * depthSteps;
+                // Moved east and south off the middle of its place, its picture moves across and
+                // down, and nearer, and no longer covers its square.
+                if (placedBy) |id| if (self.view.source.drawOffset(id, block.x, block.y, block.z)) |by| {
+                    fills = false;
+                    left += @intFromFloat(@round((by[0] - by[1]) * across));
+                    top += @intFromFloat(@round((by[0] + by[1]) * down));
+                    depth += @intFromFloat(@round((by[0] + by[1]) * depthSteps));
+                };
+                const any = self.drawBlock(left, top, depth, paint, pixels);
                 return .{ .any = any, .fills = fills };
-            }
-
-            /// The tint of a block drawn in pictures with a tinted layer: its own where it is, or
-            /// none to leave the layer as it is.
-            fn tintOf(self: *Worker, look: Look.Pictured, block: Block) !world.Rgb {
-                const id = look.tintedBy orelse return @splat(255);
-                return self.reader.tint(id, block.x, block.y, block.z);
             }
 
             const Block = struct { x: i64, y: i64, z: i64, look: u16 };
