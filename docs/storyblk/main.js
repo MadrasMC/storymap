@@ -732,8 +732,9 @@ function setZoom(value) {
 
 // Detail
 
+// The blocks the filter shows, in the order the page shows them: group by group, by name.
 function visibleBlocks() {
-	return shown.blocks.filter((block) => !block.tile.hidden && !block.tile.closest(".group").hidden);
+	return shown.groups.filter((group) => !group.section.hidden).flatMap((group) => group.blocks.filter((block) => !block.tile.hidden));
 }
 
 function formatHex(bytes) {
