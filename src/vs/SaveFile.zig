@@ -212,10 +212,11 @@ pub const Appearance = struct {
     /// Taking up only the bottom of its block, its selection box less than half a block high, as
     /// a loose stone does. A thin layer of the ground, of snow, sand or gravel, isn't.
     low: bool = false,
-    /// How it's moved off the middle of its place (`drawOffset`), and which of its position's
-    /// axes pick its variants (`variant`) and offset.
+    /// How it's moved off the middle of its place (`drawOffset`), which of its position's axes
+    /// pick its variants (`variant`), turn and offset, and whether it's turned (`turn`).
     drawOffset: u8 = 0,
     randomizeAxes: BlockTypes.Axes = .xyz,
+    randomizeRotations: bool = false,
 };
 
 /// An unknown ID is land.
@@ -251,8 +252,21 @@ pub fn picturesOf(self: *const SaveFile, id: i32) ?u32 {
 /// `GameMath.MurmurHash3Mod`, with height 0 for a block whose `randomizeAxes` is x and z. The
 /// game picks variants in closed code; that it hashes the position this way isn't checked.
 pub fn variant(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
+    return self.byPosition(id, x, y, z, count, murmurSeed);
+}
+
+/// Which of its `count` turns block `id` at (x, y, z) is drawn in. The game turns blocks in
+/// closed code: this picks a turn as `variant` picks a variant, from a hash of its own, so the
+/// two don't go together.
+pub fn turn(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
+    return self.byPosition(id, x, y, z, count, turnSeed);
+}
+
+const turnSeed = 1013;
+
+fn byPosition(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32, seed: u32) u32 {
     const height = if (self.appearance(id).randomizeAxes == .xz) 0 else y;
-    const hash = murmurHash3(@truncate(x), @truncate(height), @truncate(z));
+    const hash = murmurHash3(seed, @truncate(x), @truncate(height), @truncate(z));
     return @intCast(@mod(hash, @as(i32, @intCast(count))));
 }
 
@@ -308,12 +322,13 @@ test drawOffset {
     try std.testing.expectEqual(null, save.drawOffset(2, 100, 64, -37));
 }
 
-/// vsapi `GameMath.MurmurHash3`, of three integers: MurmurHash3's 32-bit mixing with seed 144,
-/// but finished with the count of integers, 3, where MurmurHash3 takes the length in bytes.
-fn murmurHash3(x: i32, y: i32, z: i32) i32 {
+/// vsapi `GameMath.MurmurHash3`, of three integers, with `murmurSeed`: MurmurHash3's 32-bit
+/// mixing, but finished with the count of integers, 3, where MurmurHash3 takes the length in
+/// bytes.
+fn murmurHash3(seed: u32, x: i32, y: i32, z: i32) i32 {
     const c1: u32 = 0xcc9e2d51;
     const c2: u32 = 0x1b873593;
-    var h: u32 = 144;
+    var h: u32 = seed;
     for ([_]i32{ x, y, z }) |value| {
         h ^= std.math.rotl(u32, @as(u32, @bitCast(value)) *% c1, 15) *% c2;
         h = std.math.rotl(u32, h, 13) *% 5 +% 0xe6546b64;
@@ -323,6 +338,8 @@ fn murmurHash3(x: i32, y: i32, z: i32) i32 {
     h = (h ^ h >> 13) *% 0xc2b2ae35;
     return @bitCast(h ^ h >> 16);
 }
+
+const murmurSeed = 144;
 
 test variant {
     // Every variant comes up, and the same place always shows the same one.
@@ -336,6 +353,12 @@ test variant {
     try std.testing.expectEqual(save.variant(0, 3, -7, 11, 4), save.variant(0, 3, -7, 11, 4));
     // Picked by x and z alone, a column shows the same one all the way up.
     for (0..20) |y| try std.testing.expectEqual(save.variant(1, 3, 0, 11, 4), save.variant(1, 3, @intCast(y), 11, 4));
+    for (0..20) |y| try std.testing.expectEqual(save.turn(1, 3, 0, 11, 8), save.turn(1, 3, @intCast(y), 11, 8));
+    // Turns are picked apart from variants: with as many of each, they don't always agree.
+    var differ: usize = 0;
+    z = -50;
+    while (z < 50) : (z += 1) differ += @intFromBool(save.turn(0, 25000, 110, z, 4) != save.variant(0, 25000, 110, z, 4));
+    try std.testing.expect(differ > 50);
 }
 
 pub fn isLow(self: *const SaveFile, id: i32) bool {
@@ -378,6 +401,7 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
             .low = (block.height orelse 16) < 8 and !ground,
             .drawOffset = block.drawOffset,
             .randomizeAxes = block.randomizeAxes,
+            .randomizeRotations = block.randomizeRotations,
         };
     }
     for (self.tints, self.gameData.blockCodes) |*tint, maybeCode| {

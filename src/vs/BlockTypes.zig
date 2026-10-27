@@ -36,6 +36,8 @@ pub const Block = struct {
     /// Which of its position's coordinates pick its variants and offset (`randomizeAxes`): all,
     /// or only x and z, so a column of it is the same all the way up.
     randomizeAxes: Axes = .xyz,
+    /// Whether it's turned about its vertical middle by where it is (`randomizeRotations`).
+    randomizeRotations: bool = false,
 };
 
 pub const Axes = enum { xyz, xz };
@@ -222,6 +224,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                 .height = look.height,
                 .drawOffset = look.drawOffset,
                 .randomizeAxes = look.randomizeAxes,
+                .randomizeRotations = look.randomizeRotations,
             });
         }
     }
@@ -239,6 +242,7 @@ const Look = struct {
     height: ?u8 = null,
     drawOffset: u8 = 0,
     randomizeAxes: Axes = .xyz,
+    randomizeRotations: bool = false,
 };
 
 /// A variant's `Look`, from its block type's properties with their `…ByType` forms resolved.
@@ -287,6 +291,7 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         .height = try heightOf(arena, json, variant),
         .drawOffset = try drawOffsetOf(arena, json, variant),
         .randomizeAxes = if (try property(arena, json, "randomizeAxes", variant)) |axes| (if (std.ascii.eqlIgnoreCase(axes.asString() orelse "", "xz")) .xz else .xyz) else .xyz,
+        .randomizeRotations = if (try property(arena, json, "randomizeRotations", variant)) |turned| turned == .bool and turned.bool else false,
     };
 }
 
@@ -1486,16 +1491,17 @@ test "how a block is placed by where it is" {
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "tallgrass-tall" }, .parts = &.{} };
     var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
-    const cases = [_]struct { json: []const u8, offset: u8, axes: Axes }{
-        .{ .json = "{ randomDrawOffset: true, randomizeAxes: 'xz' }", .offset = 1, .axes = .xz },
-        .{ .json = "{ RandomDrawOffset: 14, randomizeAxes: 'XZ' }", .offset = 14, .axes = .xz },
-        .{ .json = "{ randomDrawOffsetByType: { '*-tall': false } }", .offset = 0, .axes = .xyz },
-        .{ .json = "{ code: 'rock' }", .offset = 0, .axes = .xyz },
+    const cases = [_]struct { json: []const u8, offset: u8, axes: Axes, turned: bool }{
+        .{ .json = "{ randomDrawOffset: true, randomizeAxes: 'xz', randomizeRotations: true }", .offset = 1, .axes = .xz, .turned = true },
+        .{ .json = "{ RandomDrawOffset: 14, randomizeAxes: 'XZ' }", .offset = 14, .axes = .xz, .turned = false },
+        .{ .json = "{ randomDrawOffsetByType: { '*-tall': false }, randomizeRotations: false }", .offset = 0, .axes = .xyz, .turned = false },
+        .{ .json = "{ code: 'rock' }", .offset = 0, .axes = .xyz, .turned = false },
     };
     for (cases) |case| {
         const look = try describe(a, try Json.parse(a, case.json), variant, &shapes);
         try std.testing.expectEqual(case.offset, look.drawOffset);
         try std.testing.expectEqual(case.axes, look.randomizeAxes);
+        try std.testing.expectEqual(case.turned, look.randomizeRotations);
     }
 }
 

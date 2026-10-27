@@ -134,6 +134,7 @@ fn drawPictures(init: std.process.Init, folder: std.Io.Dir) !usize {
         .cube = if (block.cube) |*cube| cube else null,
         .shape = if (block.shape) |*shape| shape else null,
         .colour = SaveFile.colourOf(block),
+        .turned = block.randomizeRotations,
     };
     const partial = Pictures.fileName ++ ".partial";
     const file = try folder.createFile(io, partial, .{});

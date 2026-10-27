@@ -21,7 +21,7 @@ pub const fileName = "pictures.bin";
 
 /// The pictures and the file's layout: raise it when either changes, so files drawn before are
 /// drawn again.
-pub const version = 1;
+pub const version = 2;
 
 entries: []const Entry,
 stored: []const Stored,
@@ -38,20 +38,25 @@ pub const Header = extern struct {
 
 const magic = "SMPICTS\x00".*;
 
-/// A block's pictures: `variants` of them from picture number `first`, one for each variant
-/// of its textures; none without a picture.
+/// A block's pictures: `variants` × `turns` of them from picture number `first`, one for each
+/// variant of its textures in each of its turns, turn by turn; none without a picture.
 pub const Entry = extern struct {
     first: u32 = 0,
     variants: u16 = 0,
+    turns: u8 = 1,
     flags: Flags = .{},
 
-    pub const Flags = packed struct(u16) {
+    pub const Flags = packed struct(u8) {
         /// Drawn in its shape, rather than as a cube.
         shape: bool = false,
         /// Its pictures have a tinted layer.
         tinted: bool = false,
-        _: u14 = 0,
+        _: u6 = 0,
     };
+
+    pub fn count(self: Entry) usize {
+        return @as(usize, self.variants) * self.turns;
+    }
 };
 
 /// Where a picture is in the file, and what it covers.
@@ -144,7 +149,7 @@ pub fn parse(bytes: []align(4) const u8) error{NotPictures}!Pictures {
         .stored = @alignCast(std.mem.bytesAsSlice(Stored, bytes[entriesEnd..storedEnd])),
         .data = bytes[storedEnd..],
     };
-    for (self.entries) |block| if (@as(usize, block.first) + block.variants > self.stored.len) return error.NotPictures;
+    for (self.entries) |block| if (@as(usize, block.first) + block.count() > self.stored.len) return error.NotPictures;
     for (self.stored) |stored| {
         const pixels = @as(usize, stored.width) * stored.height;
         const length = pixels * (if (stored.flags.tinted) @as(usize, 8) else 4) + std.mem.alignForward(usize, pixels * 2, 4);
