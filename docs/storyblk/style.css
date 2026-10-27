@@ -426,18 +426,16 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 	max-height: calc(100dvh - 4rem);
 }
 
+/* The buttons stay at the top when a long title wraps. */
 .detail-bar {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	gap: 0.25rem;
 	padding: 0.75rem 0.75rem 0.75rem 1.25rem;
 	border-bottom: 1px solid var(--line);
 }
 .detail-title {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 0 0.75rem;
+	align-self: center;
 	min-width: 0;
 	margin-right: auto;
 }
@@ -447,12 +445,14 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 	font-weight: 600;
 	overflow-wrap: anywhere;
 }
-#detail-meta {
+.detail-meta {
+	padding: 0.625rem 1.25rem;
+	border-top: 1px solid var(--line);
 	color: var(--muted);
-	font: 0.75rem var(--mono);
+	font: 0.75rem/1.6 var(--mono);
 	font-variant-numeric: tabular-nums;
 }
-#detail-meta span + span::before { content: " · "; }
+.detail-meta span + span::before { content: " · "; }
 .swatch {
 	display: inline-block;
 	width: 0.625rem;
@@ -478,20 +478,36 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 .icon-button:hover { background: var(--sunken); color: var(--text); }
 .icon-button:disabled { opacity: 0.35; cursor: default; background: none; }
 
+/* The block dialog is one size whatever the block, so its buttons stay put while stepping
+   through blocks. Its sprites sit in the middle, and scroll when they don't fit. */
+#detail {
+	width: min(48rem, calc(100vw - 2rem));
+	height: min(36rem, calc(100dvh - 4rem));
+}
+#detail .detail { height: 100%; }
+
 .detail-sprites {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
 	overflow: auto;
 	overscroll-behavior: contain;
 	padding: 1rem 1.25rem 1.25rem;
 }
-.turn + .turn { margin-top: 0.875rem; }
+.detail-sprites > :first-child { margin-top: auto; }
+.detail-sprites > :last-child { margin-bottom: auto; }
+.turn + .turn { margin-top: 1.25rem; }
 .turn-label {
 	margin-bottom: 0.25rem;
 	color: var(--faint);
 	font: 0.6875rem var(--mono);
+	text-align: center;
 }
 .cells {
 	display: flex;
 	flex-wrap: wrap;
+	justify-content: center;
 	align-items: center;
 	gap: 0.375rem;
 }
@@ -501,10 +517,11 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 
 #file { width: min(52rem, calc(100vw - 2rem)); }
 
-/* On phones, both dialogs are sheets from the bottom. */
+/* On phones, both dialogs are sheets from the bottom, the block's one size whatever the block. */
 @media (max-width: 47.99rem) {
 	dialog,
-	#file {
+	#file,
+	#detail {
 		inset: auto 0 0;
 		width: 100%;
 		min-width: 0;
@@ -513,9 +530,10 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 		margin: 0;
 		border-radius: 0.875rem 0.875rem 0 0;
 	}
+	#detail { height: 75dvh; }
 	.detail { max-height: 88dvh; }
-	.detail-sprites,
 	.file-body { padding-bottom: max(1.5rem, env(safe-area-inset-bottom)); }
+	.detail-meta { padding-bottom: max(0.625rem, env(safe-area-inset-bottom)); }
 }
 
 .file-body {

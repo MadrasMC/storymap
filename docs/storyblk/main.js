@@ -770,17 +770,20 @@ function fillDetail(block) {
 	addItem(`#${block.first}`);
 	$("detail-meta").replaceChildren(...meta);
 
-	// Every cell the same size, the cube's square at the same place in each.
-	let left = 0;
-	let top = 0;
-	let right = contents.blockWidth;
-	let bottom = contents.blockWidth;
+	// Every cell the same size, just around all of the block's sprites, each where it lies against
+	// the cube's square; the square itself for a block whose sprites are all empty.
+	let left = Infinity;
+	let top = Infinity;
+	let right = -Infinity;
+	let bottom = -Infinity;
 	for (let i = block.first; i < block.first + block.count; i++) {
+		if (sprites.width[i] === 0 || sprites.height[i] === 0) continue;
 		left = Math.min(left, sprites.left[i]);
 		top = Math.min(top, sprites.top[i]);
 		right = Math.max(right, sprites.left[i] + sprites.width[i]);
 		bottom = Math.max(bottom, sprites.top[i] + sprites.height[i]);
 	}
+	if (left === Infinity) [left, top, right, bottom] = [0, 0, contents.blockWidth, contents.blockWidth];
 	const scale = fit(right - left, bottom - top);
 
 	const perTurn = block.variants * block.alternates;
