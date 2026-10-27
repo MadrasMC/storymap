@@ -1,0 +1,426 @@
+@font-face {
+	font-family: "Geist";
+	src: url(geist.woff2) format("woff2");
+	font-weight: 100 900;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Geist Mono";
+	src: url(geist-mono.woff2) format("woff2");
+	font-weight: 100 900;
+	font-display: swap;
+}
+
+:root {
+	font-size: 16px;
+	--font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+	/* Light only: a system dark preference mustn't restyle the controls. */
+	color-scheme: light;
+	--bg: #f6f6f3;
+	--panel: #ffffff;
+	--sunken: #efefeb;
+	--line: #e2e2dd;
+	--text: #1c1c1a;
+	--muted: #66665f;
+	--faint: #94948c;
+	--accent: #2e6b3f;
+	--accent-text: #ffffff;
+	--danger: #b3261e;
+
+	--gutter: clamp(1rem, 3vw, 1.5rem);
+	--radius: 0.5rem;
+	/* Pictures are pixel art: the box a tile shows one in is in CSS pixels, a multiple of the zoom. */
+	--box: 96px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+	margin: 0;
+	min-height: 100dvh;
+	background: var(--bg);
+	color: var(--text);
+	font: 0.875rem/1.45 var(--font);
+	display: flex;
+	flex-direction: column;
+}
+
+[hidden] { display: none !important; }
+
+button, input, select {
+	font: inherit;
+	color: inherit;
+}
+
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+code {
+	font-family: var(--mono);
+	font-size: 0.8125rem;
+	padding: 0.0625rem 0.25rem;
+	border-radius: 0.25rem;
+	background: var(--sunken);
+}
+
+/* Bar */
+
+.bar {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.625rem var(--gutter);
+	padding-top: max(0.625rem, env(safe-area-inset-top));
+	background: color-mix(in srgb, var(--bg) 90%, transparent);
+	backdrop-filter: blur(0.5rem);
+	border-bottom: 1px solid var(--line);
+}
+
+.title {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	min-width: 0;
+	margin: 0;
+	font-size: 0.9375rem;
+	font-weight: 600;
+	white-space: nowrap;
+}
+.title img { flex: none; }
+.title small {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--faint);
+	font: 400 0.75rem var(--mono);
+}
+
+.search, .filter, .zoom {
+	height: 2.25rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--panel);
+	padding: 0 0.625rem;
+}
+.search { width: 16rem; min-width: 0; }
+.search::placeholder { color: var(--faint); }
+
+.count {
+	margin-left: auto;
+	color: var(--muted);
+	font: 0.75rem/1.3 var(--mono);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+	white-space: nowrap;
+}
+.count span + span::before { content: " · "; }
+
+.button {
+	height: 2.25rem;
+	padding: 0 0.875rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--panel);
+	font-weight: 500;
+	cursor: pointer;
+}
+.button:hover { background: var(--sunken); }
+.button.primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--accent-text);
+}
+.button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
+
+body.empty .search,
+body.empty .filter,
+body.empty .zoom,
+body.empty .count { display: none; }
+body.empty .open { margin-left: auto; }
+
+/* The phone bar: title and Open, then search, then filter, zoom and count. */
+@media (max-width: 47.99rem) {
+	.bar {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto auto;
+		grid-template-areas:
+			"title title open"
+			"search search search"
+			"filter zoom count";
+		gap: 0.5rem;
+	}
+	body.empty .bar { grid-template-areas: "title title open"; }
+	.title { grid-area: title; }
+	.open { grid-area: open; justify-self: end; }
+	.search { grid-area: search; width: 100%; }
+	.filter { grid-area: filter; width: 100%; }
+	.zoom { grid-area: zoom; }
+	.count { grid-area: count; }
+	.count span { display: block; }
+	.count span + span::before { content: none; }
+}
+
+/* Menu */
+
+.menu {
+	margin: 0;
+	inset: auto;
+	min-width: 10rem;
+	padding: 0.25rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--panel);
+	color: var(--text);
+	box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.1);
+}
+.menu button {
+	display: block;
+	width: 100%;
+	padding: 0.5rem 0.75rem;
+	border: 0;
+	border-radius: 0.375rem;
+	background: none;
+	text-align: left;
+	cursor: pointer;
+}
+.menu button:hover { background: var(--sunken); }
+
+/* States */
+
+.state {
+	flex: 1;
+	display: grid;
+	place-items: center;
+	padding: var(--gutter);
+}
+.panel {
+	max-width: 28rem;
+	text-align: center;
+}
+.panel h2 {
+	margin: 0 0 0.5rem;
+	font-size: 1.5rem;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+.panel p {
+	margin: 0;
+	color: var(--muted);
+}
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 0.5rem;
+	margin-top: 1.5rem;
+}
+
+/* Blocks */
+
+#blocks {
+	padding: 0.25rem var(--gutter) 3rem;
+	padding-bottom: max(3rem, env(safe-area-inset-bottom));
+}
+
+.group {
+	/* 14,000 tiles: only lay out the groups near the screen. */
+	content-visibility: auto;
+	contain-intrinsic-size: auto 20rem;
+}
+.group h2 {
+	margin: 1.75rem 0 0.5rem;
+	font-size: 0.875rem;
+	font-weight: 600;
+}
+.group h2 span {
+	margin-left: 0.375rem;
+	color: var(--faint);
+	font: 400 0.75rem var(--mono);
+	font-variant-numeric: tabular-nums;
+}
+
+.tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(calc(var(--box) + 1rem), 1fr));
+	gap: 0.125rem;
+}
+
+.tile {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.25rem;
+	min-width: 0;
+	padding: 0.5rem 0.375rem;
+	border: 0;
+	border-radius: var(--radius);
+	background: none;
+	cursor: pointer;
+}
+.tile:hover { background: var(--sunken); }
+.tile:focus-visible { outline-offset: -2px; }
+
+.frame {
+	width: var(--box);
+	height: var(--box);
+	display: grid;
+	place-items: center;
+	overflow: hidden;
+}
+
+.picture {
+	display: block;
+	image-rendering: pixelated;
+}
+
+.label {
+	max-width: 100%;
+	color: var(--muted);
+	font-size: 0.6875rem;
+	line-height: 1.25;
+	text-align: center;
+	overflow-wrap: anywhere;
+}
+
+.tile .number {
+	position: absolute;
+	top: 0.3125rem;
+	right: 0.4375rem;
+	color: var(--faint);
+	font: 0.625rem var(--mono);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Detail */
+
+dialog {
+	width: max-content;
+	min-width: min(20rem, calc(100vw - 2rem));
+	max-width: min(75rem, calc(100vw - 2rem));
+	max-height: calc(100dvh - 4rem);
+	padding: 0;
+	border: 0;
+	border-radius: 0.75rem;
+	background: var(--panel);
+	color: var(--text);
+	box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 0.18), 0 0.125rem 0.5rem rgb(0 0 0 / 0.08);
+	overflow: hidden;
+}
+dialog::backdrop { background: rgb(28 28 26 / 0.3); }
+
+.detail {
+	display: flex;
+	flex-direction: column;
+	max-height: calc(100dvh - 4rem);
+}
+
+.detail-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.75rem 0.75rem 0.75rem 1.25rem;
+	border-bottom: 1px solid var(--line);
+}
+.detail-title {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0 0.75rem;
+	min-width: 0;
+	margin-right: auto;
+}
+.detail-title h2 {
+	margin: 0;
+	font-size: 0.9375rem;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+#detail-meta {
+	color: var(--muted);
+	font: 0.75rem var(--mono);
+	font-variant-numeric: tabular-nums;
+}
+
+.icon-button {
+	flex: none;
+	width: 2.25rem;
+	height: 2.25rem;
+	border: 0;
+	border-radius: 0.375rem;
+	background: none;
+	color: var(--muted);
+	font-size: 1.25rem;
+	line-height: 1;
+	cursor: pointer;
+}
+.icon-button:hover { background: var(--sunken); color: var(--text); }
+.icon-button:disabled { opacity: 0.35; cursor: default; background: none; }
+
+.detail-pictures {
+	overflow: auto;
+	padding: 1rem 1.25rem 1.25rem;
+}
+.turn + .turn { margin-top: 0.875rem; }
+.turn-label {
+	margin-bottom: 0.25rem;
+	color: var(--faint);
+	font: 0.6875rem var(--mono);
+}
+.cells {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.375rem;
+}
+.cells .shape-start { margin-left: 0.875rem; }
+
+/* Drop overlay and toast: popovers, so they sit above an open dialog too. */
+
+.drop {
+	position: fixed;
+	inset: 0;
+	width: auto;
+	height: auto;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: rgb(246 246 243 / 0.82);
+	pointer-events: none;
+}
+.drop:popover-open {
+	display: grid;
+	place-items: center;
+}
+.drop-panel {
+	padding: 1.25rem 2rem;
+	border: 2px dashed var(--accent);
+	border-radius: 0.75rem;
+	background: var(--panel);
+	color: var(--accent);
+	font-size: 1.125rem;
+	font-weight: 600;
+}
+
+.toast {
+	inset: auto 0 max(1.25rem, env(safe-area-inset-bottom)) 0;
+	width: max-content;
+	max-width: calc(100vw - 2rem);
+	margin: 0 auto;
+	padding: 0.625rem 1rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--text);
+	color: var(--panel);
+	box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.16);
+}
+.toast.error { background: var(--danger); border-color: var(--danger); }
