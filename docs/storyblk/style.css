@@ -37,7 +37,14 @@
 
 * { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; }
+html {
+	-webkit-text-size-adjust: 100%;
+	/* The scrollbar's room stays when a dialog hides it, so the page doesn't shift. */
+	scrollbar-gutter: stable;
+}
+
+/* While a dialog is open, the page behind it stays still. */
+html:has(dialog:modal) { overflow: hidden; }
 
 body {
 	margin: 0;
@@ -464,6 +471,7 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 
 .detail-sprites {
 	overflow: auto;
+	overscroll-behavior: contain;
 	padding: 1rem 1.25rem 1.25rem;
 }
 .turn + .turn { margin-top: 0.875rem; }
@@ -503,6 +511,7 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 
 .file-body {
 	overflow: auto;
+	overscroll-behavior: contain;
 	padding: 0.25rem 1.25rem 1.5rem;
 }
 .facts h3 {
