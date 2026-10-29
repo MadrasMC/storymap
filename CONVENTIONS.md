@@ -8,7 +8,7 @@ Each folder in `src/` and `lib/` is a module of its own in `build.zig`, with a r
 
 `build.zig` lists each module's imports. Before giving a module another, check it against these rules:
 
-- **Each module does its own part:** `vs` reads the game, `world` holds what it tells the others about a world, `renderer` draws the views, `tiles` cuts and encodes tiles, `viewer` writes the page, `theme` loads themes, `console` writes messages, and `cli` puts them together into commands. A module that needs another's part done hands over what it has instead of importing that module to do it: the renderers return their stats, and `cli` prints them.
+- **Each module does its own part:** `vs` reads the game, `world` holds what it tells the others about a world, `renderer` draws the views, `tiles` cuts and encodes tiles, `viewer` writes the page, `theme` loads themes, `console` writes messages, `storyblk` reads and writes the prepared blocks file's container, and `cli` puts them together into commands. A module that needs another's part done hands over what it has instead of importing that module to do it: the renderers return their stats, and `cli` prints them.
 - **The game at arm's length:** only `vs`, and `cli` putting the program together, know the game ([Keeping the game apart](#keeping-the-game-apart)).
 - **Libraries know nothing of Storymap** ([Libraries](#libraries)), so they import no module of `src/`.
 - **`main.zig`** only picks the command from the command line and runs it from `cli`.
