@@ -12,12 +12,12 @@ const Dir = Io.Dir;
 /// The container's version, `header.version` (spec §7).
 pub const version: u8 = 1;
 
-pub const magic = "STORYBLK";
+const magic = "STORYBLK";
 
 /// The bytes in `header`, which `header.hash` ends.
-pub const headerLength = 24;
+const headerLength = 24;
 
-pub const Header = struct {
+const Header = struct {
     version: u8 = version,
     sectionCount: u16,
     infoLength: u32,
@@ -88,7 +88,7 @@ pub const Reader = struct {
     }
 };
 
-pub const LimitError = error{ StringTooLong, TooManyMods, TooManySections, SectionTooLong, InfoTooLong };
+const LimitError = error{ StringTooLong, TooManyMods, TooManySections, SectionTooLong, InfoTooLong };
 
 pub fn writeString(w: *Io.Writer, text: []const u8) (Io.Writer.Error || error{StringTooLong})!void {
     if (text.len > std.math.maxInt(u16)) return error.StringTooLong;
@@ -125,7 +125,7 @@ fn stringLength(text: []const u8) error{StringTooLong}!u64 {
 }
 
 /// Writes a whole file of `sections`, each name once, in their order.
-pub fn write(w: *Io.Writer, hash: u64, info: Info, sections: []const Section) (Io.Writer.Error || LimitError)!void {
+fn write(w: *Io.Writer, hash: u64, info: Info, sections: []const Section) (Io.Writer.Error || LimitError)!void {
     const lengths = try measure(info, sections);
     try w.writeAll(magic);
     try w.writeAll(&.{ version, 0 });
@@ -158,7 +158,7 @@ pub fn write(w: *Io.Writer, hash: u64, info: Info, sections: []const Section) (I
 }
 
 /// `header`, from the file's first `headerLength` bytes.
-pub fn parseHeader(bytes: []const u8) error{NotPreparedBlocks}!Header {
+fn parseHeader(bytes: []const u8) error{NotPreparedBlocks}!Header {
     if (bytes.len < headerLength or !std.mem.eql(u8, bytes[0..magic.len], magic)) return error.NotPreparedBlocks;
     var reader: Reader = .{ .bytes = bytes[magic.len..headerLength] };
     const headerVersion = try reader.int(u8);
@@ -174,7 +174,7 @@ pub fn parseHeader(bytes: []const u8) error{NotPreparedBlocks}!Header {
 }
 
 /// `info`, from its `header.infoLength` bytes. Its strings are in `bytes`.
-pub fn parseInfo(arena: std.mem.Allocator, bytes: []const u8) error{ NotPreparedBlocks, OutOfMemory }!Info {
+fn parseInfo(arena: std.mem.Allocator, bytes: []const u8) error{ NotPreparedBlocks, OutOfMemory }!Info {
     var reader: Reader = .{ .bytes = bytes };
     const game = try reader.string();
     const gameVersion = try reader.string();
