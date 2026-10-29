@@ -19,7 +19,7 @@
 //! the plain and tinted layers of each texture the shape names, or `-` for one with nothing to
 //! draw; or `-` for a block without any:
 //!
-//!     storymap blocks 17
+//!     storymap blocks 18
 //!     game 1.22.7
 //!     mod primitivesurvival_5.1.4.zip
 //!     domain game
@@ -96,7 +96,7 @@ const Image = world.Image;
 
 /// The format of `blocks.txt` and `textures.bin`, and of what goes into them: raise it when
 /// any changes, so sets prepared before are prepared again.
-const formatVersion = 17;
+const formatVersion = 18;
 const fileName = "blocks.txt";
 const imageFileName = "textures.bin";
 const colourMapFolder = "colormaps";

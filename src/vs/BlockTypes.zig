@@ -270,7 +270,7 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
     }
 
     const tinted = climateColorMap != null or seasonColorMap != null;
-    const all: []const Json.Field = if (try property(arena, json, "textures", variant)) |t| (if (t == .object) t.object else &.{}) else &.{};
+    const all = try texturesOf(arena, json, variant);
     var textures: Textures = .{};
     var cube: ?Cube = null;
     if (all.len > 0) {
@@ -301,6 +301,23 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         .randomizeAxes = if (try property(arena, json, "randomizeAxes", variant)) |axes| (if (std.ascii.eqlIgnoreCase(axes.asString() orelse "", "xz")) .xz else .xyz) else .xyz,
         .randomizeRotations = if (try property(arena, json, "randomizeRotations", variant)) |turned| turned == .bool and turned.bool else false,
     };
+}
+
+/// A block type's `textures`, with its `texture`, if any, as their `all`, over one of its own,
+/// as the game reads it (vsessentialsmod `CollectibleType.OnDeserialized`): flotsam and stone
+/// paths name only a `texture`.
+fn texturesOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) ![]const Json.Field {
+    const named: []const Json.Field = if (try property(arena, json, "textures", variant)) |t| (if (t == .object) t.object else &.{}) else &.{};
+    const single = try property(arena, json, "texture", variant) orelse return named;
+    if (single != .object) return named;
+    const textures = try arena.alloc(Json.Field, named.len + 1);
+    @memcpy(textures[0..named.len], named);
+    for (textures[0..named.len]) |*texture| if (std.mem.eql(u8, texture.key, "all")) {
+        texture.value = single;
+        return textures[0..named.len];
+    };
+    textures[named.len] = .{ .key = "all", .value = single };
+    return textures;
 }
 
 /// A block type's `randomDrawOffset`: `true` is 1, and `false` or none 0.
@@ -1458,6 +1475,10 @@ test "the textures that colour a block" {
         },
         .{ .json = "{ textures: {} }", .colour = null, .grain = null },
         .{ .json = "{ code: 'rock' }", .colour = null, .grain = null },
+        // A `texture` is `all`, over one in `textures`.
+        .{ .json = "{ texture: { base: 'one' } }", .colour = "game:one", .grain = "game:one" },
+        .{ .json = "{ textureByType: { '*': { base: 'one' } }, textures: { all: { base: 'two' }, north: { base: 'x' } } }", .colour = "game:one", .grain = "game:one" },
+        .{ .json = "{ texture: null, textures: { all: { base: 'two' } } }", .colour = "game:two", .grain = "game:two" },
     };
     var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
     for (cases) |case| {

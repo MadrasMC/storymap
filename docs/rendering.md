@@ -117,9 +117,9 @@ Both depend on the variant, through `blockmaterialByType`, `attributesByType` or
 
 ### Texture colours
 
-For accurate mode, each block's two textures are found as the game picks them (step 5 of [How the game draws its own world map](#how-the-game-draws-its-own-world-map)), from its `textures` and `particlesTextureCode` after `…ByType` and placeholders: a texture's `base`, in the block type's domain unless it names another, is `textures/<base>.png`. A base ending in `*` is the first file it starts, by name *(Source: vsapi [`CompositeTexture.Bake`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Client/Texture/CompositeTexture.cs))*; in which order the game lists them isn't checked. Overlays and alternates aren't used.
+For accurate mode, each block's two textures are found as the game picks them (step 5 of [How the game draws its own world map](#how-the-game-draws-its-own-world-map)), from its `textures` and `particlesTextureCode` after `…ByType` and placeholders: a texture's `base`, in the block type's domain unless it names another, is `textures/<base>.png`. A block type's `texture`, singular, is its `all`, over one in its `textures` *(Source: vsessentialsmod [`CollectibleType.OnDeserialized`](https://github.com/anegostudios/vsessentialsmod/blob/06673b67318e002332b6aa8b3d0308f11d2aba99/Loading/CollectibleType.cs#L354-L360))*; flotsam, stone paths, seagrass and kelp name theirs so. A base ending in `*` is the first file it starts, by name *(Source: vsapi [`CompositeTexture.Bake`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Client/Texture/CompositeTexture.cs))*; in which order the game lists them isn't checked. Overlays and alternates aren't used.
 
-The game's atlas works out each texture's colours in closed code, so Storymap's are its own: the average weighs each pixel by how opaque it is, and the 30 grain colours are pixels picked at random, among those that aren't transparent, the same ones every time. In 1.22.7 with Primitive Survival, 1,716 textures colour 13,356 of the 14,781 blocks. The other 1,425, such as mushrooms, doors and multiblocks, have no texture Storymap could read; it colours them by their colour code instead of white.
+The game's atlas works out each texture's colours in closed code, so Storymap's are its own: the average weighs each pixel by how opaque it is, and the 30 grain colours are pixels picked at random, among those that aren't transparent, the same ones every time. In 1.22.7 with Primitive Survival, 1,730 textures colour 13,375 of the 14,781 blocks. The other 1,406, such as mushrooms, doors and multiblocks, have no texture Storymap could read; it colours them by their colour code instead of white.
 
 ### Climate and season tint
 
@@ -198,7 +198,7 @@ The isometric view's pictures of every prepared block are drawn once, beside the
 
 - **Its own version:** the file names the version of the pictures and its layout (`Pictures.version`). A render that finds it missing, or of another version, draws it again from the prepared blocks, without reading the game's assets; preparing again draws it too.
 - **Laid out to be read in place:** a table of the blocks' pictures by their number in `blocks.txt`, a table of the pictures, then their pixels, everything at a multiple of its size, in little-endian order.
-- **Size:** for 1.22.7 with Primitive Survival, 54,762 pictures, 194 MB, drawn in about 5 s; without the shapes' alternates, it was 108 MB, and without their turns too, 88 MB.
+- **Size:** for 1.22.7 with Primitive Survival, 55,096 pictures, 195 MB, drawn in about 5 s; without the shapes' alternates, it was 108 MB, and without their turns too, 88 MB.
 
 ## Block entities that change how things look
 
