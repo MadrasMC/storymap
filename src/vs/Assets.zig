@@ -1,5 +1,6 @@
 //! The needed files from the install's `assets/` and from each mod in `Mods/` (a zip or a
-//! folder with its own `assets/<domain>/…`), read in place. The install's `creative`, `game`
+//! folder with its own `assets/<domain>/…`), read in place, and what each mod's `modinfo.json`
+//! names it. The install's `creative`, `game`
 //! and `survival` folders are all the `game` domain. Files are looked up by domain and path,
 //! ignoring case as the game does; a mod's file replaces the game's
 //! (docs/rendering.md#reading-them).
@@ -10,6 +11,7 @@ const Assets = @This();
 const std = @import("std");
 const builtin = @import("builtin");
 const console = @import("console");
+const Json = @import("Json.zig");
 const Io = std.Io;
 const Dir = Io.Dir;
 
@@ -23,11 +25,24 @@ version: ?[]const u8 = null,
 pub const Source = struct {
     /// "Vintage Story", or a mod's zip or folder name in Mods.
     name: []const u8,
+    /// Null for the game.
+    mod: ?Mod,
     kind: union(enum) {
         /// The source's `assets` subfolders, in name order.
         folders: []const Folder,
         zip: Zip,
     },
+};
+
+/// A mod, as its `modinfo.json` names it.
+pub const Mod = struct {
+    /// Its zip or folder name in Mods.
+    file: []const u8,
+    /// Its `modid`, `name` and `version`: empty where its `modinfo.json` doesn't give them, or
+    /// it has none.
+    id: []const u8 = "",
+    name: []const u8 = "",
+    version: []const u8 = "",
 };
 
 pub const Folder = struct {
@@ -63,7 +78,7 @@ pub fn open(allocator: std.mem.Allocator, io: Io, game: Dir, data: ?Dir) !Assets
     var assets = game.openDir(io, "assets", .{ .iterate = true }) catch return error.NoAssetsFolder;
     defer assets.close(io);
     self.version = try findVersion(arena, io, assets);
-    try self.addFolders(io, "Vintage Story", assets, gameDomain);
+    try self.addFolders(io, "Vintage Story", null, assets, gameDomain);
 
     var mods = (data orelse return self).openDir(io, "Mods", .{ .iterate = true }) catch return self;
     defer mods.close(io);
@@ -101,22 +116,51 @@ fn addMod(self: *Assets, io: Io, mods: Dir, name: []const u8) !void {
     if (std.ascii.endsWithIgnoreCase(name, ".zip")) {
         const file = try mods.openFile(io, name, .{});
         errdefer file.close(io);
-        const entries = try mapZip(arena, io, file);
-        try self.sources.append(arena, .{ .name = name, .kind = .{ .zip = .{ .file = file, .entries = entries } } });
-        var it = entries.keyIterator();
+        const contents = try mapZip(arena, io, file);
+        const modInfo = if (contents.modInfo) |entry| try readZip(arena, io, file, entry) else null;
+        try self.sources.append(arena, .{
+            .name = name,
+            .mod = try modOf(arena, name, modInfo),
+            .kind = .{ .zip = .{ .file = file, .entries = contents.entries } },
+        });
+        var it = contents.entries.keyIterator();
         while (it.next()) |key| try self.domains.put(arena, domainOf(key.*), {});
     } else {
-        var mod = try mods.openDir(io, name, .{});
-        defer mod.close(io);
-        var assets = mod.openDir(io, "assets", .{ .iterate = true }) catch return;
+        var folder = try mods.openDir(io, name, .{});
+        defer folder.close(io);
+        var assets = folder.openDir(io, "assets", .{ .iterate = true }) catch return;
         defer assets.close(io);
-        try self.addFolders(io, name, assets, null);
+        const modInfo = folder.readFileAlloc(io, modInfoName, arena, .limited(maxFileBytes)) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        try self.addFolders(io, name, try modOf(arena, name, modInfo), assets, null);
     }
+}
+
+const modInfoName = "modinfo.json";
+
+/// The mod in `file`, named by its `modinfo.json`, `modInfo`, if it has one that can be read.
+fn modOf(arena: std.mem.Allocator, file: []const u8, modInfo: ?[]const u8) error{OutOfMemory}!Mod {
+    const json = Json.parse(arena, modInfo orelse return .{ .file = file }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return .{ .file = file },
+    };
+    return .{
+        .file = file,
+        .id = stringOf(json, "modid"),
+        .name = stringOf(json, "name"),
+        .version = stringOf(json, "version"),
+    };
+}
+
+fn stringOf(json: Json.Value, key: []const u8) []const u8 {
+    return (json.get(key) orelse return "").asString() orelse "";
 }
 
 /// Adds the folders in `assets` as one source, all in `domain`, or each in the domain its
 /// name gives.
-fn addFolders(self: *Assets, io: Io, name: []const u8, assets: Dir, domain: ?[]const u8) !void {
+fn addFolders(self: *Assets, io: Io, name: []const u8, mod: ?Mod, assets: Dir, domain: ?[]const u8) !void {
     const arena = self.arena.allocator();
     var names: std.ArrayList([]const u8) = .empty;
     var it = assets.iterate();
@@ -134,28 +178,35 @@ fn addFolders(self: *Assets, io: Io, name: []const u8, assets: Dir, domain: ?[]c
         try folders.append(arena, .{ .domain = folderDomain, .dir = try assets.openDir(io, folderName, .{ .iterate = true }) });
         try self.domains.put(arena, folderDomain, {});
     }
-    try self.sources.append(arena, .{ .name = name, .kind = .{ .folders = folders.items } });
+    try self.sources.append(arena, .{ .name = name, .mod = mod, .kind = .{ .folders = folders.items } });
 }
 
 fn domainOf(key: []const u8) []const u8 {
     return key[0 .. std.mem.indexOfScalar(u8, key, '/') orelse key.len];
 }
 
-fn mapZip(arena: std.mem.Allocator, io: Io, file: Io.File) !std.StringHashMapUnmanaged(std.zip.Iterator.Entry) {
+const ZipContents = struct {
+    /// The needed entries, by lowercased "domain/path" below `assets/`.
+    entries: std.StringHashMapUnmanaged(std.zip.Iterator.Entry) = .empty,
+    modInfo: ?std.zip.Iterator.Entry = null,
+};
+
+fn mapZip(arena: std.mem.Allocator, io: Io, file: Io.File) !ZipContents {
     var buffer: [4096]u8 = undefined;
     var reader = file.reader(io, &buffer);
     var it = try std.zip.Iterator.init(&reader);
-    var entries: std.StringHashMapUnmanaged(std.zip.Iterator.Entry) = .empty;
+    var contents: ZipContents = .{};
     var name: [Dir.max_path_bytes]u8 = undefined;
     while (try it.next()) |entry| {
         const path = try entry.getFilename(&reader, &name, .{ .allow_backslashes = true });
+        if (std.ascii.eqlIgnoreCase(path, modInfoName)) contents.modInfo = entry;
         if (path.len == 0 or path[path.len - 1] == '/') continue; // a folder
         if (!std.ascii.startsWithIgnoreCase(path, "assets/")) continue;
         const key = try arena.dupe(u8, path["assets/".len..]);
         if (!needed(std.ascii.lowerString(key, key))) continue;
-        try entries.put(arena, key, entry);
+        try contents.entries.put(arena, key, entry);
     }
-    return entries;
+    return contents;
 }
 
 /// Whether `path` below `assets/`, e.g. "survival/blocktypes/stone/rock.json", is needed:
@@ -316,7 +367,10 @@ test "assets from the game, a mod zip and a mod folder" {
         .{ "game/assets/game/textures/block/override.png", "from the game" },
         .{ "game/assets/game/music/song.ogg", "music" },
         .{ "data/Mods/folder-mod/assets/othermod/shapes/s.json", "shape" },
+        .{ "data/Mods/folder-mod/modinfo.json", "\xef\xbb\xbf{ \"ModID\": \"othermod\", name: 'Other \\'mod\\'', version: \"2.0\", } // as the game writes it" },
+        .{ "data/Mods/bare-mod/assets/baremod/shapes/b.json", "shape" },
         .{ "data/Mods/code-only/othercode.dll", "MZ" },
+        .{ "data/Mods/code-only/modinfo.json", "{ modid: 'othercode' }" },
         .{ "data/Mods/notes.txt", "not a mod" },
         .{ "data/Mods/testmod.zip", @embedFile("testdata/testmod.zip") },
     };
@@ -333,8 +387,14 @@ test "assets from the game, a mod zip and a mod folder" {
     defer assets.close(io);
     const allocator = std.testing.allocator;
     try std.testing.expectEqualStrings("1.22.7", assets.version.?);
-    // Vintage Story, the folder mod and the zip; the code-only mod has no assets.
-    try std.testing.expectEqual(3, assets.sources.items.len);
+    // Vintage Story, the folder mods and the zip, in name order; the code-only mod has no assets.
+    const sources = assets.sources.items;
+    try std.testing.expectEqual(4, sources.len);
+    try std.testing.expectEqual(null, sources[0].mod);
+    // Named by its modinfo.json, or by nothing but its folder.
+    try std.testing.expectEqualDeep(Mod{ .file = "bare-mod" }, sources[1].mod.?);
+    try std.testing.expectEqualDeep(Mod{ .file = "folder-mod", .id = "othermod", .name = "Other 'mod'", .version = "2.0" }, sources[2].mod.?);
+    try std.testing.expectEqualDeep(Mod{ .file = "testmod.zip", .id = "testmod", .version = "1.0.0" }, sources[3].mod.?);
 
     // The install's survival and creative folders are the game domain.
     const rock = (try assets.read(allocator, io, "Game", "blocktypes/A.json")).?;
@@ -375,6 +435,7 @@ test "assets from the game, a mod zip and a mod folder" {
     try std.testing.expect(assets.domains.contains("game"));
     try std.testing.expect(assets.domains.contains("testmod"));
     try std.testing.expect(assets.domains.contains("othermod"));
+    try std.testing.expect(assets.domains.contains("baremod"));
     try std.testing.expect(!assets.domains.contains("survival"));
 }
 
