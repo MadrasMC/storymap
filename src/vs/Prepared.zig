@@ -1,5 +1,5 @@
 //! The game's and mods' blocks as rendering needs them, prepared once from their assets so a
-//! render never reads assets itself (docs/rendering.md#preparing-blocks).
+//! render never reads assets itself (docs/blocks.md#preparing-blocks).
 //!
 //! A prepared set is a folder `<blocks folder>/<key>/` (see `key`) holding `blocks.txt`.
 //! Textures come first, each with its average colour and grain (`TextureColours`), then the
@@ -67,7 +67,7 @@ pub const Block = struct {
     index: u32 = 0,
     /// One of `BlockTypes.materials`, e.g. "Stone".
     material: []const u8,
-    /// Its colour on the game's map, e.g. "land" or "forest" (docs/rendering.md#block-colours).
+    /// Its colour on the game's map, e.g. "land" or "forest" (docs/blocks.md#block-colours).
     colorCode: []const u8,
     /// Its texture's average colour and grain, from the textures the game's colour-accurate map
     /// uses (`BlockTypes.Textures`), where readable.

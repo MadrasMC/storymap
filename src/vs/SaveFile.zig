@@ -157,7 +157,7 @@ pub const palette: world.Palette = .{
     .wateredge = .{ 0x48, 0x30, 0x18 },
 };
 
-/// The colour maps that tint a block (docs/rendering.md#climate-and-season-tint).
+/// The colour maps that tint a block (docs/blocks.md#climate-and-season-tint).
 pub const BlockTint = struct {
     climate: ?*const Tint.ColourMap = null,
     season: ?*const Tint.ColourMap = null,
@@ -379,7 +379,7 @@ pub const MapStyle = MapPainter.MapStyle;
 pub const MapPainter = @import("MapPainter.zig");
 
 /// Takes each block's appearance and tints from the prepared blocks; its map type is its map
-/// colour code (docs/rendering.md#block-colours). Blocks they don't have keep what their code
+/// colour code (docs/blocks.md#block-colours). Blocks they don't have keep what their code
 /// says. Points into `prepared`, which must outlast rendering.
 pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
     for (self.appearances, self.gameData.blockCodes) |*blockAppearance, maybeCode| {

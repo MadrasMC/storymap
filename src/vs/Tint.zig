@@ -1,6 +1,6 @@
 //! Climate and season tint: grass, leaves and water take a colour from a climate map by
 //! temperature and rainfall, mixed with one from a season map by the time of year
-//! (docs/rendering.md#climate-and-season-tint). Follows the game's world shader,
+//! (docs/blocks.md#climate-and-season-tint). Follows the game's world shader,
 //! `shaderincludes/colormap.vsh` and `.fsh`, as its map does this in closed code.
 const std = @import("std");
 const world = @import("world");

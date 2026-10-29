@@ -1,12 +1,12 @@
 # Prepared blocks file (`.storyblk`)
 
-A `.storyblk` file holds what a render needs to know about a game's blocks, prepared once from the game's and mods' assets ([Preparing blocks](../rendering.md#preparing-blocks)), with the isometric view's sprites of them. A render maps the file and reads its sprites in place, and [viewer.html](viewer.html) shows its sprites in a browser.
+A `.storyblk` file holds what a render needs to know about a game's blocks, prepared once from the game's and mods' assets ([Preparing blocks](../blocks.md#preparing-blocks)), with the isometric view's sprites of them. A render maps the file and reads its sprites in place, and [viewer.html](viewer.html) shows its sprites in a browser.
 
 Storymap doesn't read or write this format yet; this is its specification.
 
 ## 1. Use
 
-Storymap keeps one file, `prepared.storyblk` in the current folder, or the one given on the command line (`--blocks` when rendering, the argument of `storymap prepare`). Its hash (§6) tells Storymap whether the file was prepared from the game and mods it's running with, by a Storymap that prepares and draws the same way. Without the game, which the hash depends on, each section's `generator_version` (§7) and `sprites.block_width` still tell it whether the file was made the same way. When Storymap prepares the file again is Storymap's choice ([Preparing blocks](../rendering.md#preparing-blocks)), not the format's.
+Storymap keeps one file, `prepared.storyblk` in the current folder, or the one given on the command line (`--blocks` when rendering, the argument of `storymap prepare`). Its hash (§6) tells Storymap whether the file was prepared from the game and mods it's running with, by a Storymap that prepares and draws the same way. Without the game, which the hash depends on, each section's `generator_version` (§7) and `sprites.block_width` still tell it whether the file was made the same way. When Storymap prepares the file again is Storymap's choice ([Preparing blocks](../blocks.md#preparing-blocks)), not the format's.
 
 A writer writes a new file beside the old one, under the name `<file name>.<process id>.partial`, and renames it over the old file once it's complete, so an interrupted write leaves the old file whole. It removes the partial file if writing or renaming fails. It never replaces a file that doesn't start with the magic `STORYBLK`.
 
@@ -18,9 +18,9 @@ Bits and fields this document doesn't describe are 0 when written and ignored wh
 
 `blocks.entries` has one Block for each block. The other sections are tables a Block points into: `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `sprites` by index, and each Sprite into `sprite_layers` by offset. `domains` stands on its own.
 
-A block's sprites come in variants of its textures ([Cube faces](../rendering.md#cube-faces)), in each of the shapes it picks one of, its own and then its shape's alternates, and in each of its turns if it's turned by where it is ([Shapes](../rendering.md#shapes)). Which variant, alternate and turn a block shows is picked by where it is, as those sections describe.
+A block's sprites come in variants of its textures ([Cube faces](../blocks.md#cube-faces)), in each of the shapes it picks one of, its own and then its shape's alternates, and in each of its turns if it's turned by where it is ([Shapes](../blocks.md#shapes)). Which variant, alternate and turn a block shows is picked by where it is, as those sections describe.
 
-A cube's square is the square a cube's sprite is drawn in, `sprites.block_width` pixels wide: the cube's top is a diamond as wide as the square and half as tall, and its sides reach down the other half. A block at (x, y, z), with x east, y up and z south, has its square at ((x − z − 1) × w / 2, (x + z) × w / 4 − (y + 1) × w / 2) pixels, w being `sprites.block_width`, moved by its `draw_offset` ([Shapes](../rendering.md#shapes)). A pixel's depth in the world is (x + y + z) × 256 plus its value in `depths`: the larger, the nearer the viewer, who looks north-west from above.
+A cube's square is the square a cube's sprite is drawn in, `sprites.block_width` pixels wide: the cube's top is a diamond as wide as the square and half as tall, and its sides reach down the other half. A block at (x, y, z), with x east, y up and z south, has its square at ((x − z − 1) × w / 2, (x + z) × w / 4 − (y + 1) × w / 2) pixels, w being `sprites.block_width`, moved by its `draw_offset` ([Shapes](../blocks.md#shapes)). A pixel's depth in the world is (x + y + z) × 256 plus its value in `depths`: the larger, the nearer the viewer, who looks north-west from above.
 
 ## 3. Layout
 
@@ -73,7 +73,7 @@ A cube's square is the square a cube's sprite is drawn in, `sprites.block_width`
 | Field | Type | Contents |
 | --- | --- | --- |
 | `count` | u8 | – |
-| `entries` | \[count][String](#string) | the codes that pick a block's colour on the game's map, each once, e.g. `land`, `forest` ([Block colours](../rendering.md#block-colours)) |
+| `entries` | \[count][String](#string) | the codes that pick a block's colour on the game's map, each once, e.g. `land`, `forest` ([Block colours](../blocks.md#block-colours)) |
 
 ### `texture_colours`
 
@@ -147,7 +147,7 @@ The section is 8 + 16 × `count` bytes long.
 
 ### TextureColours
 
-A texture's colours, which the game's colour-accurate map draws a block with ([Texture colours](../rendering.md#texture-colours)). 93 bytes.
+A texture's colours, which the game's colour-accurate map draws a block with ([Texture colours](../blocks.md#texture-colours)). 93 bytes.
 
 | Field | Type | Contents |
 | --- | --- | --- |
@@ -156,7 +156,7 @@ A texture's colours, which the game's colour-accurate map draws a block with ([T
 
 ### ColourMap
 
-A colour map that a block's colour is multiplied by, by climate or by season ([Climate and season tint](../rendering.md#climate-and-season-tint)). A colour map without an image, or whose image can't be decoded or isn't wider and taller than twice its padding, is left out, and blocks that name it name none.
+A colour map that a block's colour is multiplied by, by climate or by season ([Climate and season tint](../blocks.md#climate-and-season-tint)). A colour map without an image, or whose image can't be decoded or isn't wider and taller than twice its padding, is left out, and blocks that name it name none.
 
 | Field | Type | Contents |
 | --- | --- | --- |
@@ -170,15 +170,15 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 
 | Field | Type | Contents |
 | --- | --- | --- |
-| `code` | [String](#string) | its code as a save names it, with its domain unless that's `game`, e.g. `rock-granite`, `primitivesurvival:…` ([Block codes](../rendering.md#block-codes)); each code appears once |
+| `code` | [String](#string) | its code as a save names it, with its domain unless that's `game`, e.g. `rock-granite`, `primitivesurvival:…` ([Block codes](../blocks.md#block-codes)); each code appears once |
 | `material` | u8 | its index in `materials.entries` |
 | `colour_code` | u8 | its index in `colour_codes.entries` |
 | `colour` | u32 | the index in `texture_colours.entries` of the TextureColours whose `average` is its colour; 0xFFFFFFFF for none |
 | `grain` | u32 | the index in `texture_colours.entries` of the TextureColours whose `grain` is its grain; 0xFFFFFFFF for none |
 | `climate_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
 | `season_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
-| `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../rendering.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block |
-| `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../rendering.md#shapes)) |
+| `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../blocks.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block |
+| `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../blocks.md#shapes)) |
 | `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its sprites has a tinted layer |
 | `first_sprite` | u32 | the index of its first Sprite in `sprites.entries` |
 | `variants` | u16 | 0 for a block without sprites |
@@ -211,7 +211,7 @@ A sprite of a shape that reaches out of its block extends past the square, so `l
 | `depths` | [width × height]i16 | x + y + z of each pixel's point, the block being from 0 to 1, in 256ths (§2) |
 | `padding` | [0 or 2]u8 | 0, to a multiple of 4 |
 
-A render multiplies the tinted layer by the block's climate and season tint ([Climate and season tint](../rendering.md#climate-and-season-tint)) and draws it over the plain layer by its alpha.
+A render multiplies the tinted layer by the block's climate and season tint ([Climate and season tint](../blocks.md#climate-and-season-tint)) and draws it over the plain layer by its alpha.
 
 ## 5. Validity
 

@@ -36,6 +36,7 @@ Tested with saves from Vintage Story 1.19 and 1.22.7.
 
 - **[Save format](docs/save-format/README.md):** the `.vcdbs` format as far as Storymap has worked it out, from the SQLite schema to block palettes and block entities. Every claim is marked with its source: verified against a real save, read in the game's open-source code, from the wiki, or unverified.
 - **[Rendering](docs/rendering.md):** how the map is drawn, how it's split into tiles for the viewer, and where the time goes.
+- **[Blocks](docs/blocks.md):** how a block is read from the game's assets and drawn: its codes, its colours, its textures and tint, its cube faces and shapes, and the blocks folder a render reads.
 - **[Themes](docs/themes.md):** choosing the page drawn around the map, or writing your own.
 - **[What's next](TODO.md):** block colours, an isometric render and more.
 

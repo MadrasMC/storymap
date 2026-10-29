@@ -2,7 +2,7 @@
 //! is any run of characters, and case is ignored. A code starting with `@` is a regular
 //! expression matching the whole code, minding case. Only the regex syntax assets use is
 //! supported: literals, `.`, `*` and groups `(a|b)`; anything else is an error rather than
-//! misread (docs/rendering.md#block-codes).
+//! misread (docs/blocks.md#block-codes).
 const std = @import("std");
 
 pub const Error = error{ RegexUnsupported, InvalidRegex };

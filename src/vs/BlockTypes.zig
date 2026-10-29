@@ -1,5 +1,5 @@
 //! The block types in the game's and mods' `blocktypes/`, expanded into one code per variant as
-//! the game does it (docs/rendering.md#block-codes).
+//! the game does it (docs/blocks.md#block-codes).
 const std = @import("std");
 const Io = std.Io;
 const console = @import("console");
@@ -14,7 +14,7 @@ pub const Block = struct {
     /// One of `materials`, e.g. "Stone".
     material: []const u8,
     /// The game's map palette colour, e.g. "land" or "forest": its `mapColorCode` attribute,
-    /// else its material's default (docs/rendering.md#block-colours).
+    /// else its material's default (docs/blocks.md#block-colours).
     colorCode: []const u8,
     textures: Textures,
     /// The colour maps tinting it by climate and by season, by their codes in
