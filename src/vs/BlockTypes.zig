@@ -91,7 +91,7 @@ pub const Geometry = struct {
         /// As a face names it, without its `#`.
         code: []const u8,
         /// The shape file's own texture of that name, as "domain:path", for a block type
-        /// without one.
+        /// without one or an `all`.
         own: ?[]const u8,
         /// Whether its element names colour maps, tinting it whatever the block type says.
         tinted: bool,
@@ -719,9 +719,13 @@ pub const Shapes = struct {
 };
 
 /// A block type's texture for one its shape names: its texture of that name, or for a side's
-/// name, its group's, as a cube's faces take them; else the shape file's own; else its `all`,
-/// or `sides`. Null if it has none. The game picks them in closed code; stairs, which name only
-/// `horizontals`, `up` and `down` or only `sides` for faces named after their sides, need these.
+/// name, its group's, as a cube's faces take them; else its `all`; else the shape file's own;
+/// else its `sides`. Null if it has none. The game picks them in closed code; what it puts on
+/// display takes them in this order (vssurvivalmod `BEBehaviorDisplay`), and so do its blocks:
+/// snow on plank stairs, which name only `all`, is drawn in planks (VintageStory-Issues #9794),
+/// while cobblestone stairs, which name `sides`, keep theirs. Stairs, which name only
+/// `horizontals`, `up` and `down` or only `sides` for faces named after their sides, need the
+/// groups.
 fn textureFor(arena: std.mem.Allocator, textures: []const Json.Field, name: Geometry.TextureName, domain: []const u8) !?Layer {
     if (try layerOf(arena, findTexture(textures, &.{name.code}), domain)) |found| return found;
     const sides = [_][]const u8{ "north", "east", "south", "west", "up", "down" };
@@ -730,8 +734,9 @@ fn textureFor(arena: std.mem.Allocator, textures: []const Json.Field, name: Geom
         const group = if (i < 4) "horizontals" else "verticals";
         if (try layerOf(arena, findTexture(textures, &.{group}), domain)) |found| return found;
     }
+    if (try layerOf(arena, findTexture(textures, &.{"all"}), domain)) |found| return found;
     if (name.own) |own| return .{ .base = own };
-    return layerOf(arena, findTexture(textures, &.{ "all", "sides" }), domain);
+    return layerOf(arena, findTexture(textures, &.{"sides"}), domain);
 }
 
 /// A face's side, by `world.Shape.Side`, from the first letter of its name, as the game reads
@@ -1619,6 +1624,12 @@ test "the shape a block is drawn in" {
     try std.testing.expect(turned.geometry != shape.geometry);
     try std.testing.expectApproxEqAbs(0, turned.geometry.boxes[0].transform[0][3], 1e-6);
     try std.testing.expectApproxEqAbs(1, turned.geometry.boxes[0].transform[2][3], 1e-6);
+
+    // A block type's `all` comes before the shape's own texture, and its `sides` after it.
+    try std.testing.expectEqualStrings("game:x", again.textures[east.texture].plain.?.base);
+    const sides = (try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/step' }, textures: { sides: { base: 'x' } } }"), variant, &shapes)).shapes[0];
+    try std.testing.expectEqualStrings("game:block/own", sides.textures[east.texture].plain.?.base);
+    try std.testing.expectEqualStrings("game:x", sides.textures[west.texture].tinted.?.base);
 
     // `selectiveElements` picks elements by name, and with `/*` everything under them too.
     const picked = [_]struct { list: []const u8, boxes: usize }{
