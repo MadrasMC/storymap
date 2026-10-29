@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Storymap block pipeline</title>
+<!-- Inline favicon so opening the file makes zero network requests. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='6' height='6' fill='%238a8f98'/%3E%3Crect x='9' y='1' width='6' height='6' fill='%236aae55'/%3E%3Crect x='1' y='9' width='6' height='6' fill='%239a6a3c'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232563eb'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+	<header>
+		<h1>The block pipeline</h1>
+		<p class="lede">How Storymap turns a block type from the game's assets into the block a render knows and the sprite the isometric view draws it with. The real code is <code>src/vs/BlockTypes.zig</code>, <code>src/vs/Prepared.zig</code>, <code>src/renderer/isometric.zig</code> and <code>src/renderer/Sprites.zig</code>; <a href="../blocks.md">blocks.md</a> has the rules and their sources.</p>
+		<div class="versions"><span class="label">counted in</span><span class="version">1.22.7</span><span class="version">Primitive Survival</span></div>
+	</header>
+	<nav class="toc" aria-label="Contents"><ol id="toc"></ol></nav>
+
+	<section id="type">
+		<div class="section-content">
+			<h2><span class="num">1</span><span>One block type</span></h2>
+			<p>The game defines its blocks in data files, not code: a block type is a JSON file in a domain's <code>blocktypes/</code> folder, naming the block's variants, its material, its shape and its textures. The one below is made up, with the keys the game's use. The page follows it through to its sprites.</p>
+<pre><code>{
+	code: "plinth",
+	variantgroups: [
+		{ code: "rock", loadFromProperties: "block/rock" },
+		{ code: "cover", states: ["free", "snowy"] },
+	],
+	blockmaterialByType: { "*-snowy": "Snow", "*": "Stone" },
+	attributes: { mapColorCodeByType: { "*-snowy": "glacier", "*": "settlement" } },
+	shapeByType: {
+		"*-free": { base: "block/plinth", alternates: [{ base: "block/plinth-worn" }] },
+		"*-snowy": { base: "block/plinth-snowy" },
+	},
+	textures: {
+		all: { base: "block/stone/rock/{rock}*" },
+		sides: { base: "block/stone/cobble/{rock}" },
+	},
+	randomizeRotations: true,
+}</code></pre>
+			<p class="source">Sources: <a href="../rendering.md#assets">rendering.md: assets</a> · <a href="../blocks.md#block-codes">blocks.md: block codes</a></p>
+		</div>
+	</section>
+
+	<section id="blocks">
+		<div class="section-content">
+			<h2><span class="num">2</span><span>From one type to its blocks</span></h2>
+			<p><b>Variant groups</b> multiply. Each gives a list of states, its own <code>states</code> or a world property's (<code>loadFromProperties: "block/rock"</code> is <code>worldproperties/block/rock.json</code>), and the type makes one block for every combination, its code the type's code and its states joined with <code>-</code>: <code>plinth-granite-free</code>, <code>plinth-granite-snowy</code>, <code>plinth-sandstone-free</code> and so on, two per rock the property lists. Groups that add instead give one block per state, an empty state adds nothing to the code, and <code>skipVariants</code> and <code>allowedVariants</code> then filter the codes, by exact code or by wildcard.</p>
+			<p><b><code>…ByType</code> properties</b> give a value per variant: the first key matching the block's code wins. <code>*</code> matches any run of characters, a key starting with <code>@</code> is a regular expression, and an object merges into one already there. In <code>blockmaterialByType</code> above, <code>plinth-granite-snowy</code> matches <code>*-snowy</code> first and is <code>Snow</code>; every other block falls through to <code>*</code> and is <code>Stone</code>. A <code>{rock}</code> in any string is the block's state of the <code>rock</code> group, so the <code>all</code> texture's base is <code>block/stone/rock/granite*</code> for the granite blocks.</p>
+			<p><b>The map colour</b> the game's own map draws a block in comes from a colour code: the block's <code>mapColorCode</code> attribute, or without one its material's default. Soil, ore and stone are <code>land</code>, sand and gravel <code>desert</code>, leaves and wood <code>forest</code>, plants <code>plant</code>, snow and ice <code>glacier</code>, water <code>lake</code>, lava <code>lava</code>, and anything else <code>land</code>; a block type that names no material is <code>Stone</code>. The code picks a colour from the game's small palette:</p>
+			<div class="legend">
+				<span><i style="background: #AC8858"></i>land</span>
+				<span><i style="background: #C4A468"></i>desert</span>
+				<span><i style="background: #98844C"></i>forest</span>
+				<span><i style="background: #808650"></i>plant</span>
+				<span><i style="background: #CCC890"></i>lake, ocean, lava</span>
+				<span><i style="background: #E0E0C0"></i>glacier</span>
+				<span><i style="background: #856844"></i>settlement</span>
+				<span><i style="background: #805030"></i>road</span>
+				<span><i style="background: #755C3C"></i>devastation</span>
+				<span><i style="background: #483018"></i>ink, wateredge</span>
+			</div>
+			<div class="table-wrap">
+				<table>
+					<thead><tr><th>block</th><th>material</th><th>colour code</th></tr></thead>
+					<tbody>
+						<tr><td><code>plinth-granite-free</code></td><td>Stone</td><td><code>settlement</code></td></tr>
+						<tr><td><code>plinth-granite-snowy</code></td><td>Snow</td><td><code>glacier</code></td></tr>
+						<tr><td><code>plinth-sandstone-free</code></td><td>Stone</td><td><code>settlement</code></td></tr>
+					</tbody>
+				</table>
+			</div>
+			<p>Expanded this way, the game's and Primitive Survival's block types give exactly the codes a save names: 14,089 blocks for 1.22.7, and 14,781 with Primitive Survival, beside <code>air</code> and <code>mantle</code>, which the game registers itself. Of the 14,781, 5,400 are <code>land</code>, 4,010 <code>settlement</code>, which most building blocks set, and 3,634 <code>forest</code>.</p>
+			<p class="source">Sources: <a href="../blocks.md#block-codes">blocks.md: block codes</a> · <a href="../blocks.md#block-colours">blocks.md: block colours</a></p>
+		</div>
+	</section>
+
+	<section id="textures">
+		<div class="section-content">
+			<h2><span class="num">3</span><span>Its textures</span></h2>
+			<p>A block type names its textures by role, and each names a file: its <code>base</code>, in the block type's domain unless it names another, is <code>textures/&lt;base&gt;.png</code>. A base ending in <code>*</code> stands for the files it starts, by name. A block type's <code>texture</code>, singular, is its <code>all</code>, over one in its <code>textures</code>; flotsam, stone paths, seagrass and kelp name theirs so.</p>
+			<div class="table-wrap">
+				<table>
+					<thead><tr><th>name</th><th>faces</th></tr></thead>
+					<tbody>
+						<tr><td><code>all</code></td><td>every face without a nearer name</td></tr>
+						<tr><td><code>horizontals</code>, <code>verticals</code></td><td>the four sides; the top and bottom</td></tr>
+						<tr><td><code>up</code>, <code>down</code>, <code>north</code>, <code>east</code>, <code>south</code>, <code>west</code></td><td>one face each</td></tr>
+						<tr><td><code>sides</code></td><td>a shape's faces that nothing else names, last of all</td></tr>
+						<tr><td>any other, such as <code>snowcover</code></td><td>a shape's faces naming it</td></tr>
+					</tbody>
+				</table>
+			</div>
+			<p><b>For the coloured map</b>, Storymap keeps two colours of each block, from the textures the game picks them from: an average colour, weighing each pixel by how opaque it is, and 30 grain colours from its particle texture (<code>particlesTextureCode</code>), pixels picked at random among those that aren't transparent, the same ones every time. For a base ending in <code>*</code> the first file counts, and overlays and alternates don't. In 1.22.7 with Primitive Survival, 1,730 textures colour 13,375 of the 14,781 blocks; the other 1,406, such as mushrooms, doors and multiblocks, have no texture Storymap could read, and are coloured by their colour code instead.</p>
+			<p><b>For the sprites</b>, a texture can have variants, so a field of one block doesn't repeat one sprite, in the order the game lists them: its base, or for a base ending in <code>*</code> the first file it starts, under the texture's overlays; then each of its <code>alternates</code>, the first file of the alternate's base under the alternate's own overlays, as ores show one of three overlays; then the other files its base starts, without the texture's overlays, as reef ledges' coral shows its overlay only on the first of 32. The plinth's <code>block/stone/rock/granite*</code> gives it as many variants as there are files starting so. A variant that can't be read is left out. Which one a block shows is picked by where it is (<a href="#picked">6</a>).</p>
+			<p class="source">Sources: <a href="../blocks.md#texture-colours">blocks.md: texture colours</a> · <a href="../blocks.md#cube-faces">blocks.md: cube faces</a></p>
+		</div>
+	</section>
+
+	<section id="cube-or-shape">
+		<div class="section-content">
+			<h2><span class="num">4</span><span>Cube or shape</span></h2>
+			<p><b>A cube</b> is a block of drawtype <code>Cube</code> or <code>TopSoil</code>, or of <code>JSON</code>, the default, with the shape <code>block/basic/cube</code>, also the default, or glacier ice's <code>block/basic/cube-nozfight</code>, neither turned, moved, scaled nor overlaid, and with no alternates other than such a cube. Liquids are drawn on the plain cube, each face in their <code>all</code>. Leaves are crossed planes up close, but the shape the game draws them in at a distance (<code>lod0Shape</code>) holds a plain cube in their small leaves, and a block whose shape at a distance holds such a cube is drawn as it: 237 of 1.22.7's 245 leaves. A low block, whose selection box reaches less than half a block high, such as loose stones, ores, crops and closed trapdoors, isn't drawn as a cube, which would make it look far larger than it is, but in its shape, and so are plants; thin layers of snow, sand and gravel are drawn as whole blocks. The isometric view's <code>game</code> style draws a cube's sprite, its top, south and east faces, into a 32-pixel square, each pixel averaging its texture at 2 × 2 points, lit as the relief style lights that face. In 1.22.7 with Primitive Survival, 2,307 of the 14,781 blocks are cubes, 352 of them liquids.</p>
+			<p><b>Everything else</b> of drawtype <code>JSON</code>, also <code>JSONAndSnowLayer</code> and <code>JSONAndWater</code> without their snow or water, is read in its shape, as boxes placed in the block, and drawn in it. The block type's <code>shape</code> names a shape file, <code>shapes/&lt;base&gt;.json</code> in the block type's domain unless it names another. Its <code>rotateX</code>, <code>rotateY</code> and <code>rotateZ</code> turn the whole shape about the block's middle, <code>scale</code> scales it there and <code>offsetX</code>, <code>offsetY</code> and <code>offsetZ</code> move it; <code>quantityElements</code>, <code>selectiveElements</code> and <code>ignoreElements</code> pick its elements, and its <code>overlays</code> add their shapes' elements. An element is a box from <code>from</code> to <code>to</code>, in sixteenths of a block, turned about its <code>rotationOrigin</code> by <code>rotationX</code>, then <code>rotationY</code>, then <code>rotationZ</code>, scaled by <code>scaleX</code>, <code>scaleY</code> and <code>scaleZ</code>, with its <code>children</code> placed within it. Each of its six faces is keyed by the first letter of its name, names its texture with a <code>#</code>, and takes a <code>uv</code> rectangle of that texture, in the shape's <code>textureWidth</code> × <code>textureHeight</code>, 16 × 16 by default. The plinth's shape, made up like its block type, is two boxes, and the snowy one a layer of snow between them:</p>
+			<div class="table-wrap">
+				<table>
+					<thead><tr><th>element</th><th>from</th><th>to</th><th>its faces name</th></tr></thead>
+					<tbody>
+						<tr><td>base</td><td>0, 0, 0</td><td>16, 8, 16</td><td><code>#up</code>, <code>#down</code>, <code>#north</code>, <code>#east</code>, <code>#south</code>, <code>#west</code></td></tr>
+						<tr><td>snow</td><td>0, 8, 0</td><td>16, 10, 16</td><td><code>#snowcover</code>, all six; in <code>plinth-snowy</code> only</td></tr>
+						<tr><td>top</td><td>4, 8, 4 (4, 10, 4 on the snow)</td><td>12, 16, 12</td><td>as the base's</td></tr>
+					</tbody>
+				</table>
+			</div>
+			<p>The shape files have one texture of their own, <code>snowcover</code>, for the snow's faces, as the game's stairs' and slabs' do. Elements are turned by any angle, 6,349 different ones in the game's block shapes. A shape's sprite is drawn from its boxes: each face as two triangles, at 2 × 2 points for each pixel, nearer covering farther within the block; a point shows the texel there if it's at least half opaque, so a plant's leaves leave the gaps between them, and a pixel shows if at least half its points do. Parts outside the block, such as the tips of plants wider than their block, are drawn too, up to a block beyond the cube's square each way. In 1.22.7 with Primitive Survival, 11,820 of the 14,781 blocks have shapes this way, 21,749 with their alternates, in 67,198 boxes; blocks placed the same share their boxes, and each only names its textures for them.</p>
+			<p class="source">Sources: <a href="../blocks.md#cube-faces">blocks.md: cube faces</a> · <a href="../blocks.md#shapes">blocks.md: shapes</a></p>
+		</div>
+	</section>
+
+	<section id="faces">
+		<div class="section-content">
+			<h2><span class="num">5</span><span>How a face finds its texture</span></h2>
+			<p><b>A cube's face</b> takes the texture named for it (<code>up</code>, <code>south</code>, <code>east</code>), else its group's (<code>verticals</code> for the top and bottom, <code>horizontals</code> for the sides), else <code>all</code>.</p>
+			<p><b>A shape's face</b> names its texture with a <code>#</code>, and the name is looked up in this order: the block type's texture of that name; for a face named after a side, as stairs' are, its group's, <code>horizontals</code> or <code>verticals</code>; the block type's <code>all</code>; the shape file's own texture of that name; the block type's <code>sides</code>. A face whose texture is none of these isn't drawn. The order explains the game's snow: plank stairs name only <code>all</code>, so the snow on them, whose faces name <code>#snowcover</code>, is drawn in planks; brick stairs and slabs were the same until they named their shapes' <code>snowcover</code> beside their <code>all</code>; cobblestone stairs and plank slabs, which name <code>sides</code>, keep their snow, as nothing before the shape's own <code>snowcover</code> matches.</p>
+			<p>Below, the plinth with the texture names of your choosing. Each face says where it found its texture, and the sprite colours each face by it, with one made-up colour per name, lit as the isometric view lights a top, a south and an east face.</p>
+			<div class="panel stacked">
+				<div class="controls">
+					<div class="control">
+						<span class="sub">Drawn as</span>
+						<div class="seg-control" role="group" aria-label="Drawn as">
+							<button type="button" data-mode="shape" aria-pressed="true">shape</button>
+							<button type="button" data-mode="cube" aria-pressed="false">cube</button>
+						</div>
+					</div>
+					<div class="control">
+						<span class="sub">Block</span>
+						<div class="seg-control" role="group" aria-label="Block">
+							<button type="button" data-variant="free" aria-pressed="true">plinth-granite-free</button>
+							<button type="button" data-variant="snowy" aria-pressed="false">plinth-granite-snowy</button>
+						</div>
+					</div>
+				</div>
+				<div class="control">
+					<span class="sub">The block type's texture names</span>
+					<div class="chips" id="toggles"></div>
+				</div>
+				<div class="buttons" id="presets"><span class="sub">Presets</span></div>
+				<div class="two-col">
+					<div>
+						<p class="sub">Its sprite</p>
+						<canvas class="sprite" id="sprite" role="img"></canvas>
+					</div>
+					<div>
+						<p class="sub">Each face's texture</p>
+						<div class="table-wrap">
+							<table class="faces"><thead><tr><th>face</th><th>found as</th><th></th></tr></thead><tbody id="faces-body"></tbody></table>
+						</div>
+					</div>
+				</div>
+				<p class="stat" id="face-status" aria-live="polite"></p>
+			</div>
+			<p class="source">Sources: <a href="../blocks.md#cube-faces">blocks.md: cube faces</a> · <a href="../blocks.md#shapes">blocks.md: shapes</a></p>
+		</div>
+	</section>
+
+	<section id="picked">
+		<div class="section-content">
+			<h2><span class="num">6</span><span>Picked by where it is</span></h2>
+			<p>Several things about a block come in more than one version, and each block of it shows the one its place picks, by the game's position hash, vsapi's <code>GameMath.MurmurHash3Mod(x, y, z, count)</code>, with y as 0 for a block type whose <code>randomizeAxes</code> is <code>xz</code>, so a tall plant shows the same all the way up. The game picks in closed code, so whether it hashes the same way isn't checked.</p>
+			<ol class="list">
+				<li><b>Texture variants</b>, in the order of <a href="#textures">3</a>, the same variant for every face; a texture with fewer variants than the block's others counts round again. 1,248 cubes have variants, up to 10.</li>
+				<li><b>Shapes.</b> A shape with <code>alternates</code>, or whose base ends in <code>*</code>, gives a block several shapes, listed as the game lists them: the shape itself, its base's first file if that ends in <code>*</code>, or the plain cube if it stands for none; its base's other files, turned, scaled and picking elements as the shape does, but neither moved nor overlaid; then each of its <code>alternates</code>, or every file one with a base ending in <code>*</code> stands for. An alternate without a base takes the shape's, and its turn, offset, scale and overlays are its own. A shape listed twice is picked twice as often, as herbs' and lupins' are. The count is the number of shapes, so with as many shapes as variants, a block's shape and variant go together. 1,718 blocks of 1.22.7 with Primitive Survival pick from several shapes, up to 40, such as ferns, loose stones, flowers, coral and berry bushes; 86 of them, such as sand, gravel and old polished rock, pick from four plain cubes turned a quarter at a time, which turns their textures. The plinth picks between its own shape and <code>block/plinth-worn</code>.</li>
+				<li><b>Turns.</b> A block type with <code>randomizeRotations</code> turns each block of it about the vertical line through the middle of its place, by one of 8 angles 45 degrees apart, from −22.5 degrees east towards north, picked by <code>MurmurHash3Mod(−x, y, z, 8)</code>: the same hash at −x, so a block's turn and its variant don't go together. 727 blocks are turned so, such as coral, crops, flowers and mushrooms, and the renderer draws such a shape in each of the 8 turns.</li>
+				<li><b>Moved off the middle.</b> A block type's <code>randomDrawOffset</code>, <code>true</code> for 1 or a number, moves each block of it east and south by up to 11/36 of a block either way, by another hash of its place (<code>GameMath.oaatHash</code>), the larger the number the less; the renderer moves the block's sprite by it, to the nearest pixel. 476 blocks are moved so, such as flowers, tall grass, saplings and coral.</li>
+			</ol>
+			<p>Below, a field of the plinth seen from above: each block coloured by the texture variant it picked, its top drawn as the shape it picked, with a mark on the top's north side, turned as the block is. The hash is the page's own, not the game's; what holds either way is which choices share one.</p>
+			<div class="panel stacked">
+				<div class="controls">
+					<div class="control">
+						<span class="sub">Variants</span>
+						<div class="seg-control" role="group" aria-label="Texture variants">
+							<button type="button" data-variants="1" aria-pressed="false">1</button>
+							<button type="button" data-variants="2" aria-pressed="false">2</button>
+							<button type="button" data-variants="3" aria-pressed="true">3</button>
+						</div>
+					</div>
+					<div class="control">
+						<span class="sub">Shapes</span>
+						<div class="seg-control" role="group" aria-label="Shapes">
+							<button type="button" data-shapes="1" aria-pressed="false">1</button>
+							<button type="button" data-shapes="2" aria-pressed="true">2</button>
+						</div>
+					</div>
+					<div class="control">
+						<span class="sub">Turned</span>
+						<div class="seg-control" role="group" aria-label="Turned">
+							<button type="button" data-turned="0" aria-pressed="false">no</button>
+							<button type="button" data-turned="1" aria-pressed="true">yes</button>
+						</div>
+					</div>
+				</div>
+				<canvas class="sprite-field" id="field" role="img" aria-describedby="field-status"></canvas>
+				<p class="stat" id="field-status" aria-live="polite"></p>
+			</div>
+			<p class="source">Sources: <a href="../blocks.md#cube-faces">blocks.md: cube faces</a> · <a href="../blocks.md#shapes">blocks.md: shapes</a></p>
+		</div>
+	</section>
+
+	<section id="tint">
+		<div class="section-content">
+			<h2><span class="num">7</span><span>Climate and season tint</span></h2>
+			<p>Grass, leaves and water have grey textures, which the game colours by where they are. A block type names a climate colour map and a season colour map (<code>climateColorMap</code> and <code>seasonColorMap</code>, by variant through <code>…ByType</code>), by their codes in the game's <code>config/colormaps.json</code>, which gives each an image in <code>textures/environment/</code> and its padding: in 1.22.7, 5 climate maps of 264 × 264 pixels, a 256 × 256 map inside 4 pixels of padding, and 21 season maps of 128 × 16. An element of a shape can name them too, and a block type naming none takes its first element's, as branchy leaves, berry bushes and ferns do, 226 blocks. The plinth names none: stone isn't tinted.</p>
+			<p>The tint follows the game's world shader. The climate at a column is its map region's climate map, interpolated between its values 32 blocks apart: a temperature and a rainfall, each 0 to 255, which height changes, the temperature falling by 1 for every 1.5 blocks above sea level. The climate colour is the climate map's pixel at the temperature across and the rainfall down; the season colour is the season map's at how far through the year the save is, from its clock or from <code>--season</code>; and the two are mixed by a weight that's higher where it's colder, or by rainfall for a tropical season map. The tint multiplies the block's average colour and its grain colour each, channel by channel.</p>
+			<p>In the sprites, the plain and tinted layers stay apart. A block with a climate or season colour map has every face in the tinted layer, except grassy soil (drawtype <code>TopSoil</code>: soil, forest floor, peat, clay), which is its soil's texture with grass over it, from its <code>specialSecondTexture</code>, twice as wide as high, the right half the top and the left half the sides' fringe; only the grass is tinted. The holes in leaves' textures take the block's average colour, tinted. Where a block is drawn, its tinted layer is multiplied by the block's tint there, at the block's own height, and drawn over the plain one by how much of each pixel it covers.</p>
+			<p class="source">Sources: <a href="../blocks.md#climate-and-season-tint">blocks.md: climate and season tint</a> · <a href="../blocks.md#cube-faces">blocks.md: cube faces</a> · <a href="save-format.html#mapregion">save format: map regions</a></p>
+		</div>
+	</section>
+
+	<section id="prepared">
+		<div class="section-content">
+			<h2><span class="num">8</span><span>What preparing keeps</span></h2>
+			<p>Everything above is worked out once, from the assets, into a blocks folder: <code>blocks</code> in the current folder, beside a render's <code>out</code>, or the one given (<code>--blocks</code> when rendering, the folder argument of <code>storymap prepare</code>). It holds one set per game and mods, in <code>&lt;blocks folder&gt;/&lt;key&gt;/</code>, the key changing with the game version and the mods' names, sizes and times, so updating either prepares a new set and switching back finds the old one. A render prepares the set it needs if it isn't there yet, <code>--prepare</code> prepares it again anyway, and without the game a render uses the newest set prepared before. A save's blocks the set doesn't have are reported.</p>
+			<div class="table-wrap">
+				<table>
+					<thead><tr><th>file</th><th>holds</th><th>1.22.7 with Primitive Survival</th></tr></thead>
+					<tbody>
+						<tr><td><code>blocks.txt</code></td><td>each block's code, material, colour code, texture colours, colour maps, cube faces and how high it reaches, and its shape</td><td>24 MB, most of it the shapes' boxes</td></tr>
+						<tr><td><code>colormaps/</code></td><td>the colour maps' images</td><td>–</td></tr>
+						<tr><td><code>textures.bin</code></td><td>the cubes' face images, as RGBA pixels</td><td>22 MB</td></tr>
+						<tr><td><code>pictures.bin</code></td><td>the isometric view's sprites of every block: its cube or shape in every variant of its textures, in each of its shapes and in each of its turns, blocks drawn alike sharing sprites; a table of the blocks' sprites by their index in <code>blocks.txt</code>, a table of the sprites, then their pixels, everything at a multiple of its size</td><td>55,096 sprites, 195 MB, drawn in about 5 s</td></tr>
+					</tbody>
+				</table>
+			</div>
+			<p>Preparing takes about 2 s for the 14,781 blocks, most of it reading and decoding textures, and drawing the sprites about 5 s more. Only drawing the sprites needs the face images and the shapes, so a render leaves them out and loads the rest in about 0.03 s; it maps <code>pictures.bin</code> and reads the sprites where they are, under each block's index in <code>blocks.txt</code>, which the renderer asks the game's reader for (<code>spritesOf</code>), so a sprite costs it neither drawing nor memory of its own. The file names the version of the sprites and its layout: a render that finds it missing, or of another version, draws it again from the prepared blocks, without reading the game's assets.</p>
+			<p class="source">Sources: <a href="../blocks.md#preparing-blocks">blocks.md: preparing blocks</a> · <a href="../blocks.md#pictures">blocks.md: pictures</a></p>
+		</div>
+	</section>
+</main>
+<script>
+(() => {
+	const $ = (sel) => document.querySelector(sel);
+	const el = (tag, cls, text) => {
+		const node = document.createElement(tag);
+		if (cls) node.className = cls;
+		if (text !== undefined) node.textContent = text;
+		return node;
+	};
+	const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+	/* contents, from the sections' headings, nested as the sections are */
+	const tocItems = new Map();
+	for (const section of document.querySelectorAll("main section[id]")) {
+		const heading = section.querySelector(":scope > .section-content > :is(h2, h3, h4)");
+		const link = el("a");
+		link.href = `#${section.id}`;
+		const title = heading.lastElementChild.cloneNode(true);
+		title.className = "title";
+		link.append(el("span", "num", heading.querySelector(".num").textContent), title);
+		const item = el("li");
+		item.append(link);
+		const parent = tocItems.get(section.parentElement.closest("section"));
+		const list = parent ? parent.querySelector(":scope > ol") ?? parent.appendChild(el("ol")) : $("#toc");
+		list.append(item);
+		tocItems.set(section, item);
+	}
+
+	function sizeCanvas(canvas, width, height) {
+		const ratio = window.devicePixelRatio || 1;
+		canvas.width = Math.round(width * ratio);
+		canvas.height = Math.round(height * ratio);
+		canvas.style.width = `${width}px`;
+		canvas.style.height = `${height}px`;
+		const ctx = canvas.getContext("2d");
+		ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+		return ctx;
+	}
+
+	function shade(hex, light) {
+		const n = parseInt(hex.slice(1), 16);
+		const channels = [n >> 16 & 255, n >> 8 & 255, n & 255].map((v) => Math.round(v * light));
+		return `rgb(${channels.join(",")})`;
+	}
+
+	/* how a face finds its texture: the block type's texture names, one made-up colour each */
+	const NAMES = ["up", "down", "north", "east", "south", "west", "horizontals", "verticals", "all", "sides", "snowcover"];
+	const SIDES = ["up", "down", "north", "east", "south", "west"];
+	const COLOURS = {
+		up: "#c8c0b2", down: "#6d665d", north: "#8ea5b8", east: "#b89a7a", south: "#a4b386", west: "#b48ca8",
+		horizontals: "#9c9387", verticals: "#d6cfc2", all: "#a89f93", sides: "#7a746c", snowcover: "#dfe8f2",
+	};
+	// The shape file's own textures.
+	const SHAPE_OWN = { snowcover: "#f7f8f9" };
+	const PRESETS = [
+		{ label: "all", names: ["all"] },
+		{ label: "all and snowcover", names: ["all", "snowcover"] },
+		{ label: "sides", names: ["sides"] },
+		{ label: "up, down and horizontals", names: ["up", "down", "horizontals"] },
+	];
+	const face = { mode: "shape", variant: "free", has: new Set(["all", "sides"]) };
+	const groupOf = (name) => (name === "up" || name === "down" ? "verticals" : "horizontals");
+
+	// Where a face named `name` finds its texture, in the order blocks.md gives, or null for none.
+	function resolve(name) {
+		const has = face.has;
+		if (has.has(name)) return { from: "the block type's", key: name, colour: COLOURS[name] };
+		if (SIDES.includes(name) && has.has(groupOf(name))) return { from: "the block type's", key: groupOf(name), colour: COLOURS[groupOf(name)] };
+		if (has.has("all")) return { from: "the block type's", key: "all", colour: COLOURS.all };
+		if (face.mode === "cube") return null;
+		if (name in SHAPE_OWN) return { from: "the shape file's own", key: name, colour: SHAPE_OWN[name] };
+		if (has.has("sides")) return { from: "the block type's", key: "sides", colour: COLOURS.sides };
+		return null;
+	}
+
+	// The boxes drawn, in sixteenths, lowest first, each face's texture name by side.
+	function boxes() {
+		if (face.mode === "cube") return [{ from: [0, 0, 0], to: [16, 16, 16], faces: { up: "up", south: "south", east: "east" } }];
+		const named = { up: "up", south: "south", east: "east" };
+		const snow = { up: "snowcover", south: "snowcover", east: "snowcover" };
+		if (face.variant === "free") return [{ from: [0, 0, 0], to: [16, 8, 16], faces: named }, { from: [4, 8, 4], to: [12, 16, 12], faces: named }];
+		return [{ from: [0, 0, 0], to: [16, 8, 16], faces: named }, { from: [0, 8, 0], to: [16, 10, 16], faces: snow }, { from: [4, 10, 4], to: [12, 16, 12], faces: named }];
+	}
+
+	const faceNames = () => (face.mode === "cube" ? ["up", "south", "east"] : face.variant === "free" ? SIDES : [...SIDES, "snowcover"]);
+
+	const W = 176;
+	const PAD = 14;
+	function drawSprite() {
+		const canvas = $("#sprite");
+		const size = W + PAD * 2;
+		const ctx = sizeCanvas(canvas, size, size);
+		ctx.fillStyle = css("--soft");
+		ctx.fillRect(0, 0, size, size);
+		const cx = PAD + W / 2;
+		const cy = PAD + W / 2;
+		// A block's square: the top a diamond as wide as the square and half as tall, the sides down the other half.
+		const p = (x, y, z) => [cx + (x - z) / 16 * W / 2, cy + (x + z) / 16 * W / 4 - y / 16 * W / 2];
+		const LIGHT = { up: 1, south: 0.86, east: 0.72 };
+		const poly = (points, colour, light) => {
+			ctx.beginPath();
+			points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+			ctx.closePath();
+			ctx.fillStyle = shade(colour, light);
+			ctx.fill();
+			ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
+			ctx.lineWidth = 1;
+			ctx.stroke();
+		};
+		let drawn = 0;
+		for (const box of boxes()) {
+			const [x0, y0, z0] = box.from;
+			const [x1, y1, z1] = box.to;
+			const faces = {
+				up: [p(x0, y1, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y1, z1)],
+				south: [p(x0, y0, z1), p(x1, y0, z1), p(x1, y1, z1), p(x0, y1, z1)],
+				east: [p(x1, y0, z0), p(x1, y0, z1), p(x1, y1, z1), p(x1, y1, z0)],
+			};
+			for (const side of ["up", "south", "east"]) {
+				const found = resolve(box.faces[side]);
+				if (!found) continue;
+				poly(faces[side], found.colour, LIGHT[side]);
+				drawn++;
+			}
+		}
+		canvas.setAttribute("aria-label", `The ${face.mode === "cube" ? "cube" : "plinth"} drawn with ${drawn} of its visible faces, each in the colour of the texture it found`);
+	}
+
+	function drawFaces() {
+		const rows = faceNames().map((name) => {
+			const found = resolve(name);
+			const tr = el("tr");
+			const nameCell = el("td");
+			nameCell.append(el("code", "", face.mode === "cube" ? name : "#" + name));
+			const took = el("td");
+			if (found) {
+				took.append(found.from + " ", el("code", "", found.key));
+			} else {
+				took.append("none: not drawn");
+			}
+			const swatch = el("td");
+			if (found) {
+				const dot = el("span", "swatch");
+				dot.style.background = found.colour;
+				swatch.append(dot);
+			}
+			tr.append(nameCell, took, swatch);
+			return tr;
+		});
+		$("#faces-body").replaceChildren(...rows);
+		const names = [...NAMES].filter((n) => face.has.has(n));
+		const missing = faceNames().filter((n) => !resolve(n));
+		$("#face-status").textContent = `The block type names ${names.length ? names.join(", ") : "no texture"}. ${missing.length ? `Not drawn: ${missing.map((n) => (face.mode === "cube" ? n : "#" + n)).join(", ")}.` : "Every face finds a texture."}`;
+	}
+
+	const toggles = new Map();
+	function buildToggles() {
+		const list = $("#toggles");
+		for (const name of NAMES) {
+			const button = el("button", "toggle");
+			button.type = "button";
+			const dot = el("span", "swatch");
+			dot.style.background = COLOURS[name];
+			button.append(dot, name);
+			button.addEventListener("click", () => {
+				if (face.has.has(name)) face.has.delete(name);
+				else face.has.add(name);
+				renderFace();
+			});
+			toggles.set(name, button);
+			list.append(button);
+		}
+		const presets = $("#presets");
+		for (const preset of PRESETS) {
+			const button = el("button", "btn", preset.label);
+			button.type = "button";
+			button.addEventListener("click", () => {
+				face.has = new Set(preset.names);
+				renderFace();
+			});
+			presets.append(button);
+		}
+	}
+
+	function renderFace() {
+		for (const [name, button] of toggles) button.setAttribute("aria-pressed", String(face.has.has(name)));
+		document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === face.mode)));
+		document.querySelectorAll("[data-variant]").forEach((b) => {
+			b.setAttribute("aria-pressed", String(b.dataset.variant === face.variant));
+			b.disabled = face.mode === "cube";
+		});
+		drawSprite();
+		drawFaces();
+	}
+	document.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => { face.mode = b.dataset.mode; renderFace(); }));
+	document.querySelectorAll("[data-variant]").forEach((b) => b.addEventListener("click", () => { face.variant = b.dataset.variant; renderFace(); }));
+
+	/* picked by where it is: a field of the plinth, each block's variant, shape and turn by a hash of its place */
+	const COLS = 12;
+	const ROWS = 6;
+	const CELL = 40;
+	const VARIANT_COLOURS = ["#a89f93", "#8b8174", "#c9c1b4"];
+	const field = { variants: 3, shapes: 2, turned: true };
+
+	// The page's own hash, standing in for vsapi's MurmurHash3Mod.
+	function hash(x, y, z) {
+		let h = (Math.imul(x, 0x9e3779b1) ^ Math.imul(y, 0x85ebca77) ^ Math.imul(z, 0xc2b2ae3d) ^ 0x165667b1) >>> 0;
+		h ^= h >>> 15;
+		h = Math.imul(h, 0x2c1b3c6d) >>> 0;
+		h ^= h >>> 12;
+		h = Math.imul(h, 0x297a2d39) >>> 0;
+		h ^= h >>> 15;
+		return h >>> 0;
+	}
+
+	function drawField() {
+		const canvas = $("#field");
+		const ctx = sizeCanvas(canvas, COLS * CELL, ROWS * CELL);
+		let matching = 0;
+		for (let z = 0; z < ROWS; z++) {
+			for (let x = 0; x < COLS; x++) {
+				const h = hash(x, 0, z);
+				const variant = h % field.variants;
+				const shape = h % field.shapes;
+				const turn = field.turned ? hash(-x, 0, z) % 8 : null;
+				if (variant === shape) matching++;
+				const px = x * CELL;
+				const py = z * CELL;
+				ctx.fillStyle = VARIANT_COLOURS[variant];
+				ctx.fillRect(px, py, CELL, CELL);
+				ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
+				ctx.lineWidth = 1;
+				ctx.strokeRect(px + 0.5, py + 0.5, CELL - 1, CELL - 1);
+				// The top of the plinth, seen from above: 8 sixteenths wide, or 6 worn, with a mark on its north side,
+				// turned from east towards north, which on the screen is counter-clockwise.
+				ctx.save();
+				ctx.translate(px + CELL / 2, py + CELL / 2);
+				if (turn !== null) ctx.rotate(-(-22.5 + 45 * turn) * Math.PI / 180);
+				const half = (shape === 0 ? 8 : 6) / 16 * CELL / 2;
+				ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+				ctx.fillRect(-half, -half, 2 * half, 2 * half);
+				ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+				ctx.lineWidth = 2;
+				ctx.beginPath();
+				ctx.moveTo(0, 0);
+				ctx.lineTo(0, -half);
+				ctx.stroke();
+				ctx.restore();
+			}
+		}
+		const count = COLS * ROWS;
+		const parts = [`${count} blocks`, `${field.variants} variant${field.variants === 1 ? "" : "s"}`, `${field.shapes} shape${field.shapes === 1 ? "" : "s"}`];
+		if (field.variants > 1 && field.shapes > 1) {
+			parts.push(`variant and shape match in ${matching}${field.variants === field.shapes ? ", as they always do with as many shapes as variants" : ""}`);
+		}
+		parts.push(field.turned ? "turned by the hash at −x, apart from both" : "not turned");
+		$("#field-status").textContent = parts.join(" · ") + ".";
+		canvas.setAttribute("aria-label", `A field of ${COLS} by ${ROWS} blocks seen from above, each coloured by its texture variant and its top turned as the block is`);
+	}
+
+	function renderField() {
+		document.querySelectorAll("[data-variants]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.variants) === field.variants)));
+		document.querySelectorAll("[data-shapes]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.shapes) === field.shapes)));
+		document.querySelectorAll("[data-turned]").forEach((b) => b.setAttribute("aria-pressed", String(Boolean(Number(b.dataset.turned)) === field.turned)));
+		drawField();
+	}
+	document.querySelectorAll("[data-variants]").forEach((b) => b.addEventListener("click", () => { field.variants = Number(b.dataset.variants); renderField(); }));
+	document.querySelectorAll("[data-shapes]").forEach((b) => b.addEventListener("click", () => { field.shapes = Number(b.dataset.shapes); renderField(); }));
+	document.querySelectorAll("[data-turned]").forEach((b) => b.addEventListener("click", () => { field.turned = Boolean(Number(b.dataset.turned)); renderField(); }));
+
+	buildToggles();
+	renderFace();
+	renderField();
+})();
+</script>
+</body>
+</html>

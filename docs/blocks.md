@@ -1,6 +1,6 @@
 # Blocks
 
-How Storymap reads a block from the game's assets and draws it: its codes, its colour on the game's map, its texture colours, its climate and season tint, its cube faces and its shapes, what preparing keeps of it, and the pictures the isometric view draws it with. The assets themselves, and how the map is drawn and tiled, are in [`rendering.md`](rendering.md); sourcing conventions are the same as in [`save-format/README.md`](save-format/README.md).
+How Storymap reads a block from the game's assets and draws it: its codes, its colour on the game's map, its texture colours, its climate and season tint, its cube faces and its shapes, what preparing keeps of it, and the pictures the isometric view draws it with. The assets themselves, and how the map is drawn and tiled, are in [`rendering.md`](rendering.md); sourcing conventions are the same as in [`save-format/README.md`](save-format/README.md). [`vs/block-pipeline.html`](vs/block-pipeline.html) follows one block through these steps in a browser.
 
 ## Block codes
 

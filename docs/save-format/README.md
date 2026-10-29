@@ -1,6 +1,6 @@
 # Vintage Story save format
 
-The text reference for how a Vintage Story `.vcdbs` save is laid out, as far as Storymap has worked it out. [`index.html`](index.html) in this folder is an interactive explainer built from this file; when the two disagree, this file wins and the HTML needs updating.
+The text reference for how a Vintage Story `.vcdbs` save is laid out, as far as Storymap has worked it out. [`vs/save-format.html`](../vs/save-format.html) is an interactive explainer built from this file; when the two disagree, this file wins and the HTML needs updating.
 
 ## Versions
 
