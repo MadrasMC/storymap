@@ -1,12 +1,12 @@
 //! `storymap prepare`: prepares what the map needs from the game's and mods' assets into the
-//! blocks folder, and draws the isometric view's pictures of the blocks beside them. A render
+//! blocks folder, and draws the isometric view's sprites of the blocks beside them. A render
 //! does the same the first time it needs it (`blocks`).
 const std = @import("std");
 const Assets = @import("vs").Assets;
 const Prepared = @import("vs").Prepared;
 const SaveFile = @import("vs").SaveFile;
 const isometric = @import("renderer").isometric;
-const Pictures = isometric.Pictures;
+const Sprites = isometric.Sprites;
 const console = @import("console");
 const args = @import("args");
 
@@ -36,10 +36,10 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     prepared.deinit(init.io);
 }
 
-/// The prepared blocks, and the isometric view's pictures of them, mapped from their file.
+/// The prepared blocks, and the isometric view's sprites of them, mapped from their file.
 pub const Blocks = struct {
     prepared: Prepared,
-    pictures: Pictures,
+    sprites: Sprites,
     file: std.Io.File,
     map: std.Io.File.MemoryMap,
 
@@ -66,7 +66,7 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Blocks {
         defer folder.close(io);
         const prepared = Prepared.load(init.gpa, io, folder, .{ .drawing = false }) catch return noBlocks();
         console.log("blocks: prepared earlier for Vintage Story {s} (game not found)", .{prepared.gameVersion});
-        return withPictures(init, prepared, folder, newest, false);
+        return withSprites(init, prepared, folder, newest, false);
     };
 
     var assets = openAssets(init, gamePath, folders.data);
@@ -95,33 +95,33 @@ pub fn blocks(init: std.process.Init, folders: Folders, force: bool) ?Blocks {
         console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier", .{ assets.version orelse "(unknown version)", mods, modText });
     }
     const prepared = Prepared.load(init.gpa, io, folder, .{ .drawing = false }) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ folderPath, @errorName(err) });
-    return withPictures(init, prepared, folder, folderPath, preparing);
+    return withSprites(init, prepared, folder, folderPath, preparing);
 }
 
-/// `prepared` with its pictures, from `folder`, drawn first if `draw` is set or the file isn't
-/// there or is of another version (`Pictures.version`). A render needs only the pictures, so
+/// `prepared` with its sprites, from `folder`, drawn first if `draw` is set or the file isn't
+/// there or is of another version (`Sprites.version`). A render needs only the sprites, so
 /// `prepared` can leave out what drawing them needs.
-fn withPictures(init: std.process.Init, prepared: Prepared, folder: std.Io.Dir, folderPath: []const u8, draw: bool) Blocks {
+fn withSprites(init: std.process.Init, prepared: Prepared, folder: std.Io.Dir, folderPath: []const u8, draw: bool) Blocks {
     const io = init.io;
-    if (!draw) if (mapPictures(io, folder)) |mapped| {
+    if (!draw) if (mapSprites(io, folder)) |mapped| {
         var out = mapped;
         out.prepared = prepared;
         return out;
     } else |_| {};
     const start: std.Io.Timestamp = .now(io, .awake);
-    const count = drawPictures(init, folder) catch |err|
-        console.fail("{s}: could not draw the blocks' pictures ({s})", .{ folderPath, @errorName(err) });
+    const count = drawSprites(init, folder) catch |err|
+        console.fail("{s}: could not draw the blocks' sprites ({s})", .{ folderPath, @errorName(err) });
     const seconds = @as(f64, @floatFromInt(start.untilNow(io, .awake).toMilliseconds())) / 1000;
-    console.log("pictures: {} drawn in {d:.1} s", .{ count, seconds });
-    var mapped = mapPictures(io, folder) catch |err|
-        console.fail("{s}: could not read the blocks' pictures ({s})", .{ folderPath, @errorName(err) });
+    console.log("sprites: {} drawn in {d:.1} s", .{ count, seconds });
+    var mapped = mapSprites(io, folder) catch |err|
+        console.fail("{s}: could not read the blocks' sprites ({s})", .{ folderPath, @errorName(err) });
     mapped.prepared = prepared;
     return mapped;
 }
 
-/// Draws the pictures of every block prepared in `folder` into it, written beside their name
+/// Draws the sprites of every block prepared in `folder` into it, written beside their name
 /// first so the file is never left half written. Returns how many there are.
-fn drawPictures(init: std.process.Init, folder: std.Io.Dir) !usize {
+fn drawSprites(init: std.process.Init, folder: std.Io.Dir) !usize {
     const io = init.io;
     var prepared = try Prepared.load(init.gpa, io, folder, .{});
     defer prepared.deinit();
@@ -130,35 +130,35 @@ fn drawPictures(init: std.process.Init, folder: std.Io.Dir) !usize {
     const arena = scratch.allocator();
     const drawables = try arena.alloc(isometric.Drawable, prepared.blocks.count());
     var each = prepared.blocks.valueIterator();
-    while (each.next()) |block| drawables[block.number] = .{
+    while (each.next()) |block| drawables[block.index] = .{
         .cube = if (block.cube) |*cube| cube else null,
         .shapes = block.shapes,
         .colour = SaveFile.colourOf(block),
         .turned = block.randomizeRotations,
     };
-    const partial = Pictures.fileName ++ ".partial";
+    const partial = Sprites.fileName ++ ".partial";
     const file = try folder.createFile(io, partial, .{});
     const count = count: {
         defer file.close(io);
         var buffer: [1 << 16]u8 = undefined;
         var writer = file.writer(io, &buffer);
-        const count = try isometric.drawPictures(arena, drawables, &writer.interface);
+        const count = try isometric.drawSprites(arena, drawables, &writer.interface);
         try writer.interface.flush();
         break :count count;
     };
-    try folder.rename(partial, folder, Pictures.fileName, io);
+    try folder.rename(partial, folder, Sprites.fileName, io);
     return count;
 }
 
 /// `pictures.bin` in `folder`, mapped, without its prepared blocks yet.
-fn mapPictures(io: std.Io, folder: std.Io.Dir) !Blocks {
-    const file = try folder.openFile(io, Pictures.fileName, .{});
+fn mapSprites(io: std.Io, folder: std.Io.Dir) !Blocks {
+    const file = try folder.openFile(io, Sprites.fileName, .{});
     errdefer file.close(io);
     const size = (try file.stat(io)).size;
-    if (size == 0 or size > std.math.maxInt(usize)) return error.NotPictures;
+    if (size == 0 or size > std.math.maxInt(usize)) return error.NotSprites;
     var map: std.Io.File.MemoryMap = try .create(io, file, .{ .len = @intCast(size), .protection = .{ .read = true }, .populate = false });
     errdefer map.destroy(io);
-    return .{ .prepared = undefined, .pictures = try Pictures.parse(map.memory), .file = file, .map = map };
+    return .{ .prepared = undefined, .sprites = try Sprites.parse(map.memory), .file = file, .map = map };
 }
 
 fn noBlocks() ?Blocks {

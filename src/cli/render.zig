@@ -101,8 +101,8 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     var isometricStats: ?isometric.Stats = null;
     const writtenIsometric = if (parsed.flag("isometric")) list: {
         isometricStats = .{};
-        const pictures = if (prepared) |*blocks| &blocks.pictures else null;
-        break :list try isometric.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.isometric, .pictures = pictures }, &isometricStats.?);
+        const sprites = if (prepared) |*blocks| &blocks.sprites else null;
+        break :list try isometric.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.isometric, .sprites = sprites }, &isometricStats.?);
     } else null;
     defer if (writtenIsometric) |list| allocator.free(list);
     if (isometricStats) |stats| console.log("isometric: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });

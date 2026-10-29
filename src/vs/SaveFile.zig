@@ -206,14 +206,14 @@ pub const Appearance = struct {
     colour: ?world.Rgb = null,
     /// Colours sampled across its texture: each column mixes in one of them.
     grain: []const world.Rgb = &.{},
-    /// Its number among the prepared blocks (`Prepared.Block.number`), which its pictures are
-    /// under.
+    /// Its index among the prepared blocks (`Prepared.Block.index`), which its sprites are under.
     prepared: ?u32 = null,
     /// Taking up only the bottom of its block, its selection box less than half a block high, as
     /// a loose stone does. A thin layer of the ground, of snow, sand or gravel, isn't.
     low: bool = false,
     /// How it's moved off the middle of its place (`drawOffset`), which of its position's axes
-    /// pick its variants (`variant`), turn and offset, and whether it's turned (`turn`).
+    /// pick its variant, alternate and turn (`variant`, `turn`; its offset always uses x and z),
+    /// and whether it's turned.
     drawOffset: u8 = 0,
     randomizeAxes: BlockTypes.Axes = .xyz,
     randomizeRotations: bool = false,
@@ -243,8 +243,8 @@ fn mapTypeOf(block: *const Prepared.Block) world.MapType {
     return std.meta.stringToEnum(world.MapType, block.colorCode) orelse .land;
 }
 
-/// The number its pictures are under: its number among the prepared blocks.
-pub fn picturesOf(self: *const SaveFile, id: i32) ?u32 {
+/// The index its sprites are under: its index among the prepared blocks.
+pub fn spritesOf(self: *const SaveFile, id: i32) ?u32 {
     return self.appearance(id).prepared;
 }
 
@@ -395,7 +395,7 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
             .invisible = std.mem.eql(u8, block.material, "Meta"),
             .colour = block.colour,
             .grain = block.grain,
-            .prepared = block.number,
+            .prepared = block.index,
             .low = (block.height orelse 16) < 8 and !ground,
             .drawOffset = block.drawOffset,
             .randomizeAxes = block.randomizeAxes,

@@ -63,8 +63,8 @@ domains: std.StringHashMapUnmanaged(void) = .empty,
 blocks: std.StringHashMapUnmanaged(Block) = .empty,
 
 pub const Block = struct {
-    /// Its place in `blocks.txt`, from 0, which numbers what's prepared for it beside it.
-    number: u32 = 0,
+    /// Its index in `blocks.txt`, from 0, which its sprites are under too.
+    index: u32 = 0,
     /// One of `BlockTypes.materials`, e.g. "Stone".
     material: []const u8,
     /// Its colour on the game's map, e.g. "land" or "forest" (docs/rendering.md#block-colours).
@@ -584,7 +584,7 @@ pub fn load(allocator: std.mem.Allocator, io: Io, folder: Dir, options: LoadOpti
                 break :shapes list;
             } else &.{};
             try self.blocks.put(arena, first, .{
-                .number = self.blocks.count(),
+                .index = self.blocks.count(),
                 .material = material,
                 .colorCode = colorCode,
                 .colour = if (colour) |texture| texture.average else null,
@@ -833,11 +833,11 @@ test "prepare, load and compare with a save" {
     try std.testing.expectEqual(2, ore.up.plain[1].width);
     try std.testing.expect(ore.up.plain[1] != rock.up.tinted[0] and ore.up.plain[1] != rock.up.tinted[1]);
     try std.testing.expectEqual(rock.up.tinted[1], ore.up.plain[2]);
-    // Each block numbered by its place in the file.
-    var numbers: [5]bool = @splat(false);
+    // Each block's index is its place in the file.
+    var seen: [5]bool = @splat(false);
     var each = prepared.blocks.valueIterator();
-    while (each.next()) |block| numbers[block.number] = true;
-    try std.testing.expectEqual([5]bool{ true, true, true, true, true }, numbers);
+    while (each.next()) |block| seen[block.index] = true;
+    try std.testing.expectEqual([5]bool{ true, true, true, true, true }, seen);
 
     // Without what drawing needs, blocks are the same but for their faces and shapes.
     var light = try load(std.testing.allocator, io, folder, .{ .drawing = false });
@@ -848,7 +848,7 @@ test "prepare, load and compare with a save" {
         const whole = prepared.blocks.get(entry.key_ptr.*).?;
         try std.testing.expectEqual(null, block.cube);
         try std.testing.expectEqual(0, block.shapes.len);
-        try std.testing.expectEqual(whole.number, block.number);
+        try std.testing.expectEqual(whole.index, block.index);
         try std.testing.expectEqual(whole.colour, block.colour);
         try std.testing.expectEqual(whole.height, block.height);
     }

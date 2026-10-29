@@ -34,8 +34,9 @@ pub const Block = struct {
     /// How it's moved off the middle of its place, by where it is (`randomDrawOffset`): 0 not at
     /// all; the larger, the less.
     drawOffset: u8 = 0,
-    /// Which of its position's coordinates pick its variants and offset (`randomizeAxes`): all,
-    /// or only x and z, so a column of it is the same all the way up.
+    /// Which of its position's coordinates pick its variant, alternate and turn (`randomizeAxes`):
+    /// all, or only x and z, so a column of it is the same all the way up. Its offset always
+    /// uses x and z.
     randomizeAxes: Axes = .xyz,
     /// Whether it's turned about its vertical middle by where it is (`randomizeRotations`).
     randomizeRotations: bool = false,
