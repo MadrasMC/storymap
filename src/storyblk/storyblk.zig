@@ -260,7 +260,9 @@ pub fn writeFile(io: Io, dir: Dir, path: []const u8, hash: u64, info: Info, sect
     try dir.rename(partial, dir, path, io);
 }
 
-fn checkReplaceable(io: Io, dir: Dir, path: []const u8) !void {
+/// error.NotPreparedBlocks if there's a file at `path` in `dir` that isn't a prepared blocks
+/// file, which `writeFile` never replaces: for checking before the sections are made.
+pub fn checkReplaceable(io: Io, dir: Dir, path: []const u8) !void {
     const stat = dir.statFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,

@@ -150,6 +150,30 @@ pub const Shape = struct {
     };
 };
 
+/// A block's sprites, drawn when its game's blocks are prepared: `variants` × `alternates` ×
+/// `turns` of them from sprite `first` on, one for each variant of its textures in each of the
+/// shapes it picks one of, in each of its turns: turn by turn, and in each, shape by shape; none
+/// for a block without sprites.
+pub const BlockSprites = struct {
+    first: u32 = 0,
+    variants: u16 = 0,
+    alternates: u16 = 1,
+    turns: u8 = 1,
+    /// Drawn in its shape, rather than as a cube.
+    shape: bool = false,
+    /// Any of its sprites has a tinted layer.
+    tinted: bool = false,
+
+    pub fn count(self: BlockSprites) usize {
+        return @as(usize, self.variants) * self.alternates * self.turns;
+    }
+
+    /// The index of the sprite of variant `variant` of shape `alternate`, turned `turn`.
+    pub fn index(self: BlockSprites, variant: u32, alternate: u32, turn: u32) u32 {
+        return self.first + (turn * self.alternates + alternate) * self.variants + variant;
+    }
+};
+
 /// The chunks at x and z from the bottom of the world to the top.
 pub const ChunkColumn = struct {
     x: i32,

@@ -332,14 +332,15 @@ fn drawOffsetOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !u
 }
 
 /// The top of a block's selection box, `selectionBox`, else `collisionSelectionBox`, in
-/// sixteenths of a block; null without one.
+/// sixteenths of a block, at most 254, as the prepared blocks file keeps 255 for none; null
+/// without one.
 fn heightOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !?u8 {
     const box = try property(arena, json, "selectionBox", variant) orelse
         try property(arena, json, "collisionSelectionBox", variant) orelse return null;
     const top = box.get("y2") orelse return null;
     if (top != .number) return null;
     const blocks = std.fmt.parseFloat(f64, top.number) catch return null;
-    return @intFromFloat(std.math.clamp(@round(blocks * 16), 0, 255));
+    return @intFromFloat(std.math.clamp(@round(blocks * 16), 0, 254));
 }
 
 /// How the game draws a block, as far as the isometric view tells them apart.

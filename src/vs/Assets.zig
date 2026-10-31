@@ -11,6 +11,7 @@ const Assets = @This();
 const std = @import("std");
 const builtin = @import("builtin");
 const console = @import("console");
+const storyblk = @import("storyblk");
 const Json = @import("Json.zig");
 const Io = std.Io;
 const Dir = Io.Dir;
@@ -25,24 +26,13 @@ version: ?[]const u8 = null,
 pub const Source = struct {
     /// "Vintage Story", or a mod's zip or folder name in Mods.
     name: []const u8,
-    /// Null for the game.
-    mod: ?Mod,
+    /// The mod as its `modinfo.json` names it; null for the game.
+    mod: ?storyblk.Mod,
     kind: union(enum) {
         /// The source's `assets` subfolders, in name order.
         folders: []const Folder,
         zip: Zip,
     },
-};
-
-/// A mod, as its `modinfo.json` names it.
-pub const Mod = struct {
-    /// Its zip or folder name in Mods.
-    file: []const u8,
-    /// Its `modid`, `name` and `version`: empty where its `modinfo.json` doesn't give them, or
-    /// it has none.
-    id: []const u8 = "",
-    name: []const u8 = "",
-    version: []const u8 = "",
 };
 
 pub const Folder = struct {
@@ -141,7 +131,7 @@ fn addMod(self: *Assets, io: Io, mods: Dir, name: []const u8) !void {
 const modInfoName = "modinfo.json";
 
 /// The mod in `file`, named by its `modinfo.json`, `modInfo`, if it has one that can be read.
-fn modOf(arena: std.mem.Allocator, file: []const u8, modInfo: ?[]const u8) error{OutOfMemory}!Mod {
+fn modOf(arena: std.mem.Allocator, file: []const u8, modInfo: ?[]const u8) error{OutOfMemory}!storyblk.Mod {
     const json = Json.parse(arena, modInfo orelse return .{ .file = file }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return .{ .file = file },
@@ -160,7 +150,7 @@ fn stringOf(json: Json.Value, key: []const u8) []const u8 {
 
 /// Adds the folders in `assets` as one source, all in `domain`, or each in the domain its
 /// name gives.
-fn addFolders(self: *Assets, io: Io, name: []const u8, mod: ?Mod, assets: Dir, domain: ?[]const u8) !void {
+fn addFolders(self: *Assets, io: Io, name: []const u8, mod: ?storyblk.Mod, assets: Dir, domain: ?[]const u8) !void {
     const arena = self.arena.allocator();
     var names: std.ArrayList([]const u8) = .empty;
     var it = assets.iterate();
@@ -392,9 +382,9 @@ test "assets from the game, a mod zip and a mod folder" {
     try std.testing.expectEqual(4, sources.len);
     try std.testing.expectEqual(null, sources[0].mod);
     // Named by its modinfo.json, or by nothing but its folder.
-    try std.testing.expectEqualDeep(Mod{ .file = "bare-mod" }, sources[1].mod.?);
-    try std.testing.expectEqualDeep(Mod{ .file = "folder-mod", .id = "othermod", .name = "Other 'mod'", .version = "2.0" }, sources[2].mod.?);
-    try std.testing.expectEqualDeep(Mod{ .file = "testmod.zip", .id = "testmod", .version = "1.0.0" }, sources[3].mod.?);
+    try std.testing.expectEqualDeep(storyblk.Mod{ .file = "bare-mod" }, sources[1].mod.?);
+    try std.testing.expectEqualDeep(storyblk.Mod{ .file = "folder-mod", .id = "othermod", .name = "Other 'mod'", .version = "2.0" }, sources[2].mod.?);
+    try std.testing.expectEqualDeep(storyblk.Mod{ .file = "testmod.zip", .id = "testmod", .version = "1.0.0" }, sources[3].mod.?);
 
     // The install's survival and creative folders are the game domain.
     const rock = (try assets.read(allocator, io, "Game", "blocktypes/A.json")).?;

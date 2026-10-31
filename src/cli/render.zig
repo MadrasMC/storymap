@@ -28,7 +28,7 @@ pub const spec: args.Spec = .{
         .{ .name = "no-write", .description = "Draw and encode the tiles without writing anything, to time the rest." },
         .{ .name = "json", .description = "Print the render's times and counts on stdout as one line of JSON, for scripts." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
-        .{ .name = "blocks", .value = "folder", .description = "The blocks folder: blocks by default." },
+        .{ .name = "blocks", .value = "file", .description = "The prepared blocks file: prepared.storyblk by default." },
         prepare.gameOption,
         prepare.dataOption,
     },
@@ -40,8 +40,9 @@ pub const spec: args.Spec = .{
     \\Renders a top-down map of a Vintage Story save as tiles in the output folder, with
     \\index.html beside them to view it.
     \\
-    \\What the map needs from the game's and mods' assets is prepared once into the blocks
-    \\folder, the first time a render needs it, or again with --prepare; prepare does only that.
+    \\What the map needs from the game's and mods' assets is prepared once into the prepared
+    \\blocks file, the first time a render needs it, or again with --prepare; prepare does only
+    \\that.
     ,
 };
 
@@ -55,10 +56,10 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         std.meta.stringToEnum(SaveFile.Season, name) orelse console.fail("`--season`: unknown season {s}. expected: spring, summer, fall, winter", .{name})
     else
         null;
-    const folders: prepare.Folders = .{
+    const paths: prepare.Paths = .{
         .game = parsed.value("game"),
         .data = parsed.value("data"),
-        .blocks = parsed.value("blocks") orelse Prepared.defaultFolder,
+        .blocks = parsed.value("blocks") orelse Prepared.defaultPath,
     };
     const force = parsed.flag("prepare");
     const write = !parsed.flag("no-write");
@@ -76,7 +77,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const output: tiles.Output = .{ .folder = out, .format = format, .lossyFrom = lossyFrom };
 
     const loading: std.Io.Timestamp = .now(init.io, .awake);
-    var prepared = prepare.blocks(init, folders, force);
+    var prepared = prepare.blocks(init, paths, force);
     defer if (prepared) |*blocks| blocks.deinit(init.io);
     const blocksTime = loading.untilNow(init.io, .awake);
 

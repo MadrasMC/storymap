@@ -11,7 +11,9 @@
 //! writes the tiles into `.benchmark/out`, so writing them is timed too, `--jpegxl` or `--webp`
 //! encodes them as JPEG XL or WebP, and `--lossy-from` makes WebP lossy from a level up. Versions
 //! up to 0.2.0 have their own `storymap bench`, which draws the Printed theme's relief in PNG and
-//! takes the medians itself; they're run with that, without the isometric view.
+//! takes the medians itself; they're run with that, without the isometric view. Versions that
+//! keep their prepared blocks in one file each get their own, `.benchmark/<tag>.storyblk`, so
+//! they don't prepare over each other's.
 //!
 //! Zig releases are looked for in `--zigs` (`.benchmark/zig` by default) as their archives unpack,
 //! e.g. `zig-x86_64-windows-0.17.0/`, and downloaded there from ziglang.org if missing.
@@ -155,7 +157,7 @@ pub fn main(init: std.process.Init) !void {
     var results: std.ArrayList(Result) = .empty;
     if (current) {
         std.debug.print("measuring the working tree\n", .{});
-        var result = try measureBuild(arena, io, try build(arena, io, ".", zigs), save, runs);
+        var result = try measureBuild(arena, io, try build(arena, io, ".", zigs), ".benchmark/working-tree.storyblk", save, runs);
         result.version = try std.fmt.allocPrint(arena, "{s} (working tree)", .{result.version});
         try results.append(arena, result);
         try writeRow(out, result, runs, saveHash);
@@ -211,16 +213,19 @@ fn measure(arena: std.mem.Allocator, io: Io, tag: []const u8, save: []const u8, 
     } else |_| {}
     _ = try git(arena, io, &.{ "worktree", "add", "--detach", folder, tag });
     defer _ = git(arena, io, &.{ "worktree", "remove", "--force", folder }) catch {};
-    return measureBuild(arena, io, try build(arena, io, folder, zigs), save, runs);
+    const blocks = try std.fmt.allocPrint(arena, ".benchmark/{s}.storyblk", .{tag});
+    return measureBuild(arena, io, try build(arena, io, folder, zigs), blocks, save, runs);
 }
 
-/// Runs `storymap`, its own `bench` if it has one.
-fn measureBuild(arena: std.mem.Allocator, io: Io, storymap: []const u8, save: []const u8, runs: Runs) !Result {
+/// Runs `storymap`, its own `bench` if it has one, with its prepared blocks in `blocks` if it
+/// keeps them in a file.
+fn measureBuild(arena: std.mem.Allocator, io: Io, storymap: []const u8, blocks: []const u8, save: []const u8, runs: Runs) !Result {
     const help = try run(arena, io, &.{ storymap, "--help" }, ".");
     if (std.mem.indexOf(u8, help, "storymap bench ") != null) return bench(arena, io, storymap, save, runs);
 
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(arena, &.{ storymap, save });
+    if (std.mem.indexOf(u8, help, "--blocks <file>") != null) try argv.appendSlice(arena, &.{ "--blocks", blocks });
     try argv.appendSlice(arena, &styles);
     if (runs.write) try argv.append(arena, outFolder) else try argv.append(arena, "--no-write");
     if (runs.isometric) try argv.append(arena, "--isometric");

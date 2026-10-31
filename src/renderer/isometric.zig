@@ -19,14 +19,14 @@
 //! - `heights() world.Heights`;
 //! - `blockCount() usize`, `mapType(id: i32) world.MapType`, `isVisible(id: i32) bool` and
 //!   `isLow(id: i32) bool`, a block taking up only the bottom of its place;
-//! - for the `game` style, `colour(id: i32) world.Rgb`, `spritesOf(id: i32) ?u32`, the
-//!   index of the block's sprites (`Options.sprites`), `isTinted(id: i32) bool`, `variant(id:
-//!   i32, x: i64, y: i64, z: i64, count: u32) u32`, which of `count` variants of its textures,
-//!   or of `count` shapes, the block at (x, y, z) shows, `turn(id: i32, x: i64, y: i64, z: i64,
-//!   count: u32) u32`, which of its `count` turns it's drawn in, `drawOffset(id: i32, x: i64,
-//!   y: i64, z: i64) ?[2]f32`, how far east and south of the middle of its place it's drawn, in
-//!   blocks, and `isPlacedByPosition(id: i32) bool`, whether any of those depends on more than
-//!   its sprites and its position;
+//! - for the `game` style, `colour(id: i32) world.Rgb`, `spritesOf(id: i32)
+//!   ?world.BlockSprites`, the block's sprites (`Options.sprites`), `isTinted(id: i32) bool`,
+//!   `variant(id: i32, x: i64, y: i64, z: i64, count: u32) u32`, which of `count` variants of
+//!   its textures, or of `count` shapes, the block at (x, y, z) shows, `turn(id: i32, x: i64, y:
+//!   i64, z: i64, count: u32) u32`, which of its `count` turns it's drawn in, `drawOffset(id:
+//!   i32, x: i64, y: i64, z: i64) ?[2]f32`, how far east and south of the middle of its place
+//!   it's drawn, in blocks, and `isPlacedByPosition(id: i32) bool`, whether any of those depends
+//!   on more than its sprites and its position;
 //! - `Reader`, one per thread: `init(source: *const Source, allocator, null) !Reader`,
 //!   `deinit(*Reader, allocator)`, `readChunk(*Reader, x: i32, y: i32, z: i32, chunk:
 //!   *world.Chunk) !bool`, false where there's no chunk to draw, and `chunksRead: usize`; for
@@ -72,8 +72,8 @@ pub const Stats = struct {
 pub const Options = struct {
     /// How blocks are drawn: a theme's `isometric/style.txt`. The game has one style, `game`.
     style: Style,
-    /// The sprites the `game` style draws blocks in (`drawSprites`), each block's by the
-    /// index its source gives (`spritesOf`); without them, it draws every block in its colour.
+    /// The sprites the `game` style draws blocks in (`drawSprites`), each block in those its
+    /// source gives it (`spritesOf`); without them, it draws every block in its colour.
     sprites: ?*const Sprites = null,
 };
 
@@ -445,20 +445,23 @@ const CubeLayers = struct {
 };
 
 const Sprite = Sprites.Sprite;
+const SpriteLayers = Sprites.SpriteLayers;
 
-/// `cube`'s sprite in its variant `variant`, kept in `allocator`.
-fn cubeSprite(allocator: std.mem.Allocator, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) !Sprite {
+/// `cube`'s sprite in its variant `variant`, its layers kept in `allocator`.
+fn cubeSprite(allocator: std.mem.Allocator, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) !struct { Sprite, SpriteLayers } {
     const drawn = cubeLayers(cube, variant, fallback);
-    return .{
+    const sprite: Sprite = .{
         .left = 0,
         .top = 0,
         .width = blockWidth,
         .height = blockWidth,
+        .flags = .{ .tinted = drawn.tinted != null, .fills = true },
+    };
+    return .{ sprite, .{
         .plain = try allocator.dupe(u32, &drawn.plain),
         .tinted = if (drawn.tinted) |tinted| try allocator.dupe(u32, &tinted) else null,
         .depths = try allocator.dupe(i16, @as(*const [blockWidth * blockWidth]i16, @ptrCast(&cubeDepths))),
-        .fills = true,
-    };
+    } };
 }
 
 /// Points sampled across and down each pixel of a sprite.
@@ -623,7 +626,7 @@ pub const turns = 8;
 /// face. Each of its pixels is drawn at `samples` × `samples` points: it shows if at least half
 /// of them are covered, the average of their colours, the depth of the nearest. Kept in
 /// `allocator`, trimmed to the pixels it shows.
-fn shapeSprite(allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, turn: ?usize, target: *ShapeTarget) !Sprite {
+fn shapeSprite(allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, turn: ?usize, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
     std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
     target.clear();
     const scale: f32 = samples;
@@ -713,16 +716,14 @@ fn shapeSprite(allocator: std.mem.Allocator, shape: *const world.Shape, variant:
         }
         depths[p] = @intFromFloat(@round(nearest * depthSteps));
     };
-    return .{
+    const sprite: Sprite = .{
         .left = @as(i16, @intCast(first[1])) - reach,
         .top = @as(i16, @intCast(first[0])) - reach,
         .width = @intCast(width),
         .height = @intCast(height),
-        .plain = plain,
-        .tinted = tinted,
-        .depths = depths,
-        .fills = fills,
+        .flags = .{ .tinted = tinted != null, .fills = fills },
     };
+    return .{ sprite, .{ .plain = plain, .tinted = tinted, .depths = depths } };
 }
 
 /// What a game's reader has for drawing one of its blocks in sprites: a cube's faces, or the
@@ -735,29 +736,41 @@ pub const Drawable = struct {
     turned: bool = false,
 };
 
+/// Each block's sprites, by its index in what `drawSprites` drew them from, and how many
+/// sprites there are.
+pub const DrawnSprites = struct {
+    blocks: []const world.BlockSprites,
+    count: usize,
+};
+
 /// Draws every block's sprites, one for each variant of its textures, in each of its shapes,
-/// in each of its turns, and writes them (`Sprites`), each block's under its index in
-/// `drawables`. Blocks with the same faces, or the same shapes and textures turned alike, share
-/// sprites. A block's textures have as many variants as the most any of its shapes' has, each
-/// with fewer counting round again. Keeps them in `arena` as it goes. Returns how many there
-/// are.
-pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, w: *std.Io.Writer) !usize {
+/// in each of its turns, and writes them (`Sprites.write`): the `sprites` section to `entries`
+/// and the `sprite_layers` section to `layers`. Blocks with the same faces, or the same shapes
+/// and textures turned alike, share sprites. A block's textures have as many variants as the
+/// most any of its shapes' has, each with fewer counting round again. Keeps them in `arena` as
+/// it goes.
+pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, entries: *std.Io.Writer, layers: *std.Io.Writer) !DrawnSprites {
     var sprites: std.ArrayList(Sprite) = .empty;
-    const entries = try arena.alloc(Sprites.Entry, drawables.len);
-    var byFaces: std.HashMapUnmanaged(world.CubeFaces, Sprites.Entry, FacesContext, std.hash_map.default_max_load_percentage) = .empty;
-    var byShape: std.HashMapUnmanaged(ShapeKey, Sprites.Entry, ShapeContext, std.hash_map.default_max_load_percentage) = .empty;
+    var spriteLayers: std.ArrayList(SpriteLayers) = .empty;
+    const blocks = try arena.alloc(world.BlockSprites, drawables.len);
+    var byFaces: std.HashMapUnmanaged(world.CubeFaces, world.BlockSprites, FacesContext, std.hash_map.default_max_load_percentage) = .empty;
+    var byShape: std.HashMapUnmanaged(ShapeKey, world.BlockSprites, ShapeContext, std.hash_map.default_max_load_percentage) = .empty;
     var target = try shapeTarget(arena);
-    for (entries, drawables) |*entry, drawable| {
-        entry.* = .{};
+    for (blocks, drawables) |*block, drawable| {
+        block.* = .{};
         if (drawable.cube) |cube| {
             const found = try byFaces.getOrPut(arena, cube.*);
             if (!found.found_existing) {
                 const variants = variantCount(cube);
                 found.value_ptr.* = .{ .first = @intCast(sprites.items.len), .variants = @intCast(variants) };
-                for (0..variants) |variant| try sprites.append(arena, try cubeSprite(arena, cube, variant, drawable.colour));
-                found.value_ptr.flags.tinted = sprites.items[found.value_ptr.first].tinted != null;
+                for (0..variants) |variant| {
+                    const sprite, const pixels = try cubeSprite(arena, cube, variant, drawable.colour);
+                    try sprites.append(arena, sprite);
+                    try spriteLayers.append(arena, pixels);
+                }
+                found.value_ptr.tinted = sprites.items[found.value_ptr.first].flags.tinted;
             }
-            entry.* = found.value_ptr.*;
+            block.* = found.value_ptr.*;
         } else if (drawable.shapes.len > 0) {
             const found = try byShape.getOrPut(arena, .{ .shapes = drawable.shapes, .turned = drawable.turned });
             if (!found.found_existing) {
@@ -769,19 +782,20 @@ pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, w: *st
                     .variants = @intCast(variants),
                     .alternates = @intCast(drawable.shapes.len),
                     .turns = turnCount,
-                    .flags = .{ .shape = true },
+                    .shape = true,
                 };
                 for (0..turnCount) |turn| for (drawable.shapes) |*shape| for (0..variants) |variant| {
-                    const sprite = try shapeSprite(arena, shape, variant, if (drawable.turned) turn else null, &target);
-                    if (sprite.tinted != null) found.value_ptr.flags.tinted = true;
+                    const sprite, const pixels = try shapeSprite(arena, shape, variant, if (drawable.turned) turn else null, &target);
+                    if (sprite.flags.tinted) found.value_ptr.tinted = true;
                     try sprites.append(arena, sprite);
+                    try spriteLayers.append(arena, pixels);
                 };
             }
-            entry.* = found.value_ptr.*;
+            block.* = found.value_ptr.*;
         }
     }
-    try Sprites.write(w, entries, sprites.items);
-    return sprites.items.len;
+    try Sprites.write(entries, layers, blockWidth, sprites.items, spriteLayers.items);
+    return .{ .blocks = blocks, .count = sprites.items.len };
 }
 
 /// Cube faces by their variants' slices, which a game's reader shares between blocks with the
@@ -914,38 +928,40 @@ test shapeSprite {
 
     // A whole block's box is the cube, filling the square, its faces lit as a cube's and each
     // pixel as deep as a cube's.
-    const cube = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, &target);
+    const cube, const cubePixels = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, &target);
     try std.testing.expectEqual([4]i64{ 0, 0, w, w }, [4]i64{ cube.left, cube.top, cube.width, cube.height });
-    try std.testing.expect(cube.fills);
-    try std.testing.expectEqual(null, cube.tinted);
+    try std.testing.expect(cube.flags.fills);
+    try std.testing.expect(!cube.flags.tinted);
+    try std.testing.expectEqual(null, cubePixels.tinted);
     const colours = faceColours(.{ 200, 0, 0 });
     for ([_][2]i64{ top, south, east }, colours) |at, colour| {
         const p = pixelAt(&cube, at[0], at[1]).?;
-        try std.testing.expectEqual(colour, cube.plain[p]);
-        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(cubeDepths[@intCast(at[0])][@intCast(at[1])])), @as(f32, @floatFromInt(cube.depths[p])), depthSteps / 16);
+        try std.testing.expectEqual(colour, cubePixels.plain[p]);
+        try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(cubeDepths[@intCast(at[0])][@intCast(at[1])])), @as(f32, @floatFromInt(cubePixels.depths[p])), depthSteps / 16);
     }
-    try std.testing.expect(!cube.shows(pixelAt(&cube, 0, 0).?));
+    try std.testing.expect(!cubePixels.shows(pixelAt(&cube, 0, 0).?));
 
     // A slab leaves the top of the square empty, for what's behind it to show.
-    const slab = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, &target);
-    try std.testing.expect(!slab.fills);
+    const slab, const slabPixels = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, &target);
+    try std.testing.expect(!slab.flags.fills);
     try std.testing.expectEqual(w / 4, slab.top);
     try std.testing.expectEqual(null, pixelAt(&slab, w / 8, w / 2));
-    try std.testing.expectEqual(colours[1], slab.plain[pixelAt(&slab, w * 3 / 4, w / 4).?]);
+    try std.testing.expectEqual(colours[1], slabPixels.plain[pixelAt(&slab, w * 3 / 4, w / 4).?]);
 
     // A plank twice as long as the block reaches out of its square both ways, drawn whole.
     var plank = testBox(.{ 2, 1.0 / 16.0, 1 });
     plank.transform[0][3] = -0.5;
-    const long = try shapeSprite(allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, &target);
+    const long, _ = try shapeSprite(allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, &target);
     try std.testing.expectEqual(-w / 4, long.left);
     try std.testing.expectEqual(w + w / 2, long.width);
 
     // A tinted texture goes into the tinted layer, covering the plain one.
     const tinted = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
-    const grass = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, &target);
+    const grass, const grassPixels = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, &target);
+    try std.testing.expect(grass.flags.tinted);
     const p = pixelAt(&grass, top[0], top[1]).?;
-    try std.testing.expectEqual(colours[0], grass.tinted.?[p]);
-    try std.testing.expectEqual(colours[0], blend(grass.plain[p], grass.tinted.?[p], @splat(255)));
+    try std.testing.expectEqual(colours[0], grassPixels.tinted.?[p]);
+    try std.testing.expectEqual(colours[0], blend(grassPixels.plain[p], grassPixels.tinted.?[p], @splat(255)));
 
     // A wall along the east of its place, in turn 4, 157.5°, is along the west: its face towards
     // the middle shows where, unturned, nothing did.
@@ -953,9 +969,10 @@ test shapeSprite {
     wall.transform[0][3] = 0.75;
     const shape: world.Shape = .{ .boxes = &.{wall}, .textures = &textures };
     const middle = [2]i64{ w / 2, w * 5 / 16 };
-    try std.testing.expectEqual(null, pixelAt(&try shapeSprite(allocator, &shape, 0, null, &target), middle[0], middle[1]));
-    const turned = try shapeSprite(allocator, &shape, 0, turns / 2, &target);
-    try std.testing.expect(turned.shows(pixelAt(&turned, middle[0], middle[1]).?));
+    const unturned, _ = try shapeSprite(allocator, &shape, 0, null, &target);
+    try std.testing.expectEqual(null, pixelAt(&unturned, middle[0], middle[1]));
+    const turned, const turnedPixels = try shapeSprite(allocator, &shape, 0, turns / 2, &target);
+    try std.testing.expect(turnedPixels.shows(pixelAt(&turned, middle[0], middle[1]).?));
 
     // Turns 0 and 7, −22.5° and −67.5°, are as far either side of south-east, where the view
     // looks from, so a post east of the middle is drawn as far right of the middle in one as
@@ -964,8 +981,8 @@ test shapeSprite {
     post.transform[0][3] = 0.8125;
     post.transform[2][3] = 0.4375;
     const postShape: world.Shape = .{ .boxes = &.{post}, .textures = &textures };
-    const right = try shapeSprite(allocator, &postShape, 0, 0, &target);
-    const left = try shapeSprite(allocator, &postShape, 0, 7, &target);
+    const right, _ = try shapeSprite(allocator, &postShape, 0, 0, &target);
+    const left, _ = try shapeSprite(allocator, &postShape, 0, 7, &target);
     try std.testing.expect(right.left > w / 2);
     try std.testing.expectEqual(@as(i32, w) - right.left - right.width, left.left);
     try std.testing.expectEqual(right.top, left.top);
@@ -1006,36 +1023,42 @@ test drawSprites {
     // turned, in sprites of its own, and a block picking the slab, a whole block in a texture
     // with two variants, or nothing.
     const drawables = [_]Drawable{ .{ .cube = &cube }, .{}, .{ .shapes = &slabs }, .{ .shapes = &sameSlabs }, .{ .shapes = &slabs, .turned = true }, .{ .shapes = &picked } };
-    var file: std.Io.Writer.Allocating = .init(allocator);
-    try std.testing.expectEqual(3 + turns + 6, try drawSprites(allocator, &drawables, &file.writer));
-    const bytes = try allocator.alignedAlloc(u8, .@"4", file.written().len);
-    @memcpy(bytes, file.written());
+    var entries: std.Io.Writer.Allocating = .init(allocator);
+    var layers: std.Io.Writer.Allocating = .init(allocator);
+    const drawn = try drawSprites(allocator, &drawables, &entries.writer, &layers.writer);
+    try std.testing.expectEqual(3 + turns + 6, drawn.count);
+    const entryBytes = try allocator.alignedAlloc(u8, .@"4", entries.written().len);
+    @memcpy(entryBytes, entries.written());
+    const layerBytes = try allocator.alignedAlloc(u8, .@"4", layers.written().len);
+    @memcpy(layerBytes, layers.written());
 
-    const sprites = try Sprites.parse(bytes);
-    try std.testing.expectEqual(3 + turns + 6, sprites.stored.len);
-    try std.testing.expectEqual(Sprites.Entry{ .first = 3, .variants = 1, .turns = turns, .flags = .{ .shape = true, .tinted = true } }, sprites.entry(4));
+    const sprites = try Sprites.parse(entryBytes, layerBytes);
+    try std.testing.expectEqual(3 + turns + 6, sprites.entries.len);
+    try std.testing.expectEqual(blockWidth, sprites.blockWidth);
+    const blocks = drawn.blocks;
+    try std.testing.expectEqual(world.BlockSprites{ .first = 3, .variants = 1, .turns = turns, .shape = true, .tinted = true }, blocks[4]);
     // Each of its shapes in as many variants as the most any has, the slab's one counting
     // round again.
-    const choice = sprites.entry(5);
-    try std.testing.expectEqual(Sprites.Entry{ .first = 3 + turns, .variants = 2, .alternates = 3, .flags = .{ .shape = true, .tinted = true } }, choice);
-    try std.testing.expect(!sprites.sprite(choice.index(1, 0, 0)).fills);
-    try std.testing.expectEqual(sprites.sprite(choice.index(0, 0, 0)).plain[0], sprites.sprite(choice.index(1, 0, 0)).plain[0]);
-    const whole = sprites.sprite(choice.index(1, 1, 0));
-    try std.testing.expect(whole.fills);
-    try std.testing.expectEqual(faceColours(.{ 0, 0, 200 })[0], whole.plain[pixelAt(&whole, blockWidth / 4, blockWidth / 2).?]);
-    const nothing = sprites.sprite(choice.index(1, 2, 0));
+    const choice = blocks[5];
+    try std.testing.expectEqual(world.BlockSprites{ .first = 3 + turns, .variants = 2, .alternates = 3, .shape = true, .tinted = true }, choice);
+    try std.testing.expect(!sprites.entries[choice.index(1, 0, 0)].flags.fills);
+    try std.testing.expectEqual(sprites.layersOf(choice.index(0, 0, 0)).plain[0], sprites.layersOf(choice.index(1, 0, 0)).plain[0]);
+    const whole = sprites.entries[choice.index(1, 1, 0)];
+    try std.testing.expect(whole.flags.fills);
+    try std.testing.expectEqual(faceColours(.{ 0, 0, 200 })[0], sprites.layersOf(choice.index(1, 1, 0)).plain[pixelAt(&whole, blockWidth / 4, blockWidth / 2).?]);
+    const nothing = sprites.entries[choice.index(1, 2, 0)];
     try std.testing.expectEqual(0, nothing.width);
-    try std.testing.expect(!nothing.fills);
-    try std.testing.expectEqual(Sprites.Entry{ .first = 0, .variants = 2 }, sprites.entry(0));
-    try std.testing.expectEqual(0, sprites.entry(1).variants);
-    try std.testing.expectEqual(Sprites.Entry{ .first = 2, .variants = 1, .flags = .{ .shape = true, .tinted = true } }, sprites.entry(2));
-    try std.testing.expectEqual(sprites.entry(2), sprites.entry(3));
+    try std.testing.expect(!nothing.flags.fills);
+    try std.testing.expectEqual(world.BlockSprites{ .first = 0, .variants = 2 }, blocks[0]);
+    try std.testing.expectEqual(0, blocks[1].variants);
+    try std.testing.expectEqual(world.BlockSprites{ .first = 2, .variants = 1, .shape = true, .tinted = true }, blocks[2]);
+    try std.testing.expectEqual(blocks[2], blocks[3]);
     // The cube's second variant is the blue one, each pixel as deep as a cube's.
-    const second = sprites.sprite(1);
-    try std.testing.expect(second.fills);
+    try std.testing.expect(sprites.entries[1].flags.fills);
+    const second = sprites.layersOf(1);
     try std.testing.expectEqual(faceColours(.{ 0, 0, 200 })[0], second.plain[(blockWidth / 4) * blockWidth + blockWidth / 2]);
     try std.testing.expectEqual(cubeDepths[blockWidth / 4][blockWidth / 2], second.depths[(blockWidth / 4) * blockWidth + blockWidth / 2]);
-    try std.testing.expect(!sprites.sprite(2).fills);
+    try std.testing.expect(!sprites.entries[2].flags.fills);
 }
 
 /// What every worker shares, read-only while they draw, and their totals once they're done.
@@ -1068,11 +1091,11 @@ fn View(comptime Source: type) type {
             colours: [3]u32,
             /// Each face in a colour times the tint of a block where it is.
             tintedColour: struct { colour: world.Rgb, block: i32 },
-            /// In its sprites (`Sprites.Entry`), the block that picks its variant, shape, turn
-            /// and offset by where it is, and whether its tint colours their tinted layer.
+            /// In its sprites, the block that picks its variant, shape, turn and offset by where
+            /// it is, and whether its tint colours their tinted layer.
             sprite: SpriteLook,
 
-            const SpriteLook = struct { entry: Sprites.Entry, block: i32, tinted: bool = false };
+            const SpriteLook = struct { sprites: world.BlockSprites, block: i32, tinted: bool = false };
         };
 
         fn init(allocator: std.mem.Allocator, source: *const Source, style: Style, sprites: ?*const Sprites) !Self {
@@ -1104,9 +1127,9 @@ fn View(comptime Source: type) type {
                     defer byColour.deinit(allocator);
                     for (blockLooks, 0..) |*look, i| {
                         const id: i32 = @intCast(i);
-                        const entry: Sprites.Entry = if (sprites) |all| (if (source.spritesOf(id)) |n| all.entry(n) else .{}) else .{};
+                        const own: world.BlockSprites = if (sprites != null) source.spritesOf(id) orelse .{} else .{};
                         // A block in a shape is drawn in it, plants and low blocks too.
-                        const shaped = entry.variants > 0 and entry.flags.shape and source.isVisible(id);
+                        const shaped = own.variants > 0 and own.shape and source.isVisible(id);
                         if (!shaped and !isDrawn(source, id)) {
                             look.* = 0;
                             continue;
@@ -1114,18 +1137,18 @@ fn View(comptime Source: type) type {
                         anyShape = anyShape or shaped;
                         const colour = source.colour(id);
                         const isTinted = source.isTinted(id);
-                        if (entry.variants > 0) {
-                            const spriteLook: Look.SpriteLook = .{ .entry = entry, .block = id };
-                            const tinted = isTinted and entry.flags.tinted;
+                        if (own.variants > 0) {
+                            const spriteLook: Look.SpriteLook = .{ .sprites = own, .block = id };
+                            const tinted = isTinted and own.tinted;
                             const placed = source.isPlacedByPosition(id);
                             anyPlaced = anyPlaced or placed;
                             if (tinted or placed) {
-                                var own = spriteLook;
-                                own.tinted = tinted;
-                                look.* = try addLook(allocator, &looks, .{ .sprite = own });
+                                var ownLook = spriteLook;
+                                ownLook.tinted = tinted;
+                                look.* = try addLook(allocator, &looks, .{ .sprite = ownLook });
                                 continue;
                             }
-                            const found = try bySprites.getOrPut(allocator, entry.first);
+                            const found = try bySprites.getOrPut(allocator, own.first);
                             if (!found.found_existing) found.value_ptr.* = try addLook(allocator, &looks, .{ .sprite = spriteLook });
                             look.* = found.value_ptr.*;
                         } else if (isTinted) {
@@ -1255,16 +1278,18 @@ fn View(comptime Source: type) type {
                     },
                     .sprite => |look| sprite: {
                         placedBy = look.block;
-                        const entry = look.entry;
+                        const own = look.sprites;
                         const source = self.view.source;
-                        const variant = if (entry.variants > 1) source.variant(look.block, block.x, block.y, block.z, entry.variants) else 0;
+                        const variant = if (own.variants > 1) source.variant(look.block, block.x, block.y, block.z, own.variants) else 0;
                         // Shapes are picked as variants are.
-                        const alternate = if (entry.alternates > 1) source.variant(look.block, block.x, block.y, block.z, entry.alternates) else 0;
-                        const turn = if (entry.turns > 1) source.turn(look.block, block.x, block.y, block.z, entry.turns) else 0;
-                        const sprite = self.view.sprites.?.sprite(entry.index(variant, alternate, turn));
-                        fills = sprite.fills;
-                        const tint = if (sprite.tinted == null or !look.tinted) @as(world.Rgb, @splat(255)) else try self.reader.tint(look.block, block.x, block.y, block.z);
-                        break :sprite .{ .sprite = .{ .sprite = sprite, .tint = tint } };
+                        const alternate = if (own.alternates > 1) source.variant(look.block, block.x, block.y, block.z, own.alternates) else 0;
+                        const turn = if (own.turns > 1) source.turn(look.block, block.x, block.y, block.z, own.turns) else 0;
+                        const index = own.index(variant, alternate, turn);
+                        const sprites = self.view.sprites.?;
+                        const sprite = sprites.entries[index];
+                        fills = sprite.flags.fills;
+                        const tint = if (!sprite.flags.tinted or !look.tinted) @as(world.Rgb, @splat(255)) else try self.reader.tint(look.block, block.x, block.y, block.z);
+                        break :sprite .{ .sprite = .{ .sprite = sprite, .layers = sprites.layersOf(index), .tint = tint } };
                     },
                 };
                 const square = line.square();
@@ -1290,7 +1315,7 @@ fn View(comptime Source: type) type {
             const Paint = union(enum) {
                 faces: *const [3]u32,
                 /// A sprite, its tinted layer, if it has one, tinted by `tint`.
-                sprite: struct { sprite: Sprite, tint: world.Rgb },
+                sprite: struct { sprite: Sprite, layers: SpriteLayers, tint: world.Rgb },
             };
 
             /// The next drawn block on a line of sight, following it down from height `y.*`, or
@@ -1368,6 +1393,7 @@ fn View(comptime Source: type) type {
                 switch (paint) {
                     .sprite => |from| {
                         const sprite = &from.sprite;
+                        const layers = &from.layers;
                         for (0..sprite.height) |row| {
                             const py = top + sprite.top + @as(i64, @intCast(row));
                             if (py < 0 or py >= tiles.size) continue;
@@ -1376,12 +1402,12 @@ fn View(comptime Source: type) type {
                                 if (px < 0 or px >= tiles.size) continue;
                                 const at = row * sprite.width + column;
                                 // Where it shows nothing, what's behind it does.
-                                if (!sprite.shows(at)) continue;
+                                if (!layers.shows(at)) continue;
                                 const p: usize = @intCast(py * tiles.size + px);
-                                const pointDepth = depth + sprite.depths[at];
+                                const pointDepth = depth + layers.depths[at];
                                 if (pointDepth <= self.depth[p]) continue;
                                 self.depth[p] = pointDepth;
-                                pixels[p] = if (sprite.tinted) |tinted| blend(sprite.plain[at], tinted[at], from.tint) else sprite.plain[at];
+                                pixels[p] = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], from.tint) else layers.plain[at];
                                 any = true;
                             }
                         }

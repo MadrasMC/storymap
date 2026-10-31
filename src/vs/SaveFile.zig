@@ -206,8 +206,8 @@ pub const Appearance = struct {
     colour: ?world.Rgb = null,
     /// Colours sampled across its texture: each column mixes in one of them.
     grain: []const world.Rgb = &.{},
-    /// Its index among the prepared blocks (`Prepared.Block.index`), which its sprites are under.
-    prepared: ?u32 = null,
+    /// Its sprites, from the prepared blocks (`Prepared.Block.sprites`); null without them.
+    sprites: ?world.BlockSprites = null,
     /// Taking up only the bottom of its block, its selection box less than half a block high, as
     /// a loose stone does. A thin layer of the ground, of snow, sand or gravel, isn't.
     low: bool = false,
@@ -243,9 +243,9 @@ fn mapTypeOf(block: *const Prepared.Block) world.MapType {
     return std.meta.stringToEnum(world.MapType, block.colorCode) orelse .land;
 }
 
-/// The index its sprites are under: its index among the prepared blocks.
-pub fn spritesOf(self: *const SaveFile, id: i32) ?u32 {
-    return self.appearance(id).prepared;
+/// Its sprites, from the prepared blocks.
+pub fn spritesOf(self: *const SaveFile, id: i32) ?world.BlockSprites {
+    return self.appearance(id).sprites;
 }
 
 /// Which of a texture's `count` variants block `id` at (x, y, z) shows, by vsapi's
@@ -395,7 +395,7 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
             .invisible = std.mem.eql(u8, block.material, "Meta"),
             .colour = block.colour,
             .grain = block.grain,
-            .prepared = block.index,
+            .sprites = block.sprites,
             .low = (block.height orelse 16) < 8 and !ground,
             .drawOffset = block.drawOffset,
             .randomizeAxes = block.randomizeAxes,
