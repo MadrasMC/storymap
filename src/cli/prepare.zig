@@ -34,8 +34,10 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .data = parsed.value("data"),
         .blocks = parsed.positional("file") orelse Prepared.defaultPath,
     };
-    var prepared = blocks(init, paths, true) orelse unreachable;
-    prepared.deinit(init.io);
+    const gamePath = findGame(init, paths) orelse noGame();
+    var assets = openAssets(init, gamePath, paths.data);
+    defer assets.close(init.io);
+    prepareFile(init, &assets, paths.blocks, hashAssets(init.io, &assets));
 }
 
 /// The prepared blocks, and the isometric view's sprites of them, mapped from their file.
@@ -63,11 +65,10 @@ const spriteFormat: Prepared.SpriteFormat = .{
 /// if this Storymap made it the way it would now, or else null; `force` then stops the program.
 pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     const io = init.io;
-    const arena = init.arena.allocator();
     const path = paths.blocks;
 
-    const gamePath = paths.game orelse Assets.findFolder(arena, io, init.environ_map, .game) orelse {
-        if (force) console.fail("could not locate Vintage Story; pass `--game <folder>`", .{});
+    const gamePath = findGame(init, paths) orelse {
+        if (force) noGame();
         var problem: Problem = .none;
         const found = open(init, path, &problem) catch |err| {
             switch (problem) {
@@ -88,17 +89,27 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
 
     var assets = openAssets(init, gamePath, paths.data);
     defer assets.close(io);
-    const hash = Prepared.hash(io, &assets, spriteFormat) catch |err| console.fail("could not read the mods ({s})", .{@errorName(err)});
-    const mods = assets.sources.items.len - 1;
-    const version = versionText(assets.version orelse "");
+    const hash = hashAssets(io, &assets);
     if (!force) if (hashOf(init, path)) |existing| if (existing == hash) {
         var problem: Problem = .none;
         if (open(init, path, &problem)) |found| {
-            console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier ({s})", .{ version, mods, modText(mods), path });
+            const mods = assets.sources.items.len - 1;
+            console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier ({s})", .{ versionText(assets.version orelse ""), mods, modText(mods), path });
             return found;
         } else |_| {}
     };
 
+    prepareFile(init, &assets, path, hash);
+    var problem: Problem = .none;
+    return open(init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
+}
+
+/// Prepares the blocks from `assets`, draws their sprites and writes both to the file at `path`.
+/// All it held is freed before it returns. A problem stops the program.
+fn prepareFile(init: std.process.Init, assets: *const Assets, path: []const u8, hash: u64) void {
+    const io = init.io;
+    const mods = assets.sources.items.len - 1;
+    const version = versionText(assets.version orelse "");
     storyblk.checkReplaceable(io, std.Io.Dir.cwd(), path) catch |err| switch (err) {
         error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
         else => console.fail("{s}: could not read ({s})", .{ path, @errorName(err) }),
@@ -106,7 +117,7 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     var scratch: std.heap.ArenaAllocator = .init(init.gpa);
     defer scratch.deinit();
     const start: std.Io.Timestamp = .now(io, .awake);
-    var contents = Prepared.prepare(init.gpa, scratch.allocator(), io, &assets) catch |err|
+    var contents = Prepared.prepare(init.gpa, scratch.allocator(), io, assets) catch |err|
         console.fail("{s}: could not prepare the blocks ({s})", .{ path, @errorName(err) });
     console.log("blocks: {} prepared from Vintage Story {s} and {} {s} in {d:.1} s ({s})", .{
         contents.blocks.len, version, mods, modText(mods), secondsSince(io, start), path,
@@ -124,9 +135,19 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
         error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
         else => console.fail("{s}: could not write ({s})", .{ path, @errorName(err) }),
     };
+}
 
-    var problem: Problem = .none;
-    return open(init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
+/// The game's install folder, as given or in the standard place.
+fn findGame(init: std.process.Init, paths: Paths) ?[]const u8 {
+    return paths.game orelse Assets.findFolder(init.arena.allocator(), init.io, init.environ_map, .game);
+}
+
+fn noGame() noreturn {
+    console.fail("could not locate Vintage Story; pass `--game <folder>`", .{});
+}
+
+fn hashAssets(io: std.Io, assets: *const Assets) u64 {
+    return Prepared.hash(io, assets, spriteFormat) catch |err| console.fail("could not read the mods ({s})", .{@errorName(err)});
 }
 
 /// Draws the sprites of every block in `contents` into `sprites`, giving each block its own.
