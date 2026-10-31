@@ -83,6 +83,10 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 13. **Run on macOS and Linux.** Writing the prepared blocks file through `FileBuffer` has only been run on Windows; it compiles for Linux and macOS. Test it in CI or on a real Mac, including a full disk, where `fallocate` and `F_PREALLOCATE` should give an error instead of stopping the program. `Assets.findFolder` also has no macOS locations yet, so a Mac needs `--game` and `--data`.
 
+## Testing
+
+14. **Prepare with many mods.** Preparing has only been run with one mod. Fetch something like the 100 most downloaded mods from [VS ModDB](https://mods.vintagestory.at) and prepare with all of them, and each alone: check that nothing fails, compare memory, time and file size against the game alone, and see how close the file's limits come (`docs/storyblk/spec.md`), `sprite_layers`' 4 GiB above all. A limit reached stops a render as well as `storymap prepare`, rather than drawing the map without block colours, and a block's `variants` and `alternates` are assumed to fit their 16 bits.
+
 ## Done
 
 - Zig 0.17.0 upgrade, SQLite built from the amalgamation (`35484a3`).
