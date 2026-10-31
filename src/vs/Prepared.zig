@@ -268,11 +268,10 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
     defer fileArena.deinit();
     const scratch = fileArena.allocator();
 
-    var reader: BlockTypes.Reader = try .init(reading, io, assets);
+    var reader: BlockTypes.Reader = try .init(reading, arena, io, assets);
     var textures: Textures = .{ .arena = reading, .scratch = scratch, .io = io, .assets = assets };
     var images: Images = .{ .arena = arena, .textures = &textures };
     const colourMaps = try prepareColourMaps(arena, reading, io, assets);
-    var geometries: std.AutoHashMapUnmanaged(*const BlockTypes.Geometry, []const world.Shape.Box) = .empty;
     var entries: std.ArrayList(Contents.Entry) = .empty;
     while (try reader.next(scratch)) |types| {
         defer _ = fileArena.reset(.retain_capacity);
@@ -284,7 +283,7 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
                 .colorCode = try arena.dupe(u8, block.colorCode),
                 .cube = try cubeOf(&images, block.cube),
                 .height = block.height,
-                .shapes = try shapesOf(arena, reading, &images, &geometries, block.shapes),
+                .shapes = try shapesOf(arena, &images, block.shapes),
                 .drawOffset = block.drawOffset,
                 .randomizeAxes = block.randomizeAxes,
                 .randomizeRotations = block.randomizeRotations,
@@ -331,7 +330,7 @@ fn cubeOf(images: *Images, cube: ?BlockTypes.Cube) !?world.CubeFaces {
 
 /// A block's shapes, each its geometry's boxes, one slice for each geometry, and its textures'
 /// images. A shape with nothing to draw has no boxes or textures.
-fn shapesOf(arena: std.mem.Allocator, temporary: std.mem.Allocator, images: *Images, geometries: *std.AutoHashMapUnmanaged(*const BlockTypes.Geometry, []const world.Shape.Box), shapes: []const BlockTypes.Shape) ![]const world.Shape {
+fn shapesOf(arena: std.mem.Allocator, images: *Images, shapes: []const BlockTypes.Shape) ![]const world.Shape {
     if (shapes.len == 0) return &.{};
     const out = try arena.alloc(world.Shape, shapes.len);
     for (out, shapes) |*shape, from| {
@@ -339,20 +338,9 @@ fn shapesOf(arena: std.mem.Allocator, temporary: std.mem.Allocator, images: *Ima
             shape.* = .{ .boxes = &.{}, .textures = &.{} };
             continue;
         }
-        const boxes = try geometries.getOrPut(temporary, from.geometry);
-        if (!boxes.found_existing) boxes.value_ptr.* = try boxesOf(arena, from.geometry.boxes);
         const textures = try arena.alloc(world.CubeFaces.Face, from.textures.len);
         for (textures, from.textures) |*texture, face| texture.* = .{ .plain = try images.list(face.plain), .tinted = try images.list(face.tinted) };
-        shape.* = .{ .boxes = boxes.value_ptr.*, .textures = textures };
-    }
-    return out;
-}
-
-fn boxesOf(arena: std.mem.Allocator, boxes: []const BlockTypes.Geometry.Box) ![]const world.Shape.Box {
-    const out = try arena.alloc(world.Shape.Box, boxes.len);
-    for (out, boxes) |*box, from| {
-        box.* = .{ .transform = from.transform, .size = from.size, .shade = from.shade, .faces = undefined };
-        for (&box.faces, from.faces) |*face, side| face.* = if (side) |f| .{ .texture = f.texture, .uv = f.uv } else null;
+        shape.* = .{ .boxes = from.geometry.boxes, .textures = textures };
     }
     return out;
 }

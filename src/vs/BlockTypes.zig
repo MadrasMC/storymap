@@ -73,20 +73,9 @@ pub const Geometry = struct {
     climateColorMap: ?[]const u8 = null,
     seasonColorMap: ?[]const u8 = null,
 
-    pub const Box = struct {
-        transform: [3][4]f32,
-        size: [3]f32,
-        shade: bool,
-        /// By `world.Shape.Side`.
-        faces: [6]?BoxFace,
-    };
-
-    pub const BoxFace = struct {
-        /// In `Geometry.textures`.
-        texture: u16,
-        /// At each corner, in `world.Shape.Side.corners` order.
-        uv: [4][2]f32,
-    };
+    /// A face's `texture` is in `textures` here, and a block's own for each in `Shape.textures`.
+    pub const Box = world.Shape.Box;
+    pub const BoxFace = world.Shape.Face;
 
     pub const TextureName = struct {
         /// As a face names it, without its `#`.
@@ -187,8 +176,9 @@ const Part = struct {
 };
 
 /// Reads the blocks `assets` defines one block type file at a time, so what one file takes to
-/// read can go before the next. Shape files, world properties and the codes seen so far last in
-/// the arena given to `init`.
+/// read can go before the next, the shape files it needs too. World properties, the codes seen
+/// so far and how each shape is placed last in the arena given to `init`, and shapes' boxes in
+/// `boxes`.
 pub const Reader = struct {
     arena: std.mem.Allocator,
     expander: Expander,
@@ -198,13 +188,13 @@ pub const Reader = struct {
     at: usize = 0,
     seen: std.StringHashMapUnmanaged(void) = .empty,
 
-    pub fn init(arena: std.mem.Allocator, io: Io, assets: *const Assets) !Reader {
+    pub fn init(arena: std.mem.Allocator, boxes: std.mem.Allocator, io: Io, assets: *const Assets) !Reader {
         var expander: Expander = .{ .arena = arena, .io = io, .assets = assets };
         try expander.loadWorldProperties();
         return .{
             .arena = arena,
             .expander = expander,
-            .shapes = .{ .arena = arena, .scratch = arena, .io = io, .assets = assets },
+            .shapes = .{ .arena = arena, .scratch = arena, .boxes = boxes, .io = io, .assets = assets },
             .names = try assets.list(arena, io, "blocktypes"),
         };
     }
@@ -215,6 +205,7 @@ pub const Reader = struct {
     pub fn next(self: *Reader, temporary: std.mem.Allocator) !?[]const Block {
         self.expander.arena = temporary;
         self.shapes.scratch = temporary;
+        self.shapes.files = .empty;
         while (self.at < self.names.len) {
             const name = self.names[self.at];
             self.at += 1;
@@ -271,7 +262,7 @@ pub const Reader = struct {
 
 /// Every block `assets` defines at once: `Reader` keeping all it reads.
 pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const Block {
-    var reader: Reader = try .init(arena, io, assets);
+    var reader: Reader = try .init(arena, arena, io, assets);
     var blocks: std.ArrayList(Block) = .empty;
     while (try reader.next(arena)) |some| try blocks.appendSlice(arena, some);
     return blocks.items;
@@ -398,14 +389,17 @@ const Drawing = union(enum) {
 /// The game's shape files, each read once: the boxes of a block's shape, and the plain cube a
 /// shape may hold.
 pub const Shapes = struct {
-    /// What lasts: the files, each way of placing them, and the tables finding them.
+    /// What lasts: each way of placing the files, and the tables finding them.
     arena: std.mem.Allocator,
-    /// What only one lookup, or the block it's for, needs.
+    /// What only one lookup, or the block it's for, needs, and the files themselves.
     scratch: std.mem.Allocator,
+    /// Where the geometries' boxes go, shared with whatever draws them.
+    boxes: std.mem.Allocator,
     io: Io,
     /// Null where there are no files to read, as in tests.
     assets: ?*const Assets,
-    /// Each shape file read so far, by its location, or null if it can't be read.
+    /// Each shape file read for the block type being read, by its location, or null if it can't
+    /// be read. A file is needed again only for a way of placing it not met yet.
     files: std.StringHashMapUnmanaged(?Json.Value) = .empty,
     /// Every shape file, listed the first time a location ends in `*`.
     listed: ?[]const Assets.Name = null,
@@ -436,17 +430,28 @@ pub const Shapes = struct {
         entry.key_ptr.* = try self.arena.dupe(u8, key);
         entry.value_ptr.* = null;
         const json = try self.file(location) orelse return null;
-        entry.value_ptr.* = fullCube(json);
+        const cube = fullCube(json) orelse return null;
+        entry.value_ptr.* = .{
+            .up = try self.arena.dupe(u8, cube.up),
+            .south = try self.arena.dupe(u8, cube.south),
+            .east = try self.arena.dupe(u8, cube.east),
+            .climateColorMap = try self.lasting(cube.climateColorMap),
+            .seasonColorMap = try self.lasting(cube.seasonColorMap),
+        };
         return entry.value_ptr.*;
+    }
+
+    /// `text`, which a shape file names, kept past the file.
+    fn lasting(self: *Shapes, text: ?[]const u8) !?[]const u8 {
+        return if (text) |name| try self.arena.dupe(u8, name) else null;
     }
 
     /// The shape file at `location`, read the first time; null if it can't be read. A location
     /// ending in `*`, as an overlay's may, is the first file it stands for (`matching`).
     fn file(self: *Shapes, location: Location) !?Json.Value {
         const key = try std.fmt.allocPrint(self.scratch, "{s}:{s}", .{ location.domain, location.path });
-        const entry = try self.files.getOrPut(self.arena, key);
+        const entry = try self.files.getOrPut(self.scratch, key);
         if (entry.found_existing) return entry.value_ptr.*;
-        entry.key_ptr.* = try self.arena.dupe(u8, key);
         entry.value_ptr.* = null;
         if (std.mem.endsWith(u8, location.path, "*")) {
             const files = try self.matching(location);
@@ -459,11 +464,11 @@ pub const Shapes = struct {
         const assets = self.assets orelse return null;
         const path = try std.fmt.allocPrint(self.scratch, "shapes/{s}.json", .{location.path});
         // A path no file can have, such as one with a second `:`, names none.
-        const text = assets.read(self.arena, self.io, location.domain, path) catch |err| switch (err) {
+        const text = assets.read(self.scratch, self.io, location.domain, path) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => return null,
         } orelse return null;
-        entry.value_ptr.* = Json.parse(self.arena, text) catch return null;
+        entry.value_ptr.* = Json.parse(self.scratch, text) catch return null;
         return entry.value_ptr.*;
     }
 
@@ -598,10 +603,10 @@ pub const Shapes = struct {
         if (built.boxes.items.len == 0) return null;
         const geometry = try self.arena.create(Geometry);
         geometry.* = .{
-            .boxes = try self.arena.dupe(Geometry.Box, built.boxes.items),
+            .boxes = try self.boxes.dupe(Geometry.Box, built.boxes.items),
             .textures = try self.arena.dupe(Geometry.TextureName, built.textures.items),
-            .climateColorMap = built.climateColorMap,
-            .seasonColorMap = built.seasonColorMap,
+            .climateColorMap = try self.lasting(built.climateColorMap),
+            .seasonColorMap = try self.lasting(built.seasonColorMap),
         };
         entry.value_ptr.* = geometry;
         return geometry;
@@ -763,8 +768,7 @@ pub const Shapes = struct {
                 if (std.mem.eql(u8, name.code, code) and sameOwn and name.tinted == tinted) return @intCast(i);
             }
             if (self.textures.items.len >= std.math.maxInt(u16)) return error.TooManyTextures;
-            const lastingOwn = if (own) |text| try self.shapes.arena.dupe(u8, text) else null;
-            try self.textures.append(scratch, .{ .code = code, .own = lastingOwn, .tinted = tinted });
+            try self.textures.append(scratch, .{ .code = try self.shapes.arena.dupe(u8, code), .own = try self.shapes.lasting(own), .tinted = tinted });
             return @intCast(self.textures.items.len - 1);
         }
     };
@@ -1528,7 +1532,7 @@ test "the textures that colour a block" {
         .{ .json = "{ textureByType: { '*': { base: 'one' } }, textures: { all: { base: 'two' }, north: { base: 'x' } } }", .colour = "game:one", .grain = "game:one" },
         .{ .json = "{ texture: null, textures: { all: { base: 'two' } } }", .colour = "game:two", .grain = "game:two" },
     };
-    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .boxes = a, .io = undefined, .assets = null };
     for (cases) |case| {
         const look = try describe(a, try Json.parse(a, case.json), variant, &shapes);
         try std.testing.expectEqualDeep(case.colour, look.textures.colour);
@@ -1541,7 +1545,7 @@ test "the cube a block is drawn as" {
     defer arena.deinit();
     const a = arena.allocator();
     const rock: Variant = .{ .code = .{ .domain = "game", .path = "rock-granite" }, .parts = &.{.{ .group = "rock", .state = "granite" }} };
-    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .boxes = a, .io = undefined, .assets = null };
     try shapes.files.put(a, "game:block/basic/cube", try Json.parse(a, "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 16, 16 ], faces: { up: { texture: '#up' }, south: { texture: '#south' } } } ] }"));
 
     // `all` on every face, with an ore's overlay, untinted.
@@ -1635,7 +1639,7 @@ test "the shape a block is drawn in" {
     defer arena.deinit();
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "step" }, .parts = &.{} };
-    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .boxes = a, .io = undefined, .assets = null };
     // A step with a knob on it, its shape read before, and a leaf turned 45° beside it.
     try shapes.files.put(a, "game:block/test/step", try Json.parse(a,
         \\{ textures: { own: 'block/own' }, elements: [
@@ -1717,7 +1721,7 @@ test "the shapes a block picks from" {
     defer arena.deinit();
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "bush" }, .parts = &.{} };
-    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .boxes = a, .io = undefined, .assets = null };
     // Two bushes, the second in a folder below, a third in another format, a pot, and a bush
     // in another domain.
     shapes.listed = &.{
@@ -1790,7 +1794,7 @@ test "how high a block's selection box reaches" {
     defer arena.deinit();
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "loosestones-granite-free" }, .parts = &.{} };
-    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .boxes = a, .io = undefined, .assets = null };
     const cases = [_]struct { json: []const u8, height: ?u8 }{
         .{ .json = "{ selectionBox: { x1: 0.0625, y1: 0, z1: 0.0625, x2: 0.9375, y2: 0.125, z2: 0.9375 } }", .height = 2 },
         .{ .json = "{ collisionSelectionBox: { x1: 0, y1: 0, z1: 0, x2: 1, y2: 0.25, z2: 1 } }", .height = 4 },
@@ -1805,7 +1809,7 @@ test "how a block is placed by where it is" {
     defer arena.deinit();
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "tallgrass-tall" }, .parts = &.{} };
-    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .boxes = a, .io = undefined, .assets = null };
     const cases = [_]struct { json: []const u8, offset: u8, axes: Axes, turned: bool }{
         .{ .json = "{ randomDrawOffset: true, randomizeAxes: 'xz', randomizeRotations: true }", .offset = 1, .axes = .xz, .turned = true },
         .{ .json = "{ RandomDrawOffset: 14, randomizeAxes: 'XZ' }", .offset = 14, .axes = .xz, .turned = false },
@@ -1828,7 +1832,7 @@ test "the colour maps that tint a block" {
         \\{ climateColorMapByType: { "*-none": null, "*": "climatePlantTint" },
         \\  seasonColorMapByType: { "*-none": null, "*": "seasonalGrass" } }
     );
-    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .boxes = a, .io = undefined, .assets = null };
     const grassy = try describe(a, json, .{ .code = .{ .domain = "game", .path = "soil-low-normal" }, .parts = &.{} }, &shapes);
     try std.testing.expectEqualStrings("climatePlantTint", grassy.climateColorMap.?);
     try std.testing.expectEqualStrings("seasonalGrass", grassy.seasonColorMap.?);
