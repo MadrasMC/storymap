@@ -150,8 +150,9 @@ pub const Contents = struct {
         for (self.blocks, sprites) |*entry, own| entry.block.sprites = own;
     }
 
-    pub fn info(self: *const Contents) storyblk.Info {
-        return .{ .game = game, .gameVersion = self.gameVersion, .mods = self.mods };
+    /// The file's `info`, its list of mods kept in `arena`, so it can outlast these contents.
+    pub fn info(self: *const Contents, arena: std.mem.Allocator) !storyblk.Info {
+        return .{ .game = game, .gameVersion = self.gameVersion, .mods = try arena.dupe(storyblk.Mod, self.mods) };
     }
 
     /// The six sections, in the order of `sectionNames`, their bytes kept in `arena`. A count or
@@ -855,7 +856,7 @@ test "prepare, write, load and compare with a save" {
     contents.useSprites(&drawn);
 
     const sections = try contents.encode(arena.allocator());
-    try storyblk.writeFile(io, tmp.dir, "prepared.storyblk", first, contents.info(), &sections);
+    try storyblk.writeFile(io, tmp.dir, "prepared.storyblk", first, try contents.info(arena.allocator()), &sections);
     const written = try tmp.dir.readFileAlloc(io, "prepared.storyblk", arena.allocator(), .unlimited);
     const bytes = try arena.allocator().alignedAlloc(u8, .@"8", written.len);
     @memcpy(bytes, written);
