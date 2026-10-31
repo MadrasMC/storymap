@@ -254,30 +254,36 @@ fn writeStrings(w: *Io.Writer, comptime Count: type, strings: []const []const u8
     for (strings) |string| try storyblk.writeString(w, string);
 }
 
-/// Reads the blocks from `assets`, with what drawing their sprites needs, keeping them in
-/// `arena`, and what only reading them needs in memory from `gpa`, freed before it returns.
+/// Reads the blocks from `assets`, one block type file at a time, with what drawing their
+/// sprites needs, keeping them in `arena`. What reading needs throughout and what one file takes
+/// are in memory from `gpa`, the first freed before it returns and the second after each file.
 /// Blocks with the same faces share their lists of variants, and blocks placed the same their
 /// boxes: `isometric.drawSprites` tells them apart by those slices.
 pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets: *const Assets) !Contents {
-    var temporaryArena: std.heap.ArenaAllocator = .init(gpa);
-    defer temporaryArena.deinit();
-    const temporary = temporaryArena.allocator();
-    const types = try BlockTypes.expand(temporary, io, assets);
-    var textures: Textures = .{ .arena = temporary, .io = io, .assets = assets };
+    var readingArena: std.heap.ArenaAllocator = .init(gpa);
+    defer readingArena.deinit();
+    const reading = readingArena.allocator();
+    var fileArena: std.heap.ArenaAllocator = .init(gpa);
+    defer fileArena.deinit();
+    const scratch = fileArena.allocator();
+
+    var reader: BlockTypes.Reader = try .init(reading, io, assets);
+    var textures: Textures = .{ .arena = reading, .scratch = scratch, .io = io, .assets = assets };
     var images: Images = .{ .arena = arena, .textures = &textures };
-    const colourMaps = try prepareColourMaps(arena, temporary, io, assets);
+    const colourMaps = try prepareColourMaps(arena, reading, io, assets);
     var geometries: std.AutoHashMapUnmanaged(*const BlockTypes.Geometry, []const world.Shape.Box) = .empty;
-    const blocks = try arena.alloc(Contents.Entry, types.len);
-    for (blocks, types, 0..) |*entry, block, i| {
-        entry.* = .{
+    var entries: std.ArrayList(Contents.Entry) = .empty;
+    while (try reader.next(scratch)) |types| {
+        defer _ = fileArena.reset(.retain_capacity);
+        for (types) |block| try entries.append(reading, .{
             .code = try arena.dupe(u8, block.code),
             .block = .{
-                .index = @intCast(i),
+                .index = @intCast(entries.items.len),
                 .material = try arena.dupe(u8, block.material),
                 .colorCode = try arena.dupe(u8, block.colorCode),
                 .cube = try cubeOf(&images, block.cube),
                 .height = block.height,
-                .shapes = try shapesOf(arena, temporary, &images, &geometries, block.shapes),
+                .shapes = try shapesOf(arena, reading, &images, &geometries, block.shapes),
                 .drawOffset = block.drawOffset,
                 .randomizeAxes = block.randomizeAxes,
                 .randomizeRotations = block.randomizeRotations,
@@ -286,11 +292,11 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
             .grain = try textures.index(block.textures.grain),
             .climateColourMap = colourMapIndex(colourMaps, block.climateColorMap),
             .seasonColourMap = colourMapIndex(colourMaps, block.seasonColorMap),
-        };
+        });
     }
+    const blocks = try arena.dupe(Contents.Entry, entries.items);
     // Pointing into the textures and colour maps once all are read.
-    const colours = try arena.alloc(TextureColours, textures.read.items.len);
-    for (colours, textures.read.items) |*texture, read| texture.* = read.colours;
+    const colours = try arena.dupe(TextureColours, textures.read.items);
     for (blocks) |*entry| {
         if (entry.colour) |i| entry.block.colour = colours[i].average;
         if (entry.grain) |i| entry.block.grain = &colours[i].grain;
@@ -353,8 +359,8 @@ fn boxesOf(arena: std.mem.Allocator, boxes: []const BlockTypes.Geometry.Box) ![]
 /// Cube faces' images, each made once: a texture with its overlays drawn over it, or half of
 /// it, by index in the order they're first needed.
 const Images = struct {
-    /// Where the images and their lists are kept; what's only needed to make them is in
-    /// `textures.arena`.
+    /// Where the images and their lists are kept; the tables finding them are in
+    /// `textures.arena`, and what's only needed to make them in `textures.scratch`.
     arena: std.mem.Allocator,
     textures: *Textures,
     /// Each layer met so far, by its textures and half, and its index, or null if it can't be
@@ -370,6 +376,7 @@ const Images = struct {
         const indexes = try self.variants(layer) orelse return &.{};
         const entry = try self.lists.getOrPut(self.textures.arena, std.mem.sliceAsBytes(indexes));
         if (entry.found_existing) return entry.value_ptr.*;
+        entry.key_ptr.* = try self.textures.arena.dupe(u8, std.mem.sliceAsBytes(indexes));
         const found = try self.arena.alloc(*const Image, indexes.len);
         for (found, indexes) |*image, i| image.* = self.made.items[i];
         entry.value_ptr.* = found;
@@ -383,17 +390,17 @@ const Images = struct {
     /// other files, without overlays.
     fn variants(self: *Images, layer: ?BlockTypes.Layer) !?[]const usize {
         const wanted = layer orelse return null;
-        const arena = self.textures.arena;
+        const scratch = self.textures.scratch;
         var found: std.ArrayList(usize) = .empty;
         const files = try self.textures.paths(wanted.base);
-        if (files.len > 0) if (try self.index(wanted, files[0])) |i| try found.append(arena, i);
+        if (files.len > 0) if (try self.index(wanted, files[0])) |i| try found.append(scratch, i);
         for (wanted.alternates) |alternate| {
             const alternateFiles = try self.textures.paths(alternate.base);
-            if (alternateFiles.len > 0) if (try self.index(alternate, alternateFiles[0])) |i| try found.append(arena, i);
+            if (alternateFiles.len > 0) if (try self.index(alternate, alternateFiles[0])) |i| try found.append(scratch, i);
         }
         const bare: BlockTypes.Layer = .{ .base = wanted.base, .half = wanted.half };
         if (files.len > 1) for (files[1..]) |path| {
-            if (try self.index(bare, path)) |i| try found.append(arena, i);
+            if (try self.index(bare, path)) |i| try found.append(scratch, i);
         };
         return if (found.items.len == 0) null else found.items;
     }
@@ -402,12 +409,13 @@ const Images = struct {
     /// it can't be made.
     fn index(self: *Images, layer: BlockTypes.Layer, path: []const u8) !?usize {
         const arena = self.textures.arena;
-        var name: std.Io.Writer.Allocating = .init(arena);
+        var name: std.Io.Writer.Allocating = .init(self.textures.scratch);
         try name.writer.print("{s}:{s}", .{ domainOf(layer.base), path });
         for (layer.overlays) |overlay| try name.writer.print("+{s}", .{overlay});
         if (layer.half) |half| try name.writer.print("#{t}", .{half});
         const entry = try self.indexes.getOrPut(arena, name.written());
         if (entry.found_existing) return entry.value_ptr.*;
+        entry.key_ptr.* = try arena.dupe(u8, name.written());
         entry.value_ptr.* = null;
         const made = try self.make(layer, path) orelse return null;
         const image = try self.arena.create(Image);
@@ -418,13 +426,13 @@ const Images = struct {
     }
 
     fn make(self: *Images, layer: BlockTypes.Layer, path: []const u8) !?Image {
-        const arena = self.textures.arena;
-        const png = try self.textures.assets.read(arena, self.textures.io, domainOf(layer.base), path) orelse return null;
-        var image = try decode(arena, png) orelse return null;
-        if (layer.half) |half| image = halfOf(arena, image, half) orelse return null;
+        const scratch = self.textures.scratch;
+        const png = try self.textures.assets.read(scratch, self.textures.io, domainOf(layer.base), path) orelse return null;
+        var image = try decode(scratch, png) orelse return null;
+        if (layer.half) |half| image = halfOf(scratch, image, half) orelse return null;
         // An overlay that can't be read is left out, as the game leaves out a missing texture.
         for (layer.overlays) |location| {
-            const overlay = try decode(arena, try self.textures.readPng(location) orelse continue) orelse continue;
+            const overlay = try decode(scratch, try self.textures.readPng(location) orelse continue) orelse continue;
             drawOver(@constCast(image.pixels), image.width, image.height, overlay);
         }
         return image;
@@ -526,12 +534,15 @@ fn colourMapIndex(maps: []const Tint.ColourMap, code: ?[]const u8) ?u8 {
 
 /// The textures the blocks name, each read once, by index in the order they're first named.
 const Textures = struct {
+    /// What lasts while the blocks are read: what's below.
     arena: std.mem.Allocator,
+    /// What only reading one file of blocks needs, such as the textures' PNGs.
+    scratch: std.mem.Allocator,
     io: Io,
     assets: *const Assets,
     /// Each location named so far, and its index, or null if it can't be read.
     indexes: std.StringHashMapUnmanaged(?u32) = .empty,
-    read: std.ArrayList(struct { location: []const u8, colours: TextureColours }) = .empty,
+    read: std.ArrayList(TextureColours) = .empty,
     /// Every texture file, listed the first time a location ends in `*`.
     files: ?[]const Assets.Name = null,
 
@@ -540,9 +551,10 @@ const Textures = struct {
         const wanted = location orelse return null;
         const entry = try self.indexes.getOrPut(self.arena, wanted);
         if (entry.found_existing) return entry.value_ptr.*;
+        entry.key_ptr.* = try self.arena.dupe(u8, wanted);
         entry.value_ptr.* = null;
         const colours = try self.readColours(wanted) orelse return null;
-        try self.read.append(self.arena, .{ .location = wanted, .colours = colours });
+        try self.read.append(self.arena, colours);
         entry.value_ptr.* = @intCast(self.read.items.len - 1);
         return entry.value_ptr.*;
     }
@@ -557,7 +569,7 @@ const Textures = struct {
     fn readPng(self: *Textures, location: []const u8) !?[]const u8 {
         const files = try self.paths(location);
         if (files.len == 0) return null;
-        return self.assets.read(self.arena, self.io, domainOf(location), files[0]);
+        return self.assets.read(self.scratch, self.io, domainOf(location), files[0]);
     }
 
     /// The texture's file, in its location's domain; or for a location ending in `*`, every file
@@ -565,14 +577,14 @@ const Textures = struct {
     /// `CompositeTexture.Bake`).
     fn paths(self: *Textures, location: []const u8) ![]const []const u8 {
         const domain = domainOf(location);
-        const path = try std.fmt.allocPrint(self.arena, "textures/{s}.png", .{location[domain.len + 1 ..]});
-        if (!std.mem.endsWith(u8, location, "*")) return self.arena.dupe([]const u8, &.{path});
+        const path = try std.fmt.allocPrint(self.scratch, "textures/{s}.png", .{location[domain.len + 1 ..]});
+        if (!std.mem.endsWith(u8, location, "*")) return self.scratch.dupe([]const u8, &.{path});
         const start = path[0 .. path.len - "*.png".len];
         const files = self.files orelse try self.assets.list(self.arena, self.io, "textures");
         self.files = files;
         var found: std.ArrayList([]const u8) = .empty;
         for (files) |file| {
-            if (std.mem.eql(u8, file.domain, domain) and std.mem.startsWith(u8, file.path, start) and std.mem.endsWith(u8, file.path, ".png")) try found.append(self.arena, file.path);
+            if (std.mem.eql(u8, file.domain, domain) and std.mem.startsWith(u8, file.path, start) and std.mem.endsWith(u8, file.path, ".png")) try found.append(self.scratch, file.path);
         }
         return found.items;
     }

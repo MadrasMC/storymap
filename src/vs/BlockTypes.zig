@@ -186,31 +186,61 @@ const Part = struct {
     state: []const u8,
 };
 
-/// Every block `assets` defines, each code once, in file order. A block type that can't be
-/// read is skipped with a warning, as in the game.
-pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const Block {
-    var expander: Expander = .{ .arena = arena, .io = io, .assets = assets };
-    try expander.loadWorldProperties();
-    var shapes: Shapes = .{ .arena = arena, .io = io, .assets = assets };
+/// Reads the blocks `assets` defines one block type file at a time, so what one file takes to
+/// read can go before the next. Shape files, world properties and the codes seen so far last in
+/// the arena given to `init`.
+pub const Reader = struct {
+    arena: std.mem.Allocator,
+    expander: Expander,
+    shapes: Shapes,
+    names: []const Assets.Name,
+    /// The next of `names` to read.
+    at: usize = 0,
+    seen: std.StringHashMapUnmanaged(void) = .empty,
 
-    var blocks: std.ArrayList(Block) = .empty;
-    var seen: std.StringHashMapUnmanaged(void) = .empty;
-    for (try assets.list(arena, io, "blocktypes")) |name| {
-        if (!std.mem.endsWith(u8, name.path, ".json")) continue;
-        const blockType = expander.blockType(name) catch |err| {
-            console.warn("skipped block type {s}:{s}: could not read ({s})", .{ name.domain, name.path, @errorName(err) });
-            continue;
+    pub fn init(arena: std.mem.Allocator, io: Io, assets: *const Assets) !Reader {
+        var expander: Expander = .{ .arena = arena, .io = io, .assets = assets };
+        try expander.loadWorldProperties();
+        return .{
+            .arena = arena,
+            .expander = expander,
+            .shapes = .{ .arena = arena, .scratch = arena, .io = io, .assets = assets },
+            .names = try assets.list(arena, io, "blocktypes"),
         };
+    }
+
+    /// The blocks of the next block type file, in `temporary` with what reading it took, each
+    /// code once across all files; null after the last. A block type that can't be read is
+    /// skipped with a warning, as in the game. Their shapes' `geometry` lasts longer.
+    pub fn next(self: *Reader, temporary: std.mem.Allocator) !?[]const Block {
+        self.expander.arena = temporary;
+        self.shapes.scratch = temporary;
+        while (self.at < self.names.len) {
+            const name = self.names[self.at];
+            self.at += 1;
+            if (!std.mem.endsWith(u8, name.path, ".json")) continue;
+            const blockType = self.expander.blockType(name) catch |err| {
+                console.warn("skipped block type {s}:{s}: could not read ({s})", .{ name.domain, name.path, @errorName(err) });
+                continue;
+            };
+            return try self.blocksOf(temporary, name, blockType.json, blockType.variants);
+        }
+        return null;
+    }
+
+    fn blocksOf(self: *Reader, temporary: std.mem.Allocator, name: Assets.Name, json: Json.Value, variants: []const Variant) ![]const Block {
+        var blocks: std.ArrayList(Block) = .empty;
         var warned = false;
-        for (blockType.variants) |variant| {
+        for (variants) |variant| {
             const code = variant.code;
             const saved = if (std.mem.eql(u8, code.domain, Assets.gameDomain))
                 code.path
             else
-                try std.fmt.allocPrint(arena, "{s}:{s}", .{ code.domain, code.path });
-            const entry = try seen.getOrPut(arena, saved);
+                try std.fmt.allocPrint(temporary, "{s}:{s}", .{ code.domain, code.path });
+            const entry = try self.seen.getOrPut(self.arena, saved);
             if (entry.found_existing) continue;
-            const look = describe(arena, blockType.json, variant, &shapes) catch |err| switch (err) {
+            entry.key_ptr.* = try self.arena.dupe(u8, saved);
+            const look = describe(temporary, json, variant, &self.shapes) catch |err| switch (err) {
                 error.OutOfMemory => return err,
                 else => look: {
                     // As in the game, a variant whose …ByType properties can't be resolved
@@ -220,7 +250,7 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                     break :look Look{ .material = defaultMaterial, .colorCode = defaultColorCode(defaultMaterial), .textures = .{} };
                 },
             };
-            try blocks.append(arena, .{
+            try blocks.append(temporary, .{
                 .code = saved,
                 .material = look.material,
                 .colorCode = look.colorCode,
@@ -235,7 +265,15 @@ pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const 
                 .randomizeRotations = look.randomizeRotations,
             });
         }
+        return blocks.items;
     }
+};
+
+/// Every block `assets` defines at once: `Reader` keeping all it reads.
+pub fn expand(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const Block {
+    var reader: Reader = try .init(arena, io, assets);
+    var blocks: std.ArrayList(Block) = .empty;
+    while (try reader.next(arena)) |some| try blocks.appendSlice(arena, some);
     return blocks.items;
 }
 
@@ -360,7 +398,10 @@ const Drawing = union(enum) {
 /// The game's shape files, each read once: the boxes of a block's shape, and the plain cube a
 /// shape may hold.
 pub const Shapes = struct {
+    /// What lasts: the files, each way of placing them, and the tables finding them.
     arena: std.mem.Allocator,
+    /// What only one lookup, or the block it's for, needs.
+    scratch: std.mem.Allocator,
     io: Io,
     /// Null where there are no files to read, as in tests.
     assets: ?*const Assets,
@@ -389,9 +430,10 @@ pub const Shapes = struct {
 
     /// The cube in the shape at `location`, or null if it has none or can't be read.
     fn cubeIn(self: *Shapes, location: Location) !?CubeElement {
-        const key = try std.fmt.allocPrint(self.arena, "{s}:{s}", .{ location.domain, location.path });
+        const key = try std.fmt.allocPrint(self.scratch, "{s}:{s}", .{ location.domain, location.path });
         const entry = try self.cubes.getOrPut(self.arena, key);
         if (entry.found_existing) return entry.value_ptr.*;
+        entry.key_ptr.* = try self.arena.dupe(u8, key);
         entry.value_ptr.* = null;
         const json = try self.file(location) orelse return null;
         entry.value_ptr.* = fullCube(json);
@@ -401,20 +443,21 @@ pub const Shapes = struct {
     /// The shape file at `location`, read the first time; null if it can't be read. A location
     /// ending in `*`, as an overlay's may, is the first file it stands for (`matching`).
     fn file(self: *Shapes, location: Location) !?Json.Value {
-        const key = try std.fmt.allocPrint(self.arena, "{s}:{s}", .{ location.domain, location.path });
+        const key = try std.fmt.allocPrint(self.scratch, "{s}:{s}", .{ location.domain, location.path });
         const entry = try self.files.getOrPut(self.arena, key);
         if (entry.found_existing) return entry.value_ptr.*;
+        entry.key_ptr.* = try self.arena.dupe(u8, key);
         entry.value_ptr.* = null;
         if (std.mem.endsWith(u8, location.path, "*")) {
             const files = try self.matching(location);
             if (files.len == 0) return null;
-            const json = try self.file(try .parse(self.arena, files[0], location.domain));
+            const json = try self.file(try .parse(self.scratch, files[0], location.domain));
             // Looked up again: reading the first file may have moved the table.
             self.files.getPtr(key).?.* = json;
             return json;
         }
         const assets = self.assets orelse return null;
-        const path = try std.fmt.allocPrint(self.arena, "shapes/{s}.json", .{location.path});
+        const path = try std.fmt.allocPrint(self.scratch, "shapes/{s}.json", .{location.path});
         // A path no file can have, such as one with a second `:`, names none.
         const text = assets.read(self.arena, self.io, location.domain, path) catch |err| switch (err) {
             error.OutOfMemory => return err,
@@ -431,13 +474,14 @@ pub const Shapes = struct {
     /// guess. For an alternate's own base, vsapi cuts the path to its shape's base's length
     /// instead, which no asset relies on, as it either fails or matches more than meant.
     fn matching(self: *Shapes, location: Location) ![]const []const u8 {
-        const key = try std.fmt.allocPrint(self.arena, "{s}:{s}", .{ location.domain, location.path });
+        const key = try std.fmt.allocPrint(self.scratch, "{s}:{s}", .{ location.domain, location.path });
         const entry = try self.matches.getOrPut(self.arena, key);
         if (entry.found_existing) return entry.value_ptr.*;
+        entry.key_ptr.* = try self.arena.dupe(u8, key);
         entry.value_ptr.* = &.{};
         const names = self.listed orelse if (self.assets) |assets| try assets.list(self.arena, self.io, "shapes") else return &.{};
         self.listed = names;
-        const start = try std.fmt.allocPrint(self.arena, "shapes/{s}", .{location.path[0 .. location.path.len - 1]});
+        const start = try std.fmt.allocPrint(self.scratch, "shapes/{s}", .{location.path[0 .. location.path.len - 1]});
         var found: std.ArrayList([]const u8) = .empty;
         for (names) |name| {
             if (!std.mem.eql(u8, name.domain, location.domain) or !std.mem.startsWith(u8, name.path, start)) continue;
@@ -461,7 +505,7 @@ pub const Shapes = struct {
     ///   else is its own.
     /// A shape listed twice is picked twice as often.
     fn resolve(self: *Shapes, composite: Json.Value, domain: []const u8) ![]const Json.Value {
-        const arena = self.arena;
+        const arena = self.scratch;
         const base = (composite.get("base") orelse return arena.dupe(Json.Value, &.{composite})).asString() orelse return arena.dupe(Json.Value, &.{composite});
         var list: std.ArrayList(Json.Value) = .empty;
         if (std.mem.endsWith(u8, base, "*")) {
@@ -514,7 +558,7 @@ pub const Shapes = struct {
     /// each with the block's textures for it; empty if none shows a face.
     fn alternatesOf(self: *Shapes, composite: Json.Value, textures: []const Json.Field, tinted: bool, domain: []const u8) ![]const Shape {
         const list = try self.resolve(composite, domain);
-        const found = try self.arena.alloc(Shape, list.len);
+        const found = try self.scratch.alloc(Shape, list.len);
         var any = false;
         for (found, list) |*shape, placed| {
             shape.* = try self.shapeOf(placed, textures, tinted, domain) orelse .empty;
@@ -527,9 +571,9 @@ pub const Shapes = struct {
     /// textures for it (`textureFor`). Null if no box shows a face.
     fn shapeOf(self: *Shapes, composite: Json.Value, textures: []const Json.Field, tinted: bool, domain: []const u8) !?Shape {
         const geometry = try self.geometryOf(composite, domain) orelse return null;
-        const faces = try self.arena.alloc(Face, geometry.textures.len);
+        const faces = try self.scratch.alloc(Face, geometry.textures.len);
         for (faces, geometry.textures) |*face, name| {
-            const layer = try textureFor(self.arena, textures, name, domain) orelse {
+            const layer = try textureFor(self.scratch, textures, name, domain) orelse {
                 face.* = .{};
                 continue;
             };
@@ -541,11 +585,12 @@ pub const Shapes = struct {
     /// The boxes of a composite shape and its overlays, built the first time they're placed
     /// that way; null if no box shows a face.
     fn geometryOf(self: *Shapes, composite: Json.Value, domain: []const u8) !?*const Geometry {
-        var key: std.Io.Writer.Allocating = .init(self.arena);
-        try writeKey(&key.writer, self.arena, composite, domain);
-        for (composite.getArray("overlays")) |overlay| try writeKey(&key.writer, self.arena, overlay, domain);
+        var key: std.Io.Writer.Allocating = .init(self.scratch);
+        try writeKey(&key.writer, self.scratch, composite, domain);
+        for (composite.getArray("overlays")) |overlay| try writeKey(&key.writer, self.scratch, overlay, domain);
         const entry = try self.geometries.getOrPut(self.arena, key.written());
         if (entry.found_existing) return entry.value_ptr.*;
+        entry.key_ptr.* = try self.arena.dupe(u8, key.written());
         entry.value_ptr.* = null;
         var built: Builder = .{ .shapes = self, .domain = domain };
         try built.add(composite);
@@ -553,8 +598,8 @@ pub const Shapes = struct {
         if (built.boxes.items.len == 0) return null;
         const geometry = try self.arena.create(Geometry);
         geometry.* = .{
-            .boxes = built.boxes.items,
-            .textures = built.textures.items,
+            .boxes = try self.arena.dupe(Geometry.Box, built.boxes.items),
+            .textures = try self.arena.dupe(Geometry.TextureName, built.textures.items),
             .climateColorMap = built.climateColorMap,
             .seasonColorMap = built.seasonColorMap,
         };
@@ -604,9 +649,8 @@ pub const Shapes = struct {
 
         /// Adds one composite shape's elements: its file's, turned and placed as it says.
         fn add(self: *Builder, composite: Json.Value) !void {
-            const arena = self.shapes.arena;
             const base = (composite.get("base") orelse return).asString() orelse return;
-            const location: Location = try .parse(arena, base, self.domain);
+            const location: Location = try .parse(self.shapes.scratch, base, self.domain);
             const json = try self.shapes.file(location) orelse return;
             const shape: File = .{
                 .location = location,
@@ -636,7 +680,7 @@ pub const Shapes = struct {
         /// `selectiveElements` take everything under one of them, or there are none.
         fn element(self: *Builder, shape: *const File, json: Json.Value, parent: Matrix, above: []const u8, selected: bool) !void {
             const name = if (json.get("name")) |n| n.asString() orelse "" else "";
-            const path = if (above.len == 0) name else try std.fmt.allocPrint(self.shapes.arena, "{s}/{s}", .{ above, name });
+            const path = if (above.len == 0) name else try std.fmt.allocPrint(self.shapes.scratch, "{s}/{s}", .{ above, name });
             if (listing(shape.ignored, path, name) != .none) return;
             const selection = listing(shape.selective, path, name);
             const drawn = selected or selection != .none;
@@ -666,7 +710,7 @@ pub const Shapes = struct {
                     faces[side] = try self.face(shape, field.value, side, size, climate != null or season != null) orelse continue;
                     any = true;
                 };
-                if (any) try self.boxes.append(self.shapes.arena, .{
+                if (any) try self.boxes.append(self.shapes.scratch, .{
                     .transform = transform,
                     .size = size,
                     .shade = if (json.get("shade")) |s| !s.isFalse() else true,
@@ -708,18 +752,19 @@ pub const Shapes = struct {
 
         /// The number of the texture a face names, added the first time.
         fn textureNumber(self: *Builder, shape: *const File, code: []const u8, tinted: bool) !u16 {
-            const arena = self.shapes.arena;
+            const scratch = self.shapes.scratch;
             const own: ?[]const u8 = if (shape.textures.get(code)) |value| own: {
                 const path = value.asString() orelse break :own null;
-                const location: Location = try .parse(arena, path, shape.location.domain);
-                break :own try std.fmt.allocPrint(arena, "{s}:{s}", .{ location.domain, location.path });
+                const location: Location = try .parse(scratch, path, shape.location.domain);
+                break :own try std.fmt.allocPrint(scratch, "{s}:{s}", .{ location.domain, location.path });
             } else null;
             for (self.textures.items, 0..) |name, i| {
                 const sameOwn = if (name.own) |a| (if (own) |b| std.mem.eql(u8, a, b) else false) else own == null;
                 if (std.mem.eql(u8, name.code, code) and sameOwn and name.tinted == tinted) return @intCast(i);
             }
             if (self.textures.items.len >= std.math.maxInt(u16)) return error.TooManyTextures;
-            try self.textures.append(arena, .{ .code = code, .own = own, .tinted = tinted });
+            const lastingOwn = if (own) |text| try self.shapes.arena.dupe(u8, text) else null;
+            try self.textures.append(scratch, .{ .code = code, .own = lastingOwn, .tinted = tinted });
             return @intCast(self.textures.items.len - 1);
         }
     };
@@ -1136,6 +1181,7 @@ test fillPlaceholders {
 }
 
 const Expander = struct {
+    /// What's being read goes here; `Reader` changes it after the world properties, which last.
     arena: std.mem.Allocator,
     io: Io,
     assets: *const Assets,
@@ -1482,7 +1528,7 @@ test "the textures that colour a block" {
         .{ .json = "{ textureByType: { '*': { base: 'one' } }, textures: { all: { base: 'two' }, north: { base: 'x' } } }", .colour = "game:one", .grain = "game:one" },
         .{ .json = "{ texture: null, textures: { all: { base: 'two' } } }", .colour = "game:two", .grain = "game:two" },
     };
-    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
     for (cases) |case| {
         const look = try describe(a, try Json.parse(a, case.json), variant, &shapes);
         try std.testing.expectEqualDeep(case.colour, look.textures.colour);
@@ -1495,7 +1541,7 @@ test "the cube a block is drawn as" {
     defer arena.deinit();
     const a = arena.allocator();
     const rock: Variant = .{ .code = .{ .domain = "game", .path = "rock-granite" }, .parts = &.{.{ .group = "rock", .state = "granite" }} };
-    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
     try shapes.files.put(a, "game:block/basic/cube", try Json.parse(a, "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 16, 16 ], faces: { up: { texture: '#up' }, south: { texture: '#south' } } } ] }"));
 
     // `all` on every face, with an ore's overlay, untinted.
@@ -1589,7 +1635,7 @@ test "the shape a block is drawn in" {
     defer arena.deinit();
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "step" }, .parts = &.{} };
-    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
     // A step with a knob on it, its shape read before, and a leaf turned 45° beside it.
     try shapes.files.put(a, "game:block/test/step", try Json.parse(a,
         \\{ textures: { own: 'block/own' }, elements: [
@@ -1671,7 +1717,7 @@ test "the shapes a block picks from" {
     defer arena.deinit();
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "bush" }, .parts = &.{} };
-    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
     // Two bushes, the second in a folder below, a third in another format, a pot, and a bush
     // in another domain.
     shapes.listed = &.{
@@ -1744,7 +1790,7 @@ test "how high a block's selection box reaches" {
     defer arena.deinit();
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "loosestones-granite-free" }, .parts = &.{} };
-    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
     const cases = [_]struct { json: []const u8, height: ?u8 }{
         .{ .json = "{ selectionBox: { x1: 0.0625, y1: 0, z1: 0.0625, x2: 0.9375, y2: 0.125, z2: 0.9375 } }", .height = 2 },
         .{ .json = "{ collisionSelectionBox: { x1: 0, y1: 0, z1: 0, x2: 1, y2: 0.25, z2: 1 } }", .height = 4 },
@@ -1759,7 +1805,7 @@ test "how a block is placed by where it is" {
     defer arena.deinit();
     const a = arena.allocator();
     const variant: Variant = .{ .code = .{ .domain = "game", .path = "tallgrass-tall" }, .parts = &.{} };
-    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
     const cases = [_]struct { json: []const u8, offset: u8, axes: Axes, turned: bool }{
         .{ .json = "{ randomDrawOffset: true, randomizeAxes: 'xz', randomizeRotations: true }", .offset = 1, .axes = .xz, .turned = true },
         .{ .json = "{ RandomDrawOffset: 14, randomizeAxes: 'XZ' }", .offset = 14, .axes = .xz, .turned = false },
@@ -1782,7 +1828,7 @@ test "the colour maps that tint a block" {
         \\{ climateColorMapByType: { "*-none": null, "*": "climatePlantTint" },
         \\  seasonColorMapByType: { "*-none": null, "*": "seasonalGrass" } }
     );
-    var shapes: Shapes = .{ .arena = a, .io = undefined, .assets = null };
+    var shapes: Shapes = .{ .arena = a, .scratch = a, .io = undefined, .assets = null };
     const grassy = try describe(a, json, .{ .code = .{ .domain = "game", .path = "soil-low-normal" }, .parts = &.{} }, &shapes);
     try std.testing.expectEqualStrings("climatePlantTint", grassy.climateColorMap.?);
     try std.testing.expectEqualStrings("seasonalGrass", grassy.seasonColorMap.?);
