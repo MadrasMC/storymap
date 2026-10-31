@@ -220,20 +220,23 @@
 	<section id="prepared">
 		<div class="section-content">
 			<h2><span class="num">8</span><span>What preparing keeps</span></h2>
-			<p>Everything above is worked out once, from the assets, into a blocks folder: <code>blocks</code> in the current folder, beside a render's <code>out</code>, or the one given (<code>--blocks</code> when rendering, the folder argument of <code>storymap prepare</code>). It holds one set per game and mods, in <code>&lt;blocks folder&gt;/&lt;key&gt;/</code>, the key changing with the game version and the mods' names, sizes and times, so updating either prepares a new set and switching back finds the old one. A render prepares the set it needs if it isn't there yet, <code>--prepare</code> prepares it again anyway, and without the game a render uses the newest set prepared before. A save's blocks the set doesn't have are reported.</p>
+			<p>Everything above is worked out once, from the assets, into one file: <code>prepared.storyblk</code> in the current folder, or the one given (<code>--blocks</code> when rendering, the argument of <code>storymap prepare</code>). Its hash changes with how Storymap reads the assets and draws sprites, the game version and the mods' names, sizes and times, so updating any of them prepares the file again. A render prepares the file if it isn't there or its hash differs, <code>--prepare</code> prepares it again anyway, and without the game a render reads the file as it is, if it was made the way this Storymap makes it. A save's blocks the file doesn't have are reported.</p>
 			<div class="table-wrap">
 				<table>
-					<thead><tr><th>file</th><th>holds</th><th>1.22.7 with Primitive Survival</th></tr></thead>
+					<thead><tr><th>section</th><th>holds</th><th>1.22.7 with Primitive Survival</th></tr></thead>
 					<tbody>
-						<tr><td><code>blocks.txt</code></td><td>each block's code, material, colour code, texture colours, colour maps, cube faces and how high it reaches, and its shape</td><td>24 MB, most of it the shapes' boxes</td></tr>
-						<tr><td><code>colormaps/</code></td><td>the colour maps' images</td><td>–</td></tr>
-						<tr><td><code>textures.bin</code></td><td>the cubes' face images, as RGBA pixels</td><td>22 MB</td></tr>
-						<tr><td><code>pictures.bin</code></td><td>the isometric view's sprites of every block: its cube or shape in every variant of its textures, in each of its shapes and in each of its turns, blocks drawn alike sharing sprites; a table of the blocks' sprites by their index in <code>blocks.txt</code>, a table of the sprites, then their pixels, everything at a multiple of its size</td><td>55,096 sprites, 195 MB, drawn in about 5 s</td></tr>
+						<tr><td><code>blocks</code></td><td>each block's code, how high it reaches, how it's placed and its run of sprites, naming the sections below by index</td><td>14,781 blocks, 0.8 MB</td></tr>
+						<tr><td><code>materials</code>, <code>colour_codes</code></td><td>the blocks' materials and colour codes, each once</td><td>19 and 11</td></tr>
+						<tr><td><code>texture_colours</code></td><td>each texture's average colour and grain</td><td>1,730 textures</td></tr>
+						<tr><td><code>colour_maps</code></td><td>the colour maps' pixels</td><td>26 maps, 0.6 MB</td></tr>
+						<tr><td><code>domains</code></td><td>the domains the game and mods have assets in</td><td>2</td></tr>
+						<tr><td><code>sprites</code></td><td>each sprite's place and size in the isometric view, and where its layers are</td><td>55,096 sprites, 0.9 MB</td></tr>
+						<tr><td><code>sprite_layers</code></td><td>the sprites' pixels: every block's cube or shape in every variant of its textures, in each of its shapes and in each of its turns, blocks drawn alike sharing sprites</td><td>193 MB, drawn in about 5 s</td></tr>
 					</tbody>
 				</table>
 			</div>
-			<p>Preparing takes about 2 s for the 14,781 blocks, most of it reading and decoding textures, and drawing the sprites about 5 s more. Only drawing the sprites needs the face images and the shapes, so a render leaves them out and loads the rest in about 0.03 s; it maps <code>pictures.bin</code> and reads the sprites where they are, under each block's index in <code>blocks.txt</code>, which the renderer asks the game's reader for (<code>spritesOf</code>), so a sprite costs it neither drawing nor memory of its own. The file names the version of the sprites and its layout: a render that finds it missing, or of another version, draws it again from the prepared blocks, without reading the game's assets.</p>
-			<p class="source">Sources: <a href="../blocks.md#preparing-blocks">blocks.md: preparing blocks</a> · <a href="../blocks.md#pictures">blocks.md: pictures</a></p>
+			<p>Preparing takes about 2 s for the 14,781 blocks, and drawing the sprites about 5 s more. Only drawing the sprites needs the face images and the shapes, so the file leaves them out. A render maps the file and reads the sprites where they are, as each block's run of sprites says, which the renderer asks the game's reader for (<code>spritesOf</code>), so a sprite costs it neither drawing nor memory of its own. Each section names the version of how it was made, and the file's hash covers them.</p>
+			<p class="source">Sources: <a href="../blocks.md#preparing-blocks">blocks.md: preparing blocks</a> · <a href="../blocks.md#sprites">blocks.md: sprites</a> · <a href="../storyblk/spec.md">the file's specification</a></p>
 		</div>
 	</section>
 </main>

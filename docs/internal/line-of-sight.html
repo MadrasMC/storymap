@@ -84,7 +84,7 @@
 		<li><b>From the top.</b> Each line starts at the top of the world and walks down it, a chunk at a time.</li>
 		<li><b>Chunks.</b> At each chunk it asks the worker's cache. A chunk not in it is read from the save, turned into one byte per block saying how it's drawn, and kept; a chunk the save doesn't have, or with nothing to draw, is kept as that. A chunk with nothing to draw is passed in one go.</li>
 		<li><b>Blocks.</b> In a chunk with blocks, the line checks its blocks one by one. The first one that's drawn is the one on its square; nothing behind it on the line can show, so the line stops there.</li>
-		<li><b>Drawing.</b> The block's picture goes on the line's square. Squares of neighbouring lines overlap a little, and the depth buffer keeps the nearer block where they do.</li>
+		<li><b>Drawing.</b> The block's sprite goes on the line's square. Squares of neighbouring lines overlap a little, and the depth buffer keeps the nearer block where they do.</li>
 	</ol>
 	<p>Lines stop near the ground, so chunks deep underground are never read: only those along the explored area's east and south edges, where lines come in from outside and meet the walls. In the game's worlds that's about a fifth of the chunks reading every chunk under each tile took.</p>
 </main>

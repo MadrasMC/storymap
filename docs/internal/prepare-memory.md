@@ -54,7 +54,7 @@ That took the peak from 505 MB to 2,385 MB.
 | --- | --- |
 | everything from reading: JSON, asset files, tables, images, boxes | 502 MB |
 | each sprite's layers, in separate allocations | about 190 MB |
-| `sprite_layers` as one block, the pixels a second time | 194 MB |
+| `sprite_layers` as one block, the pixels a second time | 193 MB |
 | old copies of that block, and unused arena space | about 1.3 GB |
 
 The last row was the surprise, and came from how arenas grow:

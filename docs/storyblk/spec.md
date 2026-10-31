@@ -2,8 +2,6 @@
 
 A `.storyblk` file holds what a render needs to know about a game's blocks, prepared once from the game's and mods' assets ([Preparing blocks](../blocks.md#preparing-blocks)), with the isometric view's sprites of them. A render maps the file and reads its sprites in place, and [viewer.html](viewer.html) shows its sprites in a browser.
 
-Storymap doesn't read or write this format yet; this is its specification.
-
 ## 1. Use
 
 Storymap keeps one file, `prepared.storyblk` in the current folder, or the one given on the command line (`--blocks` when rendering, the argument of `storymap prepare`). Its hash (§6) tells Storymap whether the file was prepared from the game and mods it's running with, by a Storymap that prepares and draws the same way. Without the game, which the hash depends on, each section's `generator_version` (§7) and `sprites.block_width` still tell it whether the file was made the same way. When Storymap prepares the file again is Storymap's choice ([Preparing blocks](../blocks.md#preparing-blocks)), not the format's.
