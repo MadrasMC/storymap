@@ -46,16 +46,17 @@ pub fn deinit(self: *ReservedBuffer) void {
     self.* = undefined;
 }
 
-/// error.BufferFull past its capacity.
-pub fn append(self: *ReservedBuffer, bytes: []const u8) error{ OutOfMemory, BufferFull }!void {
-    if (bytes.len > self.memory.len - self.length) return error.BufferFull;
-    const end = self.length + bytes.len;
+/// The next `length` bytes, zeros, for the caller to fill in place. error.BufferFull past its
+/// capacity.
+pub fn reserve(self: *ReservedBuffer, length: usize) error{ OutOfMemory, BufferFull }![]u8 {
+    if (length > self.memory.len - self.length) return error.BufferFull;
+    const end = self.length + length;
     if (builtin.os.tag == .windows and end > self.committed) try self.commit(end);
-    @memcpy(self.memory[self.length..end], bytes);
-    self.length = end;
+    defer self.length = end;
+    return self.memory[self.length..end];
 }
 
-/// Makes the first `end` bytes usable, and some more, so few appends have to.
+/// Makes the first `end` bytes usable, and some more, so few reservations have to.
 fn commit(self: *ReservedBuffer, end: usize) error{OutOfMemory}!void {
     const wanted = @min(std.mem.alignForward(usize, end, commitStep), self.memory.len);
     var base: ?*anyopaque = self.memory.ptr + self.committed;
@@ -74,10 +75,14 @@ test ReservedBuffer {
     var buffer: ReservedBuffer = try .init(1 << 32);
     defer buffer.deinit();
     const start = buffer.memory.ptr;
-    const piece: [1 << 20]u8 = @splat(7);
-    for (0..commitStep / piece.len + 2) |_| try buffer.append(&piece);
-    try buffer.append("end");
-    try std.testing.expectEqual(commitStep + 2 * piece.len + 3, buffer.written().len);
+    const pieceLength = 1 << 20;
+    for (0..commitStep / pieceLength + 2) |_| {
+        const piece = try buffer.reserve(pieceLength);
+        try std.testing.expectEqual(0, piece[pieceLength - 1]);
+        @memset(piece, 7);
+    }
+    @memcpy(try buffer.reserve(3), "end");
+    try std.testing.expectEqual(commitStep + 2 * pieceLength + 3, buffer.written().len);
     try std.testing.expectEqual(start, buffer.written().ptr);
     try std.testing.expectEqual(7, buffer.written()[commitStep]);
     try std.testing.expectEqualStrings("end", buffer.written()[buffer.length - 3 ..]);
@@ -85,10 +90,8 @@ test ReservedBuffer {
     // Full, it keeps what it has.
     var small: ReservedBuffer = try .init(1);
     defer small.deinit();
-    const whole = try std.testing.allocator.alloc(u8, small.memory.len);
-    defer std.testing.allocator.free(whole);
-    @memset(whole, 1);
-    try small.append(whole);
-    try std.testing.expectError(error.BufferFull, small.append("x"));
-    try std.testing.expectEqual(whole.len, small.written().len);
+    const whole = small.memory.len;
+    _ = try small.reserve(whole);
+    try std.testing.expectError(error.BufferFull, small.reserve(1));
+    try std.testing.expectEqual(whole, small.written().len);
 }

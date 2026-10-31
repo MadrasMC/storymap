@@ -433,35 +433,20 @@ fn faceColours(colour: world.Rgb) [3]u32 {
     return .{ lit(pixel, light.get(.top)), lit(pixel, light.get(.south)), lit(pixel, light.get(.east)) };
 }
 
-/// A cube's square drawn in its textures, its faces lit.
-const CubeLayers = struct {
-    /// The faces' plain layers: opaque on every face, and transparent where none is.
-    plain: Layer,
-    /// The faces' tinted layers, lit but not yet tinted, each pixel's alpha how much of it the
-    /// layer covers; null if no face has one.
-    tinted: ?Layer,
-
-    const Layer = [blockWidth * blockWidth]u32;
-};
-
 const Sprite = Sprites.Sprite;
 const SpriteLayers = Sprites.SpriteLayers;
 
-/// `cube`'s sprite in its variant `variant`, its layers kept in `allocator`.
-fn cubeSprite(allocator: std.mem.Allocator, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) !struct { Sprite, SpriteLayers } {
-    const drawn = cubeLayers(cube, variant, fallback);
-    const sprite: Sprite = .{
+/// Draws `cube`'s sprite in its variant `variant` into `sections`.
+fn cubeSprite(sections: *Sprites.Sections, allocator: std.mem.Allocator, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) !void {
+    const room = try sections.add(allocator, .{
         .left = 0,
         .top = 0,
         .width = blockWidth,
         .height = blockWidth,
-        .flags = .{ .tinted = drawn.tinted != null, .fills = true },
-    };
-    return .{ sprite, .{
-        .plain = try allocator.dupe(u32, &drawn.plain),
-        .tinted = if (drawn.tinted) |tinted| try allocator.dupe(u32, &tinted) else null,
-        .depths = try allocator.dupe(i16, @as(*const [blockWidth * blockWidth]i16, @ptrCast(&cubeDepths))),
-    } };
+        .flags = .{ .tinted = cube.up.tinted.len > 0 or cube.south.tinted.len > 0 or cube.east.tinted.len > 0, .fills = true },
+    });
+    cubeLayers(cube, variant, fallback, room.plain, room.tinted);
+    @memcpy(room.depths, @as(*const [blockWidth * blockWidth]i16, @ptrCast(&cubeDepths)));
 }
 
 /// Points sampled across and down each pixel of a sprite.
@@ -476,35 +461,33 @@ fn variantCount(cube: *const world.CubeFaces) usize {
 
 /// Draws `cube` in its textures, each layer in its variant `variant` (counting round again for
 /// a layer with fewer): each pixel of a layer is the average of its texels under it. A plain
-/// pixel over only transparent texels is `fallback`.
-fn cubeLayers(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) CubeLayers {
-    var out: CubeLayers = .{ .plain = undefined, .tinted = null };
-    const anyTinted = cube.up.tinted.len > 0 or cube.south.tinted.len > 0 or cube.east.tinted.len > 0;
-    var tinted: CubeLayers.Layer = undefined;
+/// pixel over only transparent texels is `fallback`. `plain` takes the faces' plain layers, opaque
+/// on every face and transparent where none is, and `tinted`, where any face has one, their
+/// tinted layers, lit but not yet tinted, each pixel's alpha how much of it the layer covers.
+fn cubeLayers(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb, plain: []u32, tinted: ?[]u32) void {
     for (0..blockWidth) |row| for (0..blockWidth) |column| {
         const p = row * blockWidth + column;
         const face = faces[row][column];
         const layers = switch (face) {
             .none => {
-                out.plain[p] = tiles.transparent;
-                tinted[p] = tiles.transparent;
+                plain[p] = tiles.transparent;
+                if (tinted) |out| out[p] = tiles.transparent;
                 continue;
             },
             .top => cube.up,
             .south => cube.south,
             .east => cube.east,
         };
-        const plain = average(face, column, row, pick(layers.plain, variant));
-        const colour = if (plain[3] == 0) fallback else plain[0..3].*;
-        out.plain[p] = lit(tiles.rgba(colour[0], colour[1], colour[2], 255), light.get(face));
+        const texel = average(face, column, row, pick(layers.plain, variant));
+        const colour = if (texel[3] == 0) fallback else texel[0..3].*;
+        plain[p] = lit(tiles.rgba(colour[0], colour[1], colour[2], 255), light.get(face));
+        const out = tinted orelse continue;
         var layer = average(face, column, row, pick(layers.tinted, variant));
         // A face that's all tinted, as leaves are, has its holes filled with `fallback` to be
         // tinted too, rather than showing what's under it untinted.
         if (layers.plain.len == 0 and layers.tinted.len > 0) layer = if (layer[3] == 0) fallback ++ [1]u8{255} else layer[0..3].* ++ [1]u8{255};
-        tinted[p] = lit(tiles.rgba(layer[0], layer[1], layer[2], layer[3]), light.get(face));
+        out[p] = lit(tiles.rgba(layer[0], layer[1], layer[2], layer[3]), light.get(face));
     };
-    if (anyTinted) out.tinted = tinted;
-    return out;
 }
 
 /// A layer's variant `variant`, counting round again past its last; null without the layer.
@@ -624,9 +607,9 @@ pub const turns = 8;
 /// Draws `shape` in its textures, each in its variant `variant` (counting round again for one
 /// with fewer), in turn `turn` of `turns`, or unturned for null, its faces lit by the way they
 /// face. Each of its pixels is drawn at `samples` × `samples` points: it shows if at least half
-/// of them are covered, the average of their colours, the depth of the nearest. Kept in
-/// `allocator`, trimmed to the pixels it shows.
-fn shapeSprite(allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, turn: ?usize, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
+/// of them are covered, the average of their colours, the depth of the nearest. Added to
+/// `sections`, trimmed to the pixels it shows, and returned with its layers there.
+fn shapeSprite(sections: *Sprites.Sections, allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, turn: ?usize, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
     std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
     target.clear();
     const scale: f32 = samples;
@@ -683,11 +666,17 @@ fn shapeSprite(allocator: std.mem.Allocator, shape: *const world.Shape, variant:
     const height = if (first[0] > last[0]) 0 else last[0] - first[0] + 1;
     const width = if (first[1] > last[1]) 0 else last[1] - first[1] + 1;
 
-    const plain = try allocator.alloc(u32, width * height);
-    errdefer allocator.free(plain);
-    const tinted: ?[]u32 = if (anyTinted) try allocator.alloc(u32, width * height) else null;
-    errdefer if (tinted) |layer| allocator.free(layer);
-    const depths = try allocator.alloc(i16, width * height);
+    const sprite: Sprite = .{
+        .left = @as(i16, @intCast(first[1])) - reach,
+        .top = @as(i16, @intCast(first[0])) - reach,
+        .width = @intCast(width),
+        .height = @intCast(height),
+        .flags = .{ .tinted = anyTinted, .fills = fills },
+    };
+    const room = try sections.add(allocator, sprite);
+    const plain = room.plain;
+    const tinted = room.tinted;
+    const depths = room.depths;
     for (0..height) |y| for (0..width) |x| {
         const row = first[0] + y;
         const column = first[1] + x;
@@ -716,13 +705,6 @@ fn shapeSprite(allocator: std.mem.Allocator, shape: *const world.Shape, variant:
         }
         depths[p] = @intFromFloat(@round(nearest * depthSteps));
     };
-    const sprite: Sprite = .{
-        .left = @as(i16, @intCast(first[1])) - reach,
-        .top = @as(i16, @intCast(first[0])) - reach,
-        .width = @intCast(width),
-        .height = @intCast(height),
-        .flags = .{ .tinted = tinted != null, .fills = fills },
-    };
     return .{ sprite, .{ .plain = plain, .tinted = tinted, .depths = depths } };
 }
 
@@ -736,17 +718,12 @@ pub const Drawable = struct {
     turned: bool = false,
 };
 
-/// The most a sprite's layers can take in bytes: its plain and tinted layers and its depths, and
-/// what lines them up.
-const spriteBytes = shapeSide * shapeSide * (4 + 4 + 2) + 16;
-
 /// Draws every block's sprites, one for each variant of its textures, in each of its shapes,
 /// in each of its turns, into `sections`, one at a time. Blocks with the same faces, or the same
 /// shapes and textures turned alike, share sprites. A block's textures have as many variants as
 /// the most any of its shapes' has, each with fewer counting round again. Returns each block's
 /// sprites, by its index in `drawables`.
 pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, sections: *Sprites.Sections) ![]const world.BlockSprites {
-    var scratch: std.heap.FixedBufferAllocator = .init(try arena.alloc(u8, spriteBytes));
     const blocks = try arena.alloc(world.BlockSprites, drawables.len);
     var byFaces: std.HashMapUnmanaged(world.CubeFaces, world.BlockSprites, FacesContext, std.hash_map.default_max_load_percentage) = .empty;
     var byShape: std.HashMapUnmanaged(ShapeKey, world.BlockSprites, ShapeContext, std.hash_map.default_max_load_percentage) = .empty;
@@ -758,11 +735,7 @@ pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, sectio
             if (!found.found_existing) {
                 const variants = variantCount(cube);
                 found.value_ptr.* = .{ .first = @intCast(sections.entries.items.len), .variants = @intCast(variants) };
-                for (0..variants) |variant| {
-                    scratch.reset();
-                    const sprite, const pixels = try cubeSprite(scratch.allocator(), cube, variant, drawable.colour);
-                    try sections.add(arena, sprite, pixels);
-                }
+                for (0..variants) |variant| try cubeSprite(sections, arena, cube, variant, drawable.colour);
                 found.value_ptr.tinted = sections.entries.items[found.value_ptr.first].flags.tinted;
             }
             block.* = found.value_ptr.*;
@@ -780,10 +753,8 @@ pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, sectio
                     .shape = true,
                 };
                 for (0..turnCount) |turn| for (drawable.shapes) |*shape| for (0..variants) |variant| {
-                    scratch.reset();
-                    const sprite, const pixels = try shapeSprite(scratch.allocator(), shape, variant, if (drawable.turned) turn else null, &target);
+                    const sprite, _ = try shapeSprite(sections, arena, shape, variant, if (drawable.turned) turn else null, &target);
                     if (sprite.flags.tinted) found.value_ptr.tinted = true;
-                    try sections.add(arena, sprite, pixels);
                 };
             }
             block.* = found.value_ptr.*;
@@ -853,13 +824,26 @@ fn sub(a: [3]f32, b: [3]f32) [3]f32 {
     return .{ a[0] - b[0], a[1] - b[1], a[2] - b[2] };
 }
 
+/// A cube's square drawn in its textures, for testing `cubeLayers`.
+const CubeLayers = struct {
+    plain: [blockWidth * blockWidth]u32,
+    tinted: ?[blockWidth * blockWidth]u32,
+
+    fn of(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) CubeLayers {
+        var out: CubeLayers = .{ .plain = undefined, .tinted = undefined };
+        out.tinted = if (cube.up.tinted.len > 0 or cube.south.tinted.len > 0 or cube.east.tinted.len > 0) out.plain else null;
+        cubeLayers(cube, variant, fallback, &out.plain, if (out.tinted) |*tinted| tinted else null);
+        return out;
+    }
+};
+
 test cubeLayers {
     const red: [4][4]u8 = @splat(.{ 200, 0, 0, 255 });
     const grass = [_][4]u8{ .{ 0, 100, 0, 255 }, .{ 0, 100, 0, 255 }, .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 } };
     const soil: world.Image = .{ .width = 2, .height = 2, .pixels = &red };
     const fringe: world.Image = .{ .width = 2, .height = 2, .pixels = &grass };
     const grassy: world.CubeFaces.Face = .{ .plain = &.{&soil}, .tinted = &.{&fringe} };
-    const layers = cubeLayers(&.{ .up = .{ .plain = &.{&soil} }, .south = grassy, .east = grassy }, 0, .{ 1, 2, 3 });
+    const layers: CubeLayers = .of(&.{ .up = .{ .plain = &.{&soil} }, .south = grassy, .east = grassy }, 0, .{ 1, 2, 3 });
     const w = blockWidth;
     const white: world.Rgb = @splat(255);
     try std.testing.expectEqual(tiles.transparent, layers.plain[0]);
@@ -873,7 +857,7 @@ test cubeLayers {
     try std.testing.expectEqual(faceColours(.{ 200, 0, 0 })[2], blend(layers.plain[bare], layers.tinted.?[bare], .{ 0, 0, 0 }));
     // Without a tinted layer, there's none to blend.
     const plain: world.CubeFaces.Face = .{ .plain = &.{&soil} };
-    try std.testing.expectEqual(null, cubeLayers(&.{ .up = plain, .south = plain, .east = plain }, 0, .{ 1, 2, 3 }).tinted);
+    try std.testing.expectEqual(null, CubeLayers.of(&.{ .up = plain, .south = plain, .east = plain }, 0, .{ 1, 2, 3 }).tinted);
 
     // A top with two variants: the second sprite has the second, and the sides, with one,
     // their only one.
@@ -881,13 +865,13 @@ test cubeLayers {
     const water: world.Image = .{ .width = 2, .height = 2, .pixels = &blue };
     const varied: world.CubeFaces = .{ .up = .{ .plain = &.{ &soil, &water } }, .south = plain, .east = plain };
     try std.testing.expectEqual(2, variantCount(&varied));
-    const second = cubeLayers(&varied, 1, .{ 1, 2, 3 });
+    const second: CubeLayers = .of(&varied, 1, .{ 1, 2, 3 });
     try std.testing.expectEqual(faceColours(.{ 0, 0, 200 })[0], second.plain[top]);
     try std.testing.expectEqual(faceColours(.{ 200, 0, 0 })[2], second.plain[bare]);
 
     // Leaves, all tinted: the holes in the bottom half take the fallback, and are tinted too.
     const leafy: world.CubeFaces.Face = .{ .tinted = &.{&fringe} };
-    const leaves = cubeLayers(&.{ .up = leafy, .south = leafy, .east = leafy }, 0, .{ 100, 100, 100 });
+    const leaves: CubeLayers = .of(&.{ .up = leafy, .south = leafy, .east = leafy }, 0, .{ 100, 100, 100 });
     // Grey 100 lit as an east face is 68, then tinted by 127 of 255, 33.
     try std.testing.expectEqual(tiles.rgba(0, 33, 0, 255), blend(leaves.plain[bare], leaves.tinted.?[bare], .{ 0, 127, 0 }));
 }
@@ -912,6 +896,8 @@ test shapeSprite {
     defer arena.deinit();
     const allocator = arena.allocator();
     var target = try shapeTarget(allocator);
+    var sections: Sprites.Sections = try .init();
+    defer sections.deinit();
     const red: [4][4]u8 = @splat(.{ 200, 0, 0, 255 });
     const image: world.Image = .{ .width = 2, .height = 2, .pixels = &red };
     const textures = [_]world.CubeFaces.Face{.{ .plain = &.{&image} }};
@@ -922,7 +908,7 @@ test shapeSprite {
 
     // A whole block's box is the cube, filling the square, its faces lit as a cube's and each
     // pixel as deep as a cube's.
-    const cube, const cubePixels = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, &target);
+    const cube, const cubePixels = try shapeSprite(&sections, allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, &target);
     try std.testing.expectEqual([4]i64{ 0, 0, w, w }, [4]i64{ cube.left, cube.top, cube.width, cube.height });
     try std.testing.expect(cube.flags.fills);
     try std.testing.expect(!cube.flags.tinted);
@@ -936,7 +922,7 @@ test shapeSprite {
     try std.testing.expect(!cubePixels.shows(pixelAt(&cube, 0, 0).?));
 
     // A slab leaves the top of the square empty, for what's behind it to show.
-    const slab, const slabPixels = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, &target);
+    const slab, const slabPixels = try shapeSprite(&sections, allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, &target);
     try std.testing.expect(!slab.flags.fills);
     try std.testing.expectEqual(w / 4, slab.top);
     try std.testing.expectEqual(null, pixelAt(&slab, w / 8, w / 2));
@@ -945,13 +931,13 @@ test shapeSprite {
     // A plank twice as long as the block reaches out of its square both ways, drawn whole.
     var plank = testBox(.{ 2, 1.0 / 16.0, 1 });
     plank.transform[0][3] = -0.5;
-    const long, _ = try shapeSprite(allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, &target);
+    const long, _ = try shapeSprite(&sections, allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, &target);
     try std.testing.expectEqual(-w / 4, long.left);
     try std.testing.expectEqual(w + w / 2, long.width);
 
     // A tinted texture goes into the tinted layer, covering the plain one.
     const tinted = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
-    const grass, const grassPixels = try shapeSprite(allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, &target);
+    const grass, const grassPixels = try shapeSprite(&sections, allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, &target);
     try std.testing.expect(grass.flags.tinted);
     const p = pixelAt(&grass, top[0], top[1]).?;
     try std.testing.expectEqual(colours[0], grassPixels.tinted.?[p]);
@@ -963,9 +949,9 @@ test shapeSprite {
     wall.transform[0][3] = 0.75;
     const shape: world.Shape = .{ .boxes = &.{wall}, .textures = &textures };
     const middle = [2]i64{ w / 2, w * 5 / 16 };
-    const unturned, _ = try shapeSprite(allocator, &shape, 0, null, &target);
+    const unturned, _ = try shapeSprite(&sections, allocator, &shape, 0, null, &target);
     try std.testing.expectEqual(null, pixelAt(&unturned, middle[0], middle[1]));
-    const turned, const turnedPixels = try shapeSprite(allocator, &shape, 0, turns / 2, &target);
+    const turned, const turnedPixels = try shapeSprite(&sections, allocator, &shape, 0, turns / 2, &target);
     try std.testing.expect(turnedPixels.shows(pixelAt(&turned, middle[0], middle[1]).?));
 
     // Turns 0 and 7, −22.5° and −67.5°, are as far either side of south-east, where the view
@@ -975,8 +961,8 @@ test shapeSprite {
     post.transform[0][3] = 0.8125;
     post.transform[2][3] = 0.4375;
     const postShape: world.Shape = .{ .boxes = &.{post}, .textures = &textures };
-    const right, _ = try shapeSprite(allocator, &postShape, 0, 0, &target);
-    const left, _ = try shapeSprite(allocator, &postShape, 0, 7, &target);
+    const right, _ = try shapeSprite(&sections, allocator, &postShape, 0, 0, &target);
+    const left, _ = try shapeSprite(&sections, allocator, &postShape, 0, 7, &target);
     try std.testing.expect(right.left > w / 2);
     try std.testing.expectEqual(@as(i32, w) - right.left - right.width, left.left);
     try std.testing.expectEqual(right.top, left.top);

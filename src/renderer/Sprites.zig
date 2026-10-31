@@ -84,9 +84,9 @@ pub const SpriteLayers = struct {
     }
 };
 
-/// The two sections as they're made, a sprite at a time: a sprite's layers need to last only
-/// until it's added, so the pixels are never held twice, and `sprite_layers`, which is as long
-/// as a section can be for all anyone knows until the last sprite is drawn, is never copied.
+/// The two sections as they're made, a sprite at a time: each sprite is drawn where it goes in
+/// `sprite_layers`, which is as long as a section can be for all anyone knows until the last
+/// sprite is drawn, so its pixels are never copied.
 pub const Sections = struct {
     entries: std.ArrayList(Sprite) = .empty,
     layers: ReservedBuffer,
@@ -100,26 +100,32 @@ pub const Sections = struct {
         self.layers.deinit();
     }
 
-    /// Adds `sprite` with its `layers`, its offset set to where they go.
-    pub fn add(self: *Sections, allocator: std.mem.Allocator, sprite: Sprite, layers: SpriteLayers) !void {
-        std.debug.assert(layers.plain.len == sprite.pixelCount() and layers.depths.len == sprite.pixelCount());
-        std.debug.assert((layers.tinted != null) == sprite.flags.tinted);
+    /// A sprite's layers, where they go, to be filled in.
+    pub const Room = struct {
+        plain: []u32,
+        tinted: ?[]u32,
+        depths: []i16,
+    };
+
+    /// Adds `sprite`, its offset set to where its layers go, and returns them.
+    pub fn add(self: *Sections, allocator: std.mem.Allocator, sprite: Sprite) !Room {
         if (self.entries.items.len == std.math.maxInt(u32)) return error.TooManySprites;
-        var stored = sprite;
-        stored.offset = @intCast(self.layers.length);
-        try self.entries.append(allocator, stored);
-        self.appendLayers(layers) catch |err| return switch (err) {
+        const offset = self.layers.length;
+        const bytes = self.layers.reserve(sprite.layersLength()) catch |err| return switch (err) {
             error.BufferFull => error.SpriteLayersTooLong,
             error.OutOfMemory => error.OutOfMemory,
         };
-    }
-
-    fn appendLayers(self: *Sections, layers: SpriteLayers) !void {
-        try self.layers.append(std.mem.sliceAsBytes(layers.plain));
-        if (layers.tinted) |tinted| try self.layers.append(std.mem.sliceAsBytes(tinted));
-        try self.layers.append(std.mem.sliceAsBytes(layers.depths));
-        const padding = std.mem.alignForward(usize, layers.depths.len * 2, 4) - layers.depths.len * 2;
-        try self.layers.append((&[_]u8{ 0, 0 })[0..padding]);
+        var stored = sprite;
+        stored.offset = @intCast(offset);
+        try self.entries.append(allocator, stored);
+        const pixels = sprite.pixelCount();
+        const aligned: []align(4) u8 = @alignCast(bytes);
+        const depthsAt = pixels * (if (sprite.flags.tinted) @as(usize, 8) else 4);
+        return .{
+            .plain = @alignCast(std.mem.bytesAsSlice(u32, aligned[0 .. pixels * 4])),
+            .tinted = if (sprite.flags.tinted) @alignCast(std.mem.bytesAsSlice(u32, aligned[pixels * 4 .. depthsAt])) else null,
+            .depths = @alignCast(std.mem.bytesAsSlice(i16, aligned[depthsAt..][0 .. pixels * 2])),
+        };
     }
 
     /// The `sprites` section's bytes.
@@ -180,7 +186,12 @@ test "add and parse" {
     var sections: Sections = try .init();
     defer sections.deinit();
     defer sections.entries.deinit(allocator);
-    for (sprites, layers) |sprite, each| try sections.add(allocator, sprite, each);
+    for (sprites, layers) |sprite, each| {
+        const room = try sections.add(allocator, sprite);
+        @memcpy(room.plain, each.plain);
+        if (room.tinted) |tinted| @memcpy(tinted, each.tinted.?);
+        @memcpy(room.depths, each.depths);
+    }
     const entries = try sections.entryBytes(allocator, 32);
     defer allocator.free(entries);
     try std.testing.expectEqual(8 + 2 * 16, entries.len);
