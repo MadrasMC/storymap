@@ -156,15 +156,16 @@ A texture's colours, which the game's colour-accurate map draws a block with ([T
 
 ### ColourMap
 
-A colour map that a block's colour is multiplied by, by climate or by season ([Climate and season tint](../blocks.md#climate-and-season-tint)). A colour map without an image, or whose image can't be decoded or isn't wider and taller than twice its padding, is left out, and blocks that name it name none.
+A colour map that a block's colour is multiplied by, by climate or by season ([Climate and season tint](../blocks.md#climate-and-season-tint)), its pixels read in place. A colour map without an image, or whose image can't be decoded or isn't wider and taller than twice its padding, is left out, and blocks that name it name none.
 
 | Field | Type | Contents |
 | --- | --- | --- |
 | `code` | [String](#string) | e.g. `climatePlantTint` |
 | `padding` | u8 | pixels around the image's edge that aren't part of the map |
 | `flags` | u8 | bit 0: a tropical season map, weighted by rainfall rather than temperature |
-| `image_length` | u32 | – |
-| `image` | [image_length]u8 | a PNG, wider and taller than twice `padding` |
+| `width` | u16 | wider than twice `padding` |
+| `height` | u16 | taller than twice `padding` |
+| `pixels` | [width × height][3]u8 | red, green and blue, row by row |
 
 ### Block
 
@@ -221,6 +222,7 @@ A reader rejects the whole file when:
 - `info` or `section_table` goes past the end of the file, or `info`'s fields go past `header.info_length` bytes
 - a section the reader needs is missing, appears twice, has a `layout_version` the reader doesn't know, starts before the end of `section_table` or not on a multiple of 8, or doesn't lie wholly within the file
 - a section's fields go past its length
+- a ColourMap isn't wider and taller than twice its `padding`
 - a Block's `material` isn't below `materials.count`, its `colour_code` isn't below `colour_codes.count`, its `colour` or `grain` isn't below `texture_colours.count` and isn't 0xFFFFFFFF, or its `climate_colour_map` or `season_colour_map` isn't below `colour_maps.count` and isn't 0xFF
 - a Block has `variants` but no `alternates` or `turns`, or its sprites go past the last Sprite
 - the length of `texture_colours` or `sprites` isn't the one §3 gives
@@ -242,7 +244,7 @@ It depends on file times, so the same game and mods give a different hash on ano
 A layout version says how to read something, and a generator version how its contents were made:
 
 - The container's version, `header.version`, changes when `header`, `info` or `section_table` change.
-- A section's `layout_version` changes when that section's layout changes. In container version 1, every section's `layout_version` is 1.
+- A section's `layout_version` changes when that section's layout changes. In container version 1, `colour_maps`'s `layout_version` is 2, and every other section's is 1.
 - A section's `generator_version` changes when the code that makes its contents changes without the layout changing: a block read differently, or a sprite drawn differently. Storymap gives `blocks`, `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `domains` the version of how it reads the game's assets, and `sprites` and `sprite_layers` the version of how it draws sprites.
 
 A reader rejects a file with a layout version it doesn't know (§5). A `generator_version` other than the reader's own doesn't make the file invalid: the section was made by other code, and what to do with it is the reader's choice. Readers that only show the file go on reading it. Storymap, with the game, finds the hash different (§6) and prepares the file again; without it, it compares the generator versions themselves (§1).

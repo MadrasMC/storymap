@@ -63,11 +63,14 @@ const Image = world.Image;
 /// How the six sections' contents are read from the game's assets: raise it when that changes,
 /// so files prepared before are prepared again.
 pub const generatorVersion: u16 = 18;
-/// The layout of each of the six sections (spec §7).
-pub const layoutVersion: u8 = 1;
+/// The layout of the `colour_maps` section, and of each of the other five (spec §7).
+const colourMapsLayoutVersion: u8 = 2;
+const layoutVersion: u8 = 1;
 
 /// The sections this writes and reads, in the order it writes them.
 pub const sectionNames = [_][]const u8{ "blocks", "materials", "colour_codes", "texture_colours", "colour_maps", "domains" };
+/// Each section's layout, by `sectionNames`.
+pub const sectionLayoutVersions = [sectionNames.len]u8{ layoutVersion, layoutVersion, layoutVersion, layoutVersion, colourMapsLayoutVersion, layoutVersion };
 
 /// The game, as the file's `info` names it.
 pub const game = "vintagestory";
@@ -95,7 +98,7 @@ pub const SpriteFormat = struct {
 pub fn hash(io: Io, assets: *const Assets, sprites: SpriteFormat) !u64 {
     var hasher: std.hash.Wyhash = .init(0);
     std.hash.autoHash(&hasher, storyblk.version);
-    std.hash.autoHash(&hasher, layoutVersion);
+    std.hash.autoHash(&hasher, sectionLayoutVersions);
     std.hash.autoHash(&hasher, generatorVersion);
     std.hash.autoHash(&hasher, sprites);
     hasher.update(game);
@@ -126,7 +129,7 @@ pub const Contents = struct {
     mods: []const storyblk.Mod,
     domains: []const []const u8,
     textures: []const TextureColours,
-    colourMaps: []const ColourMap,
+    colourMaps: []const Tint.ColourMap,
     /// In the order of the `blocks` section.
     blocks: []Entry,
 
@@ -139,12 +142,6 @@ pub const Contents = struct {
         grain: ?u32 = null,
         climateColourMap: ?u8 = null,
         seasonColourMap: ?u8 = null,
-    };
-
-    /// A colour map, decoded, and its image as the game has it.
-    pub const ColourMap = struct {
-        map: Tint.ColourMap,
-        png: []const u8,
     };
 
     /// Gives each block its sprites, by its index.
@@ -192,18 +189,19 @@ pub const Contents = struct {
         }
         try colourMaps.writer.writeByte(@intCast(self.colourMaps.len));
         for (self.colourMaps) |colourMap| {
-            try storyblk.writeString(&colourMaps.writer, colourMap.map.code);
-            try colourMaps.writer.writeByte(@intCast(colourMap.map.padding));
-            try colourMaps.writer.writeByte(@intFromBool(colourMap.map.tropical));
-            try colourMaps.writer.writeInt(u32, std.math.cast(u32, colourMap.png.len) orelse return error.ColourMapTooLarge, .little);
-            try colourMaps.writer.writeAll(colourMap.png);
+            try storyblk.writeString(&colourMaps.writer, colourMap.code);
+            try colourMaps.writer.writeByte(@intCast(colourMap.padding));
+            try colourMaps.writer.writeByte(@intFromBool(colourMap.tropical));
+            try colourMaps.writer.writeInt(u16, @intCast(colourMap.width), .little);
+            try colourMaps.writer.writeInt(u16, @intCast(colourMap.height), .little);
+            try colourMaps.writer.writeAll(std.mem.sliceAsBytes(colourMap.pixels));
         }
         try writeStrings(&domains.writer, u16, self.domains);
 
         const bytes = [sectionNames.len][]const u8{ blocks.written(), materialNames.written(), colourCodeNames.written(), textures.written(), colourMaps.written(), domains.written() };
         var sections: [sectionNames.len]storyblk.Section = undefined;
-        for (&sections, sectionNames, bytes) |*section, name, written| {
-            section.* = .{ .name = name, .layoutVersion = layoutVersion, .generatorVersion = generatorVersion, .bytes = written };
+        for (&sections, sectionNames, sectionLayoutVersions, bytes) |*section, name, layout, written| {
+            section.* = .{ .name = name, .layoutVersion = layout, .generatorVersion = generatorVersion, .bytes = written };
         }
         return sections;
     }
@@ -296,8 +294,8 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
     for (blocks) |*entry| {
         if (entry.colour) |i| entry.block.colour = colours[i].average;
         if (entry.grain) |i| entry.block.grain = &colours[i].grain;
-        if (entry.climateColourMap) |i| entry.block.climateColourMap = &colourMaps[i].map;
-        if (entry.seasonColourMap) |i| entry.block.seasonColourMap = &colourMaps[i].map;
+        if (entry.climateColourMap) |i| entry.block.climateColourMap = &colourMaps[i];
+        if (entry.seasonColourMap) |i| entry.block.seasonColourMap = &colourMaps[i];
     }
     const mods = try arena.alloc(storyblk.Mod, assets.sources.items.len - 1);
     for (mods, assets.sources.items[1..]) |*mod, source| mod.* = source.mod.?;
@@ -480,9 +478,9 @@ test drawOver {
     try std.testing.expectEqual([4]u8{ 128, 0, 127, 255 }, pixels[1]);
 }
 
-/// The colour maps in the game's `config/colormaps.json` whose images can be read and decoded,
-/// in the file's order, kept in `arena`.
-fn prepareColourMaps(arena: std.mem.Allocator, temporary: std.mem.Allocator, io: Io, assets: *const Assets) ![]const Contents.ColourMap {
+/// The colour maps in the game's `config/colormaps.json` whose images can be read and decoded
+/// and fit their fields, in the file's order, kept in `arena`.
+fn prepareColourMaps(arena: std.mem.Allocator, temporary: std.mem.Allocator, io: Io, assets: *const Assets) ![]const Tint.ColourMap {
     const file = "config/colormaps.json";
     const bytes = try assets.read(temporary, io, Assets.gameDomain, file) orelse return &.{};
     const json = Json.parse(temporary, bytes) catch |err| {
@@ -490,23 +488,25 @@ fn prepareColourMaps(arena: std.mem.Allocator, temporary: std.mem.Allocator, io:
         return &.{};
     };
     if (json != .array) return &.{};
-    var maps: std.ArrayList(Contents.ColourMap) = .empty;
+    var maps: std.ArrayList(Tint.ColourMap) = .empty;
     for (json.array) |entry| {
         const code = (entry.get("code") orelse continue).asString() orelse continue;
         const base = ((entry.get("texture") orelse continue).get("base") orelse continue).asString() orelse continue;
         const colon = std.mem.indexOfScalar(u8, base, ':');
         const domain = if (colon) |c| base[0..c] else Assets.gameDomain;
         const path = try std.fmt.allocPrint(temporary, "textures/{s}.png", .{if (colon) |c| base[c + 1 ..] else base});
-        const png = try assets.read(arena, io, domain, path) orelse {
+        const png = try assets.read(temporary, io, domain, path) orelse {
             console.warn("colour map {s}: no image {s}:{s}", .{ code, domain, path });
             continue;
         };
         const padding = integer(entry.get("padding"));
         const map = if (padding <= std.math.maxInt(u8)) try Tint.ColourMap.decode(arena, try arena.dupe(u8, code), png, padding, integer(entry.get("extraFlags")) == 1) else null;
-        try maps.append(arena, .{ .map = map orelse {
+        const usable = if (map) |decoded| decoded.width <= std.math.maxInt(u16) and decoded.height <= std.math.maxInt(u16) else false;
+        if (!usable) {
             console.warn("colour map {s}: could not read its image {s}:{s}", .{ code, domain, path });
             continue;
-        }, .png = png });
+        }
+        try maps.append(arena, map.?);
     }
     return maps.items;
 }
@@ -518,9 +518,9 @@ fn integer(value: ?Json.Value) usize {
     return std.fmt.parseInt(usize, number.number, 10) catch 0;
 }
 
-fn colourMapIndex(maps: []const Contents.ColourMap, code: ?[]const u8) ?u8 {
+fn colourMapIndex(maps: []const Tint.ColourMap, code: ?[]const u8) ?u8 {
     const wanted = code orelse return null;
-    for (maps, 0..) |map, i| if (std.mem.eql(u8, map.map.code, wanted)) return std.math.cast(u8, i);
+    for (maps, 0..) |map, i| if (std.mem.eql(u8, map.code, wanted)) return std.math.cast(u8, i);
     return null;
 }
 
@@ -589,9 +589,9 @@ const blockLength = 2 + 1 + 1 + 4 + 4 + 1 + 1 + 1 + 1 + 1 + 4 + 2 + 2 + 1;
 const textureLength = 3 + TextureColours.samples * 3;
 
 /// The blocks in the six sections of `file`, each block's sprites checked against
-/// `spriteCount`, the `sprites` section's count. Their codes, materials, colour codes, domains
-/// and grain are where `file` is, which must outlive the result. A section that's missing, of
-/// another layout, or not as the spec has it is error.NotPreparedBlocks.
+/// `spriteCount`, the `sprites` section's count. Their codes, materials, colour codes, domains,
+/// grain and colour maps' pixels are where `file` is, which must outlive the result. A section
+/// that's missing, of another layout, or not as the spec has it is error.NotPreparedBlocks.
 pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCount: usize) !Prepared {
     var self: Prepared = .{ .arena = .init(allocator), .gameVersion = file.info.gameVersion, .mods = file.info.mods };
     errdefer self.deinit();
@@ -605,19 +605,23 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
     const textureCount = try textures.int(u32);
     if (textures.bytes.len != 4 + @as(u64, textureCount) * textureLength) return error.NotPreparedBlocks;
 
-    var colourMapsReader: storyblk.Reader = .{ .bytes = (try file.section("colour_maps", layoutVersion)).bytes };
-    // Null where an image can't be decoded, so the indexes still count.
-    const colourMaps = try arena.alloc(?*const Tint.ColourMap, try colourMapsReader.int(u8));
+    var colourMapsReader: storyblk.Reader = .{ .bytes = (try file.section("colour_maps", colourMapsLayoutVersion)).bytes };
+    const colourMaps = try arena.alloc(Tint.ColourMap, try colourMapsReader.int(u8));
     for (colourMaps) |*colourMap| {
         const code = try colourMapsReader.string();
-        const padding = try colourMapsReader.int(u8);
+        const padding: usize = try colourMapsReader.int(u8);
         const flags = try colourMapsReader.int(u8);
-        const png = try colourMapsReader.take(try colourMapsReader.int(u32));
-        colourMap.* = null;
-        const decoded = try Tint.ColourMap.decode(arena, code, png, padding, flags & 1 != 0) orelse continue;
-        const map = try arena.create(Tint.ColourMap);
-        map.* = decoded;
-        colourMap.* = map;
+        const width: usize = try colourMapsReader.int(u16);
+        const height: usize = try colourMapsReader.int(u16);
+        if (width <= 2 * padding or height <= 2 * padding) return error.NotPreparedBlocks;
+        colourMap.* = .{
+            .code = code,
+            .width = width,
+            .height = height,
+            .pixels = std.mem.bytesAsSlice(world.Rgb, try colourMapsReader.take(width * height * @sizeOf(world.Rgb))),
+            .padding = padding,
+            .tropical = flags & 1 != 0,
+        };
     }
 
     var blocks: storyblk.Reader = .{ .bytes = (try file.section("blocks", layoutVersion)).bytes };
@@ -682,9 +686,9 @@ fn textureAt(bytes: []const u8, count: u32, i: u32) error{NotPreparedBlocks}!?*c
     return bytes[4 + @as(usize, i) * textureLength ..][0..textureLength];
 }
 
-fn colourMapAt(maps: []const ?*const Tint.ColourMap, i: u8) error{NotPreparedBlocks}!?*const Tint.ColourMap {
+fn colourMapAt(maps: []const Tint.ColourMap, i: u8) error{NotPreparedBlocks}!?*const Tint.ColourMap {
     if (i == none8) return null;
-    return indexed(?*const Tint.ColourMap, maps, i);
+    return if (i < maps.len) &maps[i] else error.NotPreparedBlocks;
 }
 
 /// What a save's blocks have that the prepared blocks don't: the mods (domains) it lacks, and
@@ -860,6 +864,7 @@ test "prepare, write, load and compare with a save" {
     // The colour map's image, 2 × 1; the other one has none, so it isn't there.
     try std.testing.expectEqualStrings("climateTest", granite.climateColourMap.?.code);
     try std.testing.expectEqual(2, granite.climateColourMap.?.width);
+    try std.testing.expectEqualSlices(world.Rgb, contents.colourMaps[0].pixels, granite.climateColourMap.?.pixels);
     try std.testing.expectEqual(null, granite.seasonColourMap);
     try std.testing.expectEqual(world.BlockSprites{ .first = 0, .variants = 2, .tinted = true }, granite.sprites);
     try std.testing.expectEqual(drawn[step.index], prepared.blocks.get("step").?.sprites);
@@ -891,6 +896,18 @@ test "prepare, write, load and compare with a save" {
     sectionsCopy[0].bytes = blocksBytes;
     changed.sections = sectionsCopy;
     try std.testing.expectError(error.NotPreparedBlocks, load(std.testing.allocator, &changed, 5));
+    // Nor is one with a colour map that's all padding, or wider than its pixels go.
+    var maps = file;
+    const mapSections = try arena.allocator().dupe(storyblk.Section, file.sections);
+    const mapBytes = try arena.allocator().dupe(u8, mapSections[4].bytes);
+    mapSections[4].bytes = mapBytes;
+    maps.sections = mapSections;
+    const paddingAt = 1 + 2 + "climateTest".len;
+    mapBytes[paddingAt] = 1;
+    try std.testing.expectError(error.NotPreparedBlocks, load(std.testing.allocator, &maps, 5));
+    mapBytes[paddingAt] = 0;
+    mapBytes[paddingAt + 2] = 200;
+    try std.testing.expectError(error.NotPreparedBlocks, load(std.testing.allocator, &maps, 5));
 
     const codes = [_]?[]const u8{ "air", "rock-granite", "rock-basalt", null, "testmod:thing", "othermod:x", "othermod:y" };
     const missingCodes = try prepared.unknown(std.testing.allocator, &codes);

@@ -180,7 +180,7 @@ fn open(init: std.process.Init, path: []const u8, problem: *Problem) !Blocks {
     var map: std.Io.File.MemoryMap = try .create(io, file, .{ .len = @intCast(size), .protection = .{ .read = true }, .populate = false });
     errdefer map.destroy(io);
     const parsed = try storyblk.parse(init.arena.allocator(), map.memory);
-    for (Prepared.sectionNames) |name| try checkVersion(&parsed, name, Prepared.layoutVersion, Prepared.generatorVersion, problem);
+    for (Prepared.sectionNames, Prepared.sectionLayoutVersions) |name, layout| try checkVersion(&parsed, name, layout, Prepared.generatorVersion, problem);
     for ([_][]const u8{ Sprites.entriesSection, Sprites.layersSection }) |name| try checkVersion(&parsed, name, Sprites.layoutVersion, Sprites.generatorVersion, problem);
     // Each section starts on a multiple of 8 in the mapped file.
     const entries = try parsed.section(Sprites.entriesSection, Sprites.layoutVersion);

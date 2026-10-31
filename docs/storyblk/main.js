@@ -11,7 +11,7 @@ const SECTIONS = new Map([
 	["materials", 1],
 	["colour_codes", 1],
 	["texture_colours", 1],
-	["colour_maps", 1],
+	["colour_maps", 2],
 	["sprites", 1],
 	["sprite_layers", 1],
 ]);
@@ -56,7 +56,6 @@ const toastElement = $("toast");
 let shown = null; // { contents, file, box, blocks, groups }
 let zoom = 2;
 let current = null; // the block open in its dialog
-let colourMapURLs = []; // the colour map images the file's details show
 
 // Reading a .storyblk
 
@@ -165,7 +164,10 @@ function parse(buffer) {
 		const code = maps.takeString();
 		const padding = maps.takeU8();
 		const flags = maps.takeU8();
-		colourMaps.push({ code, padding, tropical: (flags & 1) !== 0, image: maps.takeBytes(maps.takeU32()) });
+		const width = maps.takeU16();
+		const height = maps.takeU16();
+		if (width <= 2 * padding || height <= 2 * padding) rejectFile(`its colour map ${code} isn't wider and taller than twice its padding`);
+		colourMaps.push({ code, padding, tropical: (flags & 1) !== 0, width, height, pixels: maps.takeBytes(width * height * 3) });
 	}
 
 	const spriteSection = sections.get("sprites");
@@ -304,50 +306,11 @@ function drawSprite(canvas, contents, index, tint) {
 
 // Tints
 
-let pixelReader = null;
-
-// The bitmap's pixels as its PNG holds them, as the renderer reads them (src/vs/Tint.zig): a 2D
-// canvas would multiply their colours by their alpha. WebGL reads them unchanged.
-function readPixels(bitmap) {
-	const { width, height } = bitmap;
-	pixelReader ??= new OffscreenCanvas(1, 1).getContext("webgl");
-	const gl = pixelReader;
-	if (!gl) {
-		const context = new OffscreenCanvas(width, height).getContext("2d");
-		context.drawImage(bitmap, 0, 0);
-		return context.getImageData(0, 0, width, height).data;
-	}
-	const texture = gl.createTexture();
-	gl.bindTexture(gl.TEXTURE_2D, texture);
-	gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-	gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
-	const framebuffer = gl.createFramebuffer();
-	gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-	const pixels = new Uint8Array(width * height * 4);
-	gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-	gl.deleteFramebuffer(framebuffer);
-	gl.deleteTexture(texture);
-	return pixels;
-}
-
-async function decodeColourMap(map) {
-	const png = new Blob([map.image], { type: "image/png" });
-	const bitmap = await createImageBitmap(png, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
-	const { width, height } = bitmap;
-	const pixels = readPixels(bitmap);
-	bitmap.close();
-	if (width <= 2 * map.padding || height <= 2 * map.padding) return null;
-	return { width, height, pixels, padding: map.padding, tropical: map.tropical };
-}
-
 function colourAt(map, across, down) {
 	const p = map.padding;
 	const x = p + Math.min(Math.floor(across * (map.width - 2 * p)), map.width - 2 * p - 1);
 	const y = p + Math.min(Math.floor(down * (map.height - 2 * p)), map.height - 2 * p - 1);
-	const at = (y * map.width + x) * 4;
+	const at = (y * map.width + x) * 3;
 	return [map.pixels[at], map.pixels[at + 1], map.pixels[at + 2]];
 }
 
@@ -355,7 +318,7 @@ function seasonAt(map, progress) {
 	const x = Math.min(Math.floor(clamp(progress, 0.01, 0.99) * map.width), map.width - 1);
 	const sums = [0, 0, 0];
 	for (let y = 0; y < map.height; y++) {
-		const at = (y * map.width + x) * 4;
+		const at = (y * map.width + x) * 3;
 		for (let c = 0; c < 3; c++) sums[c] += map.pixels[at + c];
 	}
 	return sums.map((sum) => Math.floor(sum / map.height));
@@ -385,11 +348,8 @@ function tint(climate, season) {
 }
 
 // Gives each block its tint: white for one without colour maps, as the renderer leaves it.
-async function tintBlocks(contents) {
-	const maps = await Promise.all(contents.colourMaps.map((map) => decodeColourMap(map).catch(() => null)));
-	// Null for a map that can't tint: one that can't be decoded, or is no wider or taller than twice
-	// its padding.
-	contents.colourMaps.forEach((map, i) => (map.size = maps[i] ? [maps[i].width, maps[i].height] : null));
+function tintBlocks(contents) {
+	const maps = contents.colourMaps;
 	const byPair = new Map();
 	for (const block of contents.blocks) {
 		const pair = block.climateColourMap * 256 + block.seasonColourMap;
@@ -446,7 +406,7 @@ async function collect(entry, files, descend) {
 
 async function read(file) {
 	const contents = parse(await file.arrayBuffer());
-	await tintBlocks(contents);
+	tintBlocks(contents);
 	return contents;
 }
 
@@ -498,8 +458,6 @@ async function openSaved() {
 async function closeFile() {
 	await closeModal(fileDialog);
 	shown = null;
-	for (const url of colourMapURLs) URL.revokeObjectURL(url);
-	colourMapURLs = [];
 	blocksView.replaceChildren();
 	showEmpty();
 	$("empty").querySelector("[data-action]").focus();
@@ -879,10 +837,21 @@ function formatCount(count) {
 	return count === null || count === undefined ? "–" : count.toLocaleString("en");
 }
 
+function drawColourMap(map) {
+	const canvas = make("canvas", "");
+	canvas.width = map.width;
+	canvas.height = map.height;
+	const image = new ImageData(map.width, map.height);
+	for (let p = 0; p < map.width * map.height; p++) {
+		image.data.set(map.pixels.subarray(p * 3, p * 3 + 3), p * 4);
+		image.data[p * 4 + 3] = 255;
+	}
+	canvas.getContext("2d").putImageData(image, 0, 0);
+	return canvas;
+}
+
 function fillFileDetails() {
 	const { contents, file } = shown;
-	for (const url of colourMapURLs) URL.revokeObjectURL(url);
-	colourMapURLs = [];
 	$("file-title").textContent = file.name;
 
 	const counts = new Map([
@@ -905,14 +874,9 @@ function fillFileDetails() {
 	for (let i = 0; i < contents.sprites.count; i++) if (contents.sprites.flags[i] & SPRITE_TINTED) tintedSprites++;
 
 	const maps = contents.colourMaps.map((map) => {
-		const url = URL.createObjectURL(new Blob([map.image], { type: "image/png" }));
-		colourMapURLs.push(url);
-		const image = make("img", "");
-		image.src = url;
-		image.alt = "";
-		const facts = map.size ? [`${map.size[0]} × ${map.size[1]}`, `padding ${map.padding}`] : ["can't tint"];
+		const facts = [`${map.width} × ${map.height}`, `padding ${map.padding}`];
 		if (map.tropical) facts.push("tropical");
-		return make("figure", "colour-map", make("div", "colour-map-image", image), make("figcaption", "", make("code", "", map.code), make("span", "", facts.join(" · "))));
+		return make("figure", "colour-map", make("div", "colour-map-image", drawColourMap(map)), make("figcaption", "", make("code", "", map.code), make("span", "", facts.join(" · "))));
 	});
 
 	$("file-body").replaceChildren(

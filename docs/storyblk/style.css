@@ -609,7 +609,7 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 	max-width: 100%;
 	overflow-wrap: anywhere;
 }
-.colour-map img {
+.colour-map canvas {
 	display: block;
 	width: 8rem;
 	height: auto;
