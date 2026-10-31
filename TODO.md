@@ -79,6 +79,10 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 12. **Compare with mapcrafter, once Minecraft is read as fully.** Record a comparison of the same Minecraft world rendered by Storymap and by mapcrafter. A first look, on different worlds (mapcrafter 3.1, miclav's 1.21.4 fork, on a 5.68 km² Minecraft world; Storymap on a 10.96 km² VS world; both isometric at 32 pixels a block, 512 × 512 PNGs, on Linux): mapcrafter took 183 CPU-s per km² and 4.5 GB of memory, Storymap 24 worker-s per km² and 370 MB. Most of mapcrafter's time was encoding PNGs (58%), then drawing (25%) and reading chunks (11%); it draws more than Storymap does yet, with block shapes, see-through blocks and smooth lighting.
 
+## Platforms
+
+13. **Run on macOS and Linux.** Writing the prepared blocks file through `FileBuffer` has only been run on Windows; it compiles for Linux and macOS. Test it in CI or on a real Mac, including a full disk, where `fallocate` and `F_PREALLOCATE` should give an error instead of stopping the program. `Assets.findFolder` also has no macOS locations yet, so a Mac needs `--game` and `--data`.
+
 ## Done
 
 - Zig 0.17.0 upgrade, SQLite built from the amalgamation (`35484a3`).

@@ -117,8 +117,32 @@ fn extend(self: *FileBuffer, end: u64) !void {
             else => {},
         }
     }
+    if (builtin.os.tag.isDarwin()) try self.preallocate(end - self.fileLength);
     try self.file.setLength(self.io, end);
     self.fileLength = end;
+}
+
+/// macOS' way of finding room for `length` more bytes at the file's end, in one piece if it can,
+/// which `fallocate` is on Linux; the file's length is still to be set.
+fn preallocate(self: *FileBuffer, length: u64) !void {
+    const allocateContiguous = 2;
+    const allocateAll = 4;
+    const physicalEnd = 3;
+    var store: extern struct {
+        flags: u32,
+        mode: c_int = physicalEnd,
+        offset: i64 = 0,
+        length: i64,
+        allocated: i64 = 0,
+    } = .{ .flags = allocateContiguous | allocateAll, .length = @intCast(length) };
+    if (std.c.fcntl(self.file.handle, std.c.F.PREALLOCATE, &store) == 0) return;
+    store.flags = allocateAll;
+    if (std.c.fcntl(self.file.handle, std.c.F.PREALLOCATE, &store) == 0) return;
+    switch (std.posix.errno(@as(c_int, -1))) {
+        .NOSPC => return error.NoSpaceLeft,
+        // A file system without it.
+        else => {},
+    }
 }
 
 test FileBuffer {
