@@ -124,8 +124,9 @@ fn stringLength(text: []const u8) error{StringTooLong}!u64 {
     return 2 + text.len;
 }
 
-/// Writes a whole file of `sections`, each name once, in their order.
-fn write(w: *Io.Writer, hash: u64, info: Info, sections: []const Section) (Io.Writer.Error || LimitError)!void {
+/// Writes a file of `sections`, each name once, in their order; with `placedLength`, all but the
+/// last, which is that long and in the file already (`PartialFile.finish`).
+fn write(w: *Io.Writer, hash: u64, info: Info, sections: []const Section, placedLength: ?u32) (Io.Writer.Error || LimitError)!void {
     const lengths = try measure(info, sections);
     try w.writeAll(magic);
     try w.writeAll(&.{ version, 0 });
@@ -141,17 +142,18 @@ fn write(w: *Io.Writer, hash: u64, info: Info, sections: []const Section) (Io.Wr
     }
 
     var offset = std.mem.alignForward(u64, lengths.beforeSections, 8);
-    for (sections) |section| {
+    for (sections, 0..) |section, i| {
+        const length: u32 = if (i + 1 == sections.len) placedLength orelse @intCast(section.bytes.len) else @intCast(section.bytes.len);
         try w.writeInt(u64, offset, .little);
-        try w.writeInt(u32, @intCast(section.bytes.len), .little);
+        try w.writeInt(u32, length, .little);
         try w.writeByte(section.layoutVersion);
         try w.writeInt(u16, section.generatorVersion, .little);
         try writeString(w, section.name);
-        offset = std.mem.alignForward(u64, offset + section.bytes.len, 8);
+        offset = std.mem.alignForward(u64, offset + length, 8);
     }
 
     try w.splatByteAll(0, @intCast(std.mem.alignForward(u64, lengths.beforeSections, 8) - lengths.beforeSections));
-    for (sections) |section| {
+    for (if (placedLength != null) sections[0 .. sections.len - 1] else sections) |section| {
         try w.writeAll(section.bytes);
         try w.splatByteAll(0, std.mem.alignForward(usize, section.bytes.len, 8) - section.bytes.len);
     }
@@ -234,30 +236,74 @@ pub fn parse(arena: std.mem.Allocator, bytes: []align(8) const u8) error{ NotPre
     return .{ .header = header, .info = info, .sections = sections };
 }
 
-/// Writes the file at `path` in `dir` (spec §1): first beside it, as `<path>.<process id>.partial`,
-/// then renamed over it, so a write that fails leaves the old file whole. Never replaces a file
-/// that isn't a prepared blocks file (`error.NotPreparedBlocks`). Removes partial files of the
-/// same name that are over an hour old, which a killed writer leaves behind.
-pub fn writeFile(io: Io, dir: Dir, path: []const u8, hash: u64, info: Info, sections: []const Section) !void {
-    _ = try measure(info, sections);
-    try checkReplaceable(io, dir, path);
-    removeOldPartials(io, dir, path);
+/// A prepared blocks file being written (spec §1): first beside its path, as
+/// `<path>.<process id>.partial`, then renamed over it, so a write that fails leaves the old
+/// file whole. Its last section can be written into `file` before the rest, as a section too
+/// large to hold in memory is (`lastOffset`).
+pub const PartialFile = struct {
+    io: Io,
+    dir: Dir,
+    path: []const u8,
+    file: Io.File,
+    isOpen: bool = true,
+    nameBuffer: [Dir.max_path_bytes]u8,
+    nameLength: usize,
 
-    var buffer: [Dir.max_path_bytes]u8 = undefined;
-    const partial = std.fmt.bufPrint(&buffer, "{s}.{d}.partial", .{ path, processId() }) catch return error.NameTooLong;
-    const file = try dir.createFile(io, partial, .{});
-    errdefer dir.deleteFile(io, partial) catch {};
-    {
-        defer file.close(io);
-        var fileBuffer: [1 << 16]u8 = undefined;
-        var writer = file.writer(io, &fileBuffer);
-        write(&writer.interface, hash, info, sections) catch |err| return switch (err) {
+    /// Never replaces a file that isn't a prepared blocks file (`error.NotPreparedBlocks`).
+    /// Removes partial files of the same name that are over an hour old, which a killed writer
+    /// leaves behind.
+    pub fn create(io: Io, dir: Dir, path: []const u8) !PartialFile {
+        try checkReplaceable(io, dir, path);
+        removeOldPartials(io, dir, path);
+        var self: PartialFile = .{ .io = io, .dir = dir, .path = path, .file = undefined, .nameBuffer = undefined, .nameLength = 0 };
+        self.nameLength = (std.fmt.bufPrint(&self.nameBuffer, "{s}.{d}.partial", .{ path, processId() }) catch return error.NameTooLong).len;
+        self.file = try dir.createFile(io, self.name(), .{ .read = true });
+        return self;
+    }
+
+    fn name(self: *const PartialFile) []const u8 {
+        return self.nameBuffer[0..self.nameLength];
+    }
+
+    /// Removes the partial file, after a failure.
+    pub fn discard(self: *PartialFile) void {
+        if (self.isOpen) self.file.close(self.io);
+        self.isOpen = false;
+        self.dir.deleteFile(self.io, self.name()) catch {};
+    }
+
+    /// Writes `sections` and renames the file over its path. With `placedLength`, the last is
+    /// that long and in `file` already, at `lastOffset`, and its own `bytes` aren't used.
+    pub fn finish(self: *PartialFile, hash: u64, info: Info, sections: []const Section, placedLength: ?u32) !void {
+        var buffer: [1 << 16]u8 = undefined;
+        var writer = self.file.writer(self.io, &buffer);
+        write(&writer.interface, hash, info, sections, placedLength) catch |err| return switch (err) {
             error.WriteFailed => writer.err.?,
             else => |e| e,
         };
         writer.interface.flush() catch return writer.err.?;
+        if (placedLength) |length| {
+            try self.file.setLength(self.io, std.mem.alignForward(u64, try lastOffset(info, sections) + length, 8));
+        }
+        self.file.close(self.io);
+        self.isOpen = false;
+        try self.dir.rename(self.name(), self.dir, self.path, self.io);
     }
-    try dir.rename(partial, dir, path, io);
+};
+
+/// Where the last of `sections` starts in the file, from the sections before it.
+pub fn lastOffset(info: Info, sections: []const Section) LimitError!u64 {
+    var offset = std.mem.alignForward(u64, (try measure(info, sections)).beforeSections, 8);
+    for (sections[0 .. sections.len - 1]) |section| offset = std.mem.alignForward(u64, offset + section.bytes.len, 8);
+    return offset;
+}
+
+/// Writes the file at `path` in `dir`, all at once (`PartialFile`).
+pub fn writeFile(io: Io, dir: Dir, path: []const u8, hash: u64, info: Info, sections: []const Section) !void {
+    _ = try measure(info, sections);
+    var partial: PartialFile = try .create(io, dir, path);
+    errdefer partial.discard();
+    try partial.finish(hash, info, sections, null);
 }
 
 /// error.NotPreparedBlocks if there's a file at `path` in `dir` that isn't a prepared blocks
@@ -334,7 +380,7 @@ const testSections = [_]Section{
 fn testFile(allocator: std.mem.Allocator, sections: []const Section) ![]align(8) u8 {
     var file: Io.Writer.Allocating = .init(allocator);
     defer file.deinit();
-    try write(&file.writer, 0x0123456789abcdef, testInfo, sections);
+    try write(&file.writer, 0x0123456789abcdef, testInfo, sections, null);
     const bytes = try allocator.alignedAlloc(u8, .@"8", file.written().len);
     @memcpy(bytes, file.written());
     return bytes;
@@ -426,8 +472,32 @@ test "invalid files" {
 test "counts and lengths that don't fit" {
     var discarding: Io.Writer.Discarding = .init(&.{});
     const long: [std.math.maxInt(u16) + 1]u8 = @splat('x');
-    try std.testing.expectError(error.StringTooLong, write(&discarding.writer, 0, .{ .game = &long, .gameVersion = "", .mods = &.{} }, &.{}));
-    try std.testing.expectError(error.StringTooLong, write(&discarding.writer, 0, testInfo, &.{.{ .name = &long, .layoutVersion = 1, .generatorVersion = 1, .bytes = "" }}));
+    try std.testing.expectError(error.StringTooLong, write(&discarding.writer, 0, .{ .game = &long, .gameVersion = "", .mods = &.{} }, &.{}, null));
+    try std.testing.expectError(error.StringTooLong, write(&discarding.writer, 0, testInfo, &.{.{ .name = &long, .layoutVersion = 1, .generatorVersion = 1, .bytes = "" }}, null));
+}
+
+test "a last section placed before the rest" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = std.testing.allocator;
+
+    // The file is longer than it'll end up, as one written a window at a time is.
+    var partial: PartialFile = try .create(io, tmp.dir, "prepared.storyblk");
+    errdefer partial.discard();
+    const at = try lastOffset(testInfo, &testSections);
+    try partial.file.setLength(io, at + 4096);
+    try partial.file.writePositionalAll(io, "nine byte", at);
+    var sections = testSections;
+    sections[sections.len - 1].bytes = "";
+    try partial.finish(1, testInfo, &sections, 9);
+
+    const bytes = try tmp.dir.readFileAllocOptions(io, "prepared.storyblk", allocator, .unlimited, .@"8", null);
+    defer allocator.free(bytes);
+    const whole = try testFile(allocator, &testSections);
+    defer allocator.free(whole);
+    // The same but for the hash.
+    try std.testing.expectEqualSlices(u8, whole[headerLength..], bytes[headerLength..]);
 }
 
 test writeFile {

@@ -104,9 +104,9 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     return open(init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
 }
 
-/// Prepares the blocks from `assets`, draws their sprites and writes both to the file at `path`.
-/// What they were made from is freed before writing, and all else before it returns. A problem
-/// stops the program.
+/// Prepares the blocks from `assets`, draws their sprites straight into the partial file, and
+/// finishes the file at `path`. All it held is freed before it returns. A problem stops the
+/// program.
 fn prepareFile(init: std.process.Init, assets: *const Assets, path: []const u8, hash: u64) void {
     const io = init.io;
     const mods = assets.sources.items.len - 1;
@@ -123,25 +123,45 @@ fn prepareFile(init: std.process.Init, assets: *const Assets, path: []const u8, 
     console.log("blocks: {} prepared from Vintage Story {s} and {} {s} in {d:.1} s ({s})", .{
         contents.blocks.len, version, mods, modText(mods), secondsSince(io, start), path,
     });
-    const drawing: std.Io.Timestamp = .now(io, .awake);
-    var spriteSections = Sprites.Sections.init() catch |err|
-        console.fail("{s}: could not draw the blocks' sprites ({s})", .{ path, @errorName(err) });
-    defer spriteSections.deinit();
-    drawSprites(scratch.allocator(), &contents, &spriteSections) catch |err|
-        console.fail("{s}: could not draw the blocks' sprites ({s})", .{ path, @errorName(err) });
-    console.log("sprites: {} drawn in {d:.1} s", .{ spriteSections.entries.items.len, secondsSince(io, drawing) });
-
-    var written: std.heap.ArenaAllocator = .init(init.gpa);
-    defer written.deinit();
-    const sections = encodeSections(written.allocator(), &contents, &spriteSections) catch |err|
-        console.fail("{s}: could not prepare the blocks ({s})", .{ path, @errorName(err) });
-    const info = contents.info(written.allocator()) catch |err|
-        console.fail("{s}: could not prepare the blocks ({s})", .{ path, @errorName(err) });
-    _ = scratch.reset(.free_all);
-    storyblk.writeFile(io, std.Io.Dir.cwd(), path, hash, info, &sections) catch |err| switch (err) {
+    writeFile(init, &scratch, &contents, path, hash) catch |err| switch (err) {
         error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
         else => console.fail("{s}: could not write ({s})", .{ path, @errorName(err) }),
     };
+}
+
+/// Writes the file: the sprites as they're drawn, then the sections before them, whose lengths
+/// were known all along, once what they're made from can be freed.
+fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents: *Prepared.Contents, path: []const u8, hash: u64) !void {
+    const io = init.io;
+    const arena = scratch.allocator();
+    const start: std.Io.Timestamp = .now(io, .awake);
+    const drawables = try arena.alloc(isometric.Drawable, contents.blocks.len);
+    for (drawables, contents.blocks) |*drawable, *entry| drawable.* = .{
+        .cube = if (entry.block.cube) |*cube| cube else null,
+        .shapes = entry.block.shapes,
+        .colour = SaveFile.colourOf(&entry.block),
+        .turned = entry.block.randomizeRotations,
+    };
+    const plan = try isometric.planSprites(arena, drawables);
+
+    var encoded: std.heap.ArenaAllocator = .init(init.gpa);
+    defer encoded.deinit();
+    const info = try contents.info(encoded.allocator());
+    var partial: storyblk.PartialFile = try .create(io, std.Io.Dir.cwd(), path);
+    errdefer partial.discard();
+    // Only their lengths matter yet: blocks' sprites aren't known, but their records' sizes are.
+    const entryBytes = try encoded.allocator().alloc(u8, Sprites.Sections.entriesLength(plan.count));
+    const layout = try encodeSections(encoded.allocator(), contents, entryBytes);
+
+    var sprites: Sprites.Sections = .init(io, partial.file, try storyblk.lastOffset(info, &layout));
+    defer sprites.deinit();
+    contents.useSprites(try isometric.drawSprites(arena, drawables, plan, &sprites));
+    try sprites.close();
+    console.log("sprites: {} drawn in {d:.1} s", .{ sprites.entries.items.len, secondsSince(io, start) });
+
+    const sections = try encodeSections(encoded.allocator(), contents, try sprites.entryBytes(encoded.allocator(), isometric.blockWidth));
+    _ = scratch.reset(.free_all);
+    try partial.finish(hash, info, &sections, @intCast(sprites.layers.length));
 }
 
 /// The game's install folder, as given or in the standard place.
@@ -157,23 +177,12 @@ fn hashAssets(io: std.Io, assets: *const Assets) u64 {
     return Prepared.hash(io, assets, spriteFormat) catch |err| console.fail("could not read the mods ({s})", .{@errorName(err)});
 }
 
-/// Draws the sprites of every block in `contents` into `sprites`, giving each block its own.
-fn drawSprites(arena: std.mem.Allocator, contents: *Prepared.Contents, sprites: *Sprites.Sections) !void {
-    const drawables = try arena.alloc(isometric.Drawable, contents.blocks.len);
-    for (drawables, contents.blocks) |*drawable, *entry| drawable.* = .{
-        .cube = if (entry.block.cube) |*cube| cube else null,
-        .shapes = entry.block.shapes,
-        .colour = SaveFile.colourOf(&entry.block),
-        .turned = entry.block.randomizeRotations,
-    };
-    contents.useSprites(try isometric.drawSprites(arena, drawables, sprites));
-}
-
-/// Every section of the file, those made here in `arena`, in the order they're written.
-fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, sprites: *const Sprites.Sections) ![Prepared.sectionNames.len + 2]storyblk.Section {
+/// Every section of the file, in the order they're written, with the `sprites` section's bytes
+/// `entries`. `sprite_layers`, last, is in the file already.
+fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, entries: []const u8) ![Prepared.sectionNames.len + 2]storyblk.Section {
     return (try contents.encode(arena)) ++ [2]storyblk.Section{
-        .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = try sprites.entryBytes(arena, isometric.blockWidth) },
-        .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = sprites.layers.written() },
+        .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries },
+        .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "" },
     };
 }
 
