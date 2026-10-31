@@ -19,6 +19,7 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 4. **Buffers sized at startup.** Nothing is allocated per tile, but a render's buffers are sized and allocated when it starts; once a process renders more than once (incremental rendering), they should be set up once.
 5. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`).
+15. **Profile a render.** A render of both views of an 80 MB save, preparing first, peaked at 571 MB of private memory, and what takes it hasn't been measured, nor how a render's memory and time divide between its stages. Measure both on `large.vcdbs` first: it decides what items 4 and 5 should go after.
 
 ## Block entities
 
@@ -60,6 +61,7 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 	- **Reading:** done, into prepared blocks as boxes the blocks placed the same share (`world.Shape`, [docs/blocks.md](docs/blocks.md#shapes)): 11,734 blocks of 1.22.7 with Primitive Survival, 51,007 boxes, which only drawing the sprites reads.
 	- **Drawing:** done ([docs/blocks.md](docs/blocks.md#shapes)): each block's shape is rasterized into its sprite when the blocks are prepared, by a rasterizer that draws into any pixel and depth buffer, so entities can later be drawn per instance into a tile. A line of sight goes on past a block whose sprite doesn't fill its square; plants and low blocks are drawn in their shapes. Parts of shapes outside their block are drawn up to a block beyond its square, a tile keeping each pixel's real depth. About 20% slower on the larger world, most of it encoding the added detail.
 	- **Sprites when preparing:** done ([docs/blocks.md](docs/blocks.md#sprites)): every block's sprites are drawn once into the prepared blocks file, which a render maps; the file leaves out the face images and shapes, which only drawing them needs.
+	- **Archimedes screw:** its hull isn't drawn; why hasn't been looked into.
 	- **Then:** see-through blocks (water, glass, ice, leaves' gaps); the `Cross` and `SurfaceLayer` drawtypes; the snow over `JSONAndSnowLayer` blocks (1,054 blocks, the snowy variants of fences, loose stones and sticks, flowers, saplings and berry bushes) and the water around `JSONAndWater` blocks (27, underwater plants such as seaweed and seagrass), which are read as their shapes alone. Done: `randomDrawOffset`, `randomizeAxes`, `randomizeRotations`, shapes' alternates and `*` bases, the plain cube's turned ones too, and texture `alternates`, with a texture's variants in vsapi's order.
 10. **Block entities.** Chiseled blocks first, drawn per block at render time from their boxes and their materials' textures; then ground storage (needs item stacks and item models), then containers, displays and decorations.
 
