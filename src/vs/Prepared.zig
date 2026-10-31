@@ -255,6 +255,9 @@ fn writeStrings(w: *Io.Writer, comptime Count: type, strings: []const []const u8
     for (strings) |string| try storyblk.writeString(w, string);
 }
 
+/// How much of what one block type file took `prepare` keeps for the next.
+const fileArenaLimit = 4 << 20;
+
 /// Reads the blocks from `assets`, one block type file at a time, with what drawing their
 /// sprites needs, keeping them in `arena`. What reading needs throughout and what one file takes
 /// are in memory from `gpa`, the first freed before it returns and the second after each file.
@@ -272,10 +275,13 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
     var textures: Textures = .{ .arena = reading, .scratch = scratch, .io = io, .assets = assets };
     var images: Images = .{ .arena = arena, .textures = &textures };
     const colourMaps = try prepareColourMaps(arena, reading, io, assets);
+    // From `gpa`, as an arena would keep every size it grew through.
     var entries: std.ArrayList(Contents.Entry) = .empty;
+    defer entries.deinit(gpa);
     while (try reader.next(scratch)) |types| {
-        defer _ = fileArena.reset(.retain_capacity);
-        for (types) |block| try entries.append(reading, .{
+        // A few files take many times what the rest do, and shouldn't hold that for those after.
+        defer _ = fileArena.reset(.{ .retain_with_limit = fileArenaLimit });
+        for (types) |block| try entries.append(gpa, .{
             .code = try arena.dupe(u8, block.code),
             .block = .{
                 .index = @intCast(entries.items.len),
