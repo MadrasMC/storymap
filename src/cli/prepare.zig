@@ -112,11 +112,14 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
         contents.blocks.len, version, mods, modText(mods), secondsSince(io, start), path,
     });
     const drawing: std.Io.Timestamp = .now(io, .awake);
-    const sprites = drawSprites(scratch.allocator(), &contents) catch |err|
+    var spriteSections = Sprites.Sections.init() catch |err|
         console.fail("{s}: could not draw the blocks' sprites ({s})", .{ path, @errorName(err) });
-    console.log("sprites: {} drawn in {d:.1} s", .{ sprites.count, secondsSince(io, drawing) });
+    defer spriteSections.deinit();
+    const sprites = drawSprites(scratch.allocator(), &contents, &spriteSections) catch |err|
+        console.fail("{s}: could not draw the blocks' sprites ({s})", .{ path, @errorName(err) });
+    console.log("sprites: {} drawn in {d:.1} s", .{ spriteSections.entries.items.len, secondsSince(io, drawing) });
     const sections = (contents.encode(scratch.allocator()) catch |err|
-        console.fail("{s}: could not prepare the blocks ({s})", .{ path, @errorName(err) })) ++ sprites.sections;
+        console.fail("{s}: could not prepare the blocks ({s})", .{ path, @errorName(err) })) ++ sprites;
     storyblk.writeFile(io, std.Io.Dir.cwd(), path, hash, contents.info(), &sections) catch |err| switch (err) {
         error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
         else => console.fail("{s}: could not write ({s})", .{ path, @errorName(err) }),
@@ -126,14 +129,9 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     return open(init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
 }
 
-/// The `sprites` and `sprite_layers` sections, and how many sprites they hold.
-const DrawnSections = struct {
-    sections: [2]storyblk.Section,
-    count: usize,
-};
-
-/// Draws the sprites of every block in `contents`, giving each block its own.
-fn drawSprites(arena: std.mem.Allocator, contents: *Prepared.Contents) !DrawnSections {
+/// Draws the sprites of every block in `contents` into `sprites`, giving each block its own.
+/// Returns the `sprites` and `sprite_layers` sections.
+fn drawSprites(arena: std.mem.Allocator, contents: *Prepared.Contents, sprites: *Sprites.Sections) ![2]storyblk.Section {
     const drawables = try arena.alloc(isometric.Drawable, contents.blocks.len);
     for (drawables, contents.blocks) |*drawable, *entry| drawable.* = .{
         .cube = if (entry.block.cube) |*cube| cube else null,
@@ -141,16 +139,10 @@ fn drawSprites(arena: std.mem.Allocator, contents: *Prepared.Contents) !DrawnSec
         .colour = SaveFile.colourOf(&entry.block),
         .turned = entry.block.randomizeRotations,
     };
-    var entries: std.Io.Writer.Allocating = .init(arena);
-    var layers: std.Io.Writer.Allocating = .init(arena);
-    const drawn = try isometric.drawSprites(arena, drawables, &entries.writer, &layers.writer);
-    contents.useSprites(drawn.blocks);
+    contents.useSprites(try isometric.drawSprites(arena, drawables, sprites));
     return .{
-        .sections = .{
-            .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries.written() },
-            .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = layers.written() },
-        },
-        .count = drawn.count,
+        .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = try sprites.entryBytes(arena, isometric.blockWidth) },
+        .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = sprites.layers.written() },
     };
 }
 

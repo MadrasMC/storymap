@@ -736,22 +736,17 @@ pub const Drawable = struct {
     turned: bool = false,
 };
 
-/// Each block's sprites, by its index in what `drawSprites` drew them from, and how many
-/// sprites there are.
-pub const DrawnSprites = struct {
-    blocks: []const world.BlockSprites,
-    count: usize,
-};
+/// The most a sprite's layers can take in bytes: its plain and tinted layers and its depths, and
+/// what lines them up.
+const spriteBytes = shapeSide * shapeSide * (4 + 4 + 2) + 16;
 
 /// Draws every block's sprites, one for each variant of its textures, in each of its shapes,
-/// in each of its turns, and writes them (`Sprites.write`): the `sprites` section to `entries`
-/// and the `sprite_layers` section to `layers`. Blocks with the same faces, or the same shapes
-/// and textures turned alike, share sprites. A block's textures have as many variants as the
-/// most any of its shapes' has, each with fewer counting round again. Keeps them in `arena` as
-/// it goes.
-pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, entries: *std.Io.Writer, layers: *std.Io.Writer) !DrawnSprites {
-    var sprites: std.ArrayList(Sprite) = .empty;
-    var spriteLayers: std.ArrayList(SpriteLayers) = .empty;
+/// in each of its turns, into `sections`, one at a time. Blocks with the same faces, or the same
+/// shapes and textures turned alike, share sprites. A block's textures have as many variants as
+/// the most any of its shapes' has, each with fewer counting round again. Returns each block's
+/// sprites, by its index in `drawables`.
+pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, sections: *Sprites.Sections) ![]const world.BlockSprites {
+    var scratch: std.heap.FixedBufferAllocator = .init(try arena.alloc(u8, spriteBytes));
     const blocks = try arena.alloc(world.BlockSprites, drawables.len);
     var byFaces: std.HashMapUnmanaged(world.CubeFaces, world.BlockSprites, FacesContext, std.hash_map.default_max_load_percentage) = .empty;
     var byShape: std.HashMapUnmanaged(ShapeKey, world.BlockSprites, ShapeContext, std.hash_map.default_max_load_percentage) = .empty;
@@ -762,13 +757,13 @@ pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, entrie
             const found = try byFaces.getOrPut(arena, cube.*);
             if (!found.found_existing) {
                 const variants = variantCount(cube);
-                found.value_ptr.* = .{ .first = @intCast(sprites.items.len), .variants = @intCast(variants) };
+                found.value_ptr.* = .{ .first = @intCast(sections.entries.items.len), .variants = @intCast(variants) };
                 for (0..variants) |variant| {
-                    const sprite, const pixels = try cubeSprite(arena, cube, variant, drawable.colour);
-                    try sprites.append(arena, sprite);
-                    try spriteLayers.append(arena, pixels);
+                    scratch.reset();
+                    const sprite, const pixels = try cubeSprite(scratch.allocator(), cube, variant, drawable.colour);
+                    try sections.add(arena, sprite, pixels);
                 }
-                found.value_ptr.tinted = sprites.items[found.value_ptr.first].flags.tinted;
+                found.value_ptr.tinted = sections.entries.items[found.value_ptr.first].flags.tinted;
             }
             block.* = found.value_ptr.*;
         } else if (drawable.shapes.len > 0) {
@@ -778,24 +773,23 @@ pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, entrie
                 for (drawable.shapes) |*shape| variants = @max(variants, shapeVariants(shape));
                 const turnCount: u8 = if (drawable.turned) turns else 1;
                 found.value_ptr.* = .{
-                    .first = @intCast(sprites.items.len),
+                    .first = @intCast(sections.entries.items.len),
                     .variants = @intCast(variants),
                     .alternates = @intCast(drawable.shapes.len),
                     .turns = turnCount,
                     .shape = true,
                 };
                 for (0..turnCount) |turn| for (drawable.shapes) |*shape| for (0..variants) |variant| {
-                    const sprite, const pixels = try shapeSprite(arena, shape, variant, if (drawable.turned) turn else null, &target);
+                    scratch.reset();
+                    const sprite, const pixels = try shapeSprite(scratch.allocator(), shape, variant, if (drawable.turned) turn else null, &target);
                     if (sprite.flags.tinted) found.value_ptr.tinted = true;
-                    try sprites.append(arena, sprite);
-                    try spriteLayers.append(arena, pixels);
+                    try sections.add(arena, sprite, pixels);
                 };
             }
             block.* = found.value_ptr.*;
         }
     }
-    try Sprites.write(entries, layers, blockWidth, sprites.items, spriteLayers.items);
-    return .{ .blocks = blocks, .count = sprites.items.len };
+    return blocks;
 }
 
 /// Cube faces by their variants' slices, which a game's reader shares between blocks with the
@@ -1023,19 +1017,13 @@ test drawSprites {
     // turned, in sprites of its own, and a block picking the slab, a whole block in a texture
     // with two variants, or nothing.
     const drawables = [_]Drawable{ .{ .cube = &cube }, .{}, .{ .shapes = &slabs }, .{ .shapes = &sameSlabs }, .{ .shapes = &slabs, .turned = true }, .{ .shapes = &picked } };
-    var entries: std.Io.Writer.Allocating = .init(allocator);
-    var layers: std.Io.Writer.Allocating = .init(allocator);
-    const drawn = try drawSprites(allocator, &drawables, &entries.writer, &layers.writer);
-    try std.testing.expectEqual(3 + turns + 6, drawn.count);
-    const entryBytes = try allocator.alignedAlloc(u8, .@"4", entries.written().len);
-    @memcpy(entryBytes, entries.written());
-    const layerBytes = try allocator.alignedAlloc(u8, .@"4", layers.written().len);
-    @memcpy(layerBytes, layers.written());
+    var sections: Sprites.Sections = try .init();
+    defer sections.deinit();
+    const blocks = try drawSprites(allocator, &drawables, &sections);
 
-    const sprites = try Sprites.parse(entryBytes, layerBytes);
+    const sprites = try Sprites.parse(try sections.entryBytes(allocator, blockWidth), sections.layers.written());
     try std.testing.expectEqual(3 + turns + 6, sprites.entries.len);
     try std.testing.expectEqual(blockWidth, sprites.blockWidth);
-    const blocks = drawn.blocks;
     try std.testing.expectEqual(world.BlockSprites{ .first = 3, .variants = 1, .turns = turns, .shape = true, .tinted = true }, blocks[4]);
     // Each of its shapes in as many variants as the most any has, the slab's one counting
     // round again.
