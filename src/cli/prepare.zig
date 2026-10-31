@@ -106,7 +106,7 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     var scratch: std.heap.ArenaAllocator = .init(init.gpa);
     defer scratch.deinit();
     const start: std.Io.Timestamp = .now(io, .awake);
-    var contents = Prepared.prepare(scratch.allocator(), io, &assets) catch |err|
+    var contents = Prepared.prepare(init.gpa, scratch.allocator(), io, &assets) catch |err|
         console.fail("{s}: could not prepare the blocks ({s})", .{ path, @errorName(err) });
     console.log("blocks: {} prepared from Vintage Story {s} and {} {s} in {d:.1} s ({s})", .{
         contents.blocks.len, version, mods, modText(mods), secondsSince(io, start), path,

@@ -257,25 +257,29 @@ fn writeStrings(w: *Io.Writer, comptime Count: type, strings: []const []const u8
 }
 
 /// Reads the blocks from `assets`, with what drawing their sprites needs, keeping them in
-/// `arena`. Blocks with the same faces share their lists of variants, and blocks placed the same
-/// their boxes: `isometric.drawSprites` tells them apart by those slices.
-pub fn prepare(arena: std.mem.Allocator, io: Io, assets: *const Assets) !Contents {
-    const types = try BlockTypes.expand(arena, io, assets);
-    var textures: Textures = .{ .arena = arena, .io = io, .assets = assets };
-    var images: Images = .{ .textures = &textures };
-    const colourMaps = try prepareColourMaps(arena, io, assets);
+/// `arena`, and what only reading them needs in memory from `gpa`, freed before it returns.
+/// Blocks with the same faces share their lists of variants, and blocks placed the same their
+/// boxes: `isometric.drawSprites` tells them apart by those slices.
+pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets: *const Assets) !Contents {
+    var temporaryArena: std.heap.ArenaAllocator = .init(gpa);
+    defer temporaryArena.deinit();
+    const temporary = temporaryArena.allocator();
+    const types = try BlockTypes.expand(temporary, io, assets);
+    var textures: Textures = .{ .arena = temporary, .io = io, .assets = assets };
+    var images: Images = .{ .arena = arena, .textures = &textures };
+    const colourMaps = try prepareColourMaps(arena, temporary, io, assets);
     var geometries: std.AutoHashMapUnmanaged(*const BlockTypes.Geometry, []const world.Shape.Box) = .empty;
     const blocks = try arena.alloc(Contents.Entry, types.len);
     for (blocks, types, 0..) |*entry, block, i| {
         entry.* = .{
-            .code = block.code,
+            .code = try arena.dupe(u8, block.code),
             .block = .{
                 .index = @intCast(i),
-                .material = block.material,
-                .colorCode = block.colorCode,
+                .material = try arena.dupe(u8, block.material),
+                .colorCode = try arena.dupe(u8, block.colorCode),
                 .cube = try cubeOf(&images, block.cube),
                 .height = block.height,
-                .shapes = try shapesOf(arena, &images, &geometries, block.shapes),
+                .shapes = try shapesOf(arena, temporary, &images, &geometries, block.shapes),
                 .drawOffset = block.drawOffset,
                 .randomizeAxes = block.randomizeAxes,
                 .randomizeRotations = block.randomizeRotations,
@@ -322,7 +326,7 @@ fn cubeOf(images: *Images, cube: ?BlockTypes.Cube) !?world.CubeFaces {
 
 /// A block's shapes, each its geometry's boxes, one slice for each geometry, and its textures'
 /// images. A shape with nothing to draw has no boxes or textures.
-fn shapesOf(arena: std.mem.Allocator, images: *Images, geometries: *std.AutoHashMapUnmanaged(*const BlockTypes.Geometry, []const world.Shape.Box), shapes: []const BlockTypes.Shape) ![]const world.Shape {
+fn shapesOf(arena: std.mem.Allocator, temporary: std.mem.Allocator, images: *Images, geometries: *std.AutoHashMapUnmanaged(*const BlockTypes.Geometry, []const world.Shape.Box), shapes: []const BlockTypes.Shape) ![]const world.Shape {
     if (shapes.len == 0) return &.{};
     const out = try arena.alloc(world.Shape, shapes.len);
     for (out, shapes) |*shape, from| {
@@ -330,7 +334,7 @@ fn shapesOf(arena: std.mem.Allocator, images: *Images, geometries: *std.AutoHash
             shape.* = .{ .boxes = &.{}, .textures = &.{} };
             continue;
         }
-        const boxes = try geometries.getOrPut(arena, from.geometry);
+        const boxes = try geometries.getOrPut(temporary, from.geometry);
         if (!boxes.found_existing) boxes.value_ptr.* = try boxesOf(arena, from.geometry.boxes);
         const textures = try arena.alloc(world.CubeFaces.Face, from.textures.len);
         for (textures, from.textures) |*texture, face| texture.* = .{ .plain = try images.list(face.plain), .tinted = try images.list(face.tinted) };
@@ -351,6 +355,9 @@ fn boxesOf(arena: std.mem.Allocator, boxes: []const BlockTypes.Geometry.Box) ![]
 /// Cube faces' images, each made once: a texture with its overlays drawn over it, or half of
 /// it, by index in the order they're first needed.
 const Images = struct {
+    /// Where the images and their lists are kept; what's only needed to make them is in
+    /// `textures.arena`.
+    arena: std.mem.Allocator,
     textures: *Textures,
     /// Each layer met so far, by its textures and half, and its index, or null if it can't be
     /// made.
@@ -362,11 +369,10 @@ const Images = struct {
     /// The images of the layer's variants (`variants`), the same slice for the same images;
     /// none without a layer or if none can be made.
     fn list(self: *Images, layer: ?BlockTypes.Layer) ![]const *const Image {
-        const arena = self.textures.arena;
         const indexes = try self.variants(layer) orelse return &.{};
-        const entry = try self.lists.getOrPut(arena, std.mem.sliceAsBytes(indexes));
+        const entry = try self.lists.getOrPut(self.textures.arena, std.mem.sliceAsBytes(indexes));
         if (entry.found_existing) return entry.value_ptr.*;
-        const found = try arena.alloc(*const Image, indexes.len);
+        const found = try self.arena.alloc(*const Image, indexes.len);
         for (found, indexes) |*image, i| image.* = self.made.items[i];
         entry.value_ptr.* = found;
         return found;
@@ -405,8 +411,9 @@ const Images = struct {
         const entry = try self.indexes.getOrPut(arena, name.written());
         if (entry.found_existing) return entry.value_ptr.*;
         entry.value_ptr.* = null;
-        const image = try arena.create(Image);
-        image.* = try self.make(layer, path) orelse return null;
+        const made = try self.make(layer, path) orelse return null;
+        const image = try self.arena.create(Image);
+        image.* = .{ .width = made.width, .height = made.height, .pixels = try self.arena.dupe([4]u8, made.pixels) };
         try self.made.append(arena, image);
         entry.value_ptr.* = self.made.items.len - 1;
         return entry.value_ptr.*;
@@ -474,11 +481,11 @@ test drawOver {
 }
 
 /// The colour maps in the game's `config/colormaps.json` whose images can be read and decoded,
-/// in the file's order.
-fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![]const Contents.ColourMap {
+/// in the file's order, kept in `arena`.
+fn prepareColourMaps(arena: std.mem.Allocator, temporary: std.mem.Allocator, io: Io, assets: *const Assets) ![]const Contents.ColourMap {
     const file = "config/colormaps.json";
-    const bytes = try assets.read(arena, io, Assets.gameDomain, file) orelse return &.{};
-    const json = Json.parse(arena, bytes) catch |err| {
+    const bytes = try assets.read(temporary, io, Assets.gameDomain, file) orelse return &.{};
+    const json = Json.parse(temporary, bytes) catch |err| {
         console.warn("{s}: could not read ({s}); nothing will be tinted", .{ file, @errorName(err) });
         return &.{};
     };
@@ -489,13 +496,13 @@ fn prepareColourMaps(arena: std.mem.Allocator, io: Io, assets: *const Assets) ![
         const base = ((entry.get("texture") orelse continue).get("base") orelse continue).asString() orelse continue;
         const colon = std.mem.indexOfScalar(u8, base, ':');
         const domain = if (colon) |c| base[0..c] else Assets.gameDomain;
-        const path = try std.fmt.allocPrint(arena, "textures/{s}.png", .{if (colon) |c| base[c + 1 ..] else base});
+        const path = try std.fmt.allocPrint(temporary, "textures/{s}.png", .{if (colon) |c| base[c + 1 ..] else base});
         const png = try assets.read(arena, io, domain, path) orelse {
             console.warn("colour map {s}: no image {s}:{s}", .{ code, domain, path });
             continue;
         };
         const padding = integer(entry.get("padding"));
-        const map = if (padding <= std.math.maxInt(u8)) try Tint.ColourMap.decode(arena, code, png, padding, integer(entry.get("extraFlags")) == 1) else null;
+        const map = if (padding <= std.math.maxInt(u8)) try Tint.ColourMap.decode(arena, try arena.dupe(u8, code), png, padding, integer(entry.get("extraFlags")) == 1) else null;
         try maps.append(arena, .{ .map = map orelse {
             console.warn("colour map {s}: could not read its image {s}:{s}", .{ code, domain, path });
             continue;
@@ -761,7 +768,7 @@ test "prepare, write, load and compare with a save" {
 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    var contents = try prepare(arena.allocator(), io, &assets);
+    var contents = try prepare(std.testing.allocator, arena.allocator(), io, &assets);
     // rock-granite, soil, step, ore, and the test mod's thing.
     try std.testing.expectEqual(5, contents.blocks.len);
     // The colour map without an image is left out.
