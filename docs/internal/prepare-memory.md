@@ -32,6 +32,7 @@ Arena figures come from `queryCapacity` and counting allocators in throwaway bui
 | 70210be | shape files kept per block type, boxes not duplicated | 261 MB | 250 MB |
 | d089f5f | sprites drawn into a mapped partial file | 117 MB | 126 MB |
 | 5f343d6 | per-file arena capped, entries grown outside an arena | 92 MB | 126 MB |
+| d97fc40 | sprites written from a 1 MiB buffer instead of a mapped window | 92 MB | 73 MB |
 
 Reading stayed at about 2 s throughout, and drawing at about 5 s, perhaps 0.2 s slower with the mapped file.
 From 83bfd70 on, each step's file was compared byte for byte with the last commit's and matched, apart from colour maps changing format in dd06565, and 8490221, which was compared between `storymap prepare` and a render instead.
@@ -159,6 +160,22 @@ At 117 MB, three arenas held 114 MB:
 
 That reached 92 MB.
 
+### Buffer instead of a mapping
+
+Mapping the partial file brought platform code: Windows' own mapping calls, to get round `Io.File.MemoryMap` ignoring its offset, and space reserved up front on Linux and macOS, because a full disk stops a program writing to a mapped page.
+It saved little in return: one copy of 193 MB, which takes milliseconds of a 5-second draw, and a mapped window pays for it in page faults.
+
+`FileBuffer` now hands out room in a 1 MiB buffer on the stack, so sprites are still drawn in place, and writes it to the file whenever it's full, about 190 positional writes.
+Nothing above `FileBuffer` changed, and the file stayed byte-identical.
+
+| over 6 alternating runs | mapped window | 1 MiB buffer |
+| --- | --- | --- |
+| private | 92 MB | 92 MB |
+| working set | 126 MB | 73 MB |
+| drawing | 4.8 s | 4.7 s |
+
+A full disk is now an ordinary write error on every system.
+
 ## Estimates and measurements
 
 Several estimates made along the way were wrong, and measuring settled each one.
@@ -178,14 +195,13 @@ Several estimates made along the way were wrong, and measuring settled each one.
 - **Arenas free all at once.** Data with different lifetimes needs different arenas: what's small and needed later can pin everything beside it.
 - **`std.heap.page_allocator` commits on Windows.** A large allocation counts against the commit limit even if never touched.
 - **`Allocator.alloc` fills memory in safe builds.** That touches every page of a large allocation; `rawAlloc` doesn't.
-- **`Io.File.MemoryMap` ignores its offset on Windows in Zig 0.17.** `createFileMap` passes `null` to `NtMapViewOfSection`, so `FileBuffer` maps windows itself there.
+- **`Io.File.MemoryMap` ignores its offset on Windows in Zig 0.17.** `createFileMap` passes `null` to `NtMapViewOfSection`.
+- **Writing through a buffer can beat mapping.** It needs less code and holds less, and a mapping's page faults cost about what its saved copy does.
 - **Renaming over an open or mapped file works on Windows in Zig 0.17.** A render keeps reading its old mapping while a prepare replaces the file.
-- **A full disk stops a program writing to a mapped page.** `fallocate` on Linux, `F_PREALLOCATE` on macOS and extending the file on NTFS turn that into an error first.
+- **A full disk stops a program writing to a mapped page.** `write` returns an error instead.
 
 ## Remaining
 
 At 92 MB, the peak is in reading, and drawing needs 64 MB.
 
 Only Windows has run this: Linux and macOS have only been compiled, and only one mod has been tried (`TODO.md`, items 13 and 14).
-
-Working set could fall below 100 MB too with a smaller window, at the cost of remapping more often.
