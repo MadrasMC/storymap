@@ -970,11 +970,23 @@ fn drawingOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shape
     } else return .other;
     const shape = try property(arena, json, "shape", variant) orelse return .cube;
     if (try isCubeShape(arena, shape)) return .cube;
-    const shaped: Drawing = .{ .shaped = shape };
+    const shaped: Drawing = .{ .shaped = try withStaticPart(arena, shape, json, variant) };
     const distant = try property(arena, json, "lod0Shape", variant) orelse return shaped;
     const base = (distant.get("base") orelse return shaped).asString() orelse return shaped;
     const names = try shapes.cubeIn(try .parse(arena, base, Assets.gameDomain)) orelse return shaped;
     return .{ .distantCube = names };
+}
+
+/// `shape` with what a mechanical block's block entity adds to it as one of its overlays: its
+/// `staticShapePart`, as the Archimedes screw's hull is, around the shaft its `shape` names.
+fn withStaticPart(arena: std.mem.Allocator, shape: Json.Value, json: Json.Value, variant: Variant) !Json.Value {
+    const behaviors = try property(arena, json, "entityBehaviors", variant) orelse return shape;
+    for (behaviors.asArray()) |behavior| {
+        const part = (behavior.get("properties") orelse continue).get("staticShapePart") orelse continue;
+        const overlays = try std.mem.concat(arena, Json.Value, &.{ shape.getArray("overlays"), &.{part} });
+        return Shapes.withFields(arena, shape, &.{.{ .key = "overlays", .value = .{ .array = overlays } }});
+    }
+    return shape;
 }
 
 /// Whether a block's `shape` is the plain cube as it is, and so is each of its `alternates`: a
@@ -1787,6 +1799,15 @@ test "the shapes a block picks from" {
     try shapes.files.put(a, "game:block/test/fern", try Json.parse(a, "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 16, 0 ], climateColorMap: 'climatePlantTint', faces: { north: { texture: '#all' } } } ] }"));
     const fern = try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/missing', alternates: [ { base: 'block/test/pot' }, { base: 'block/test/fern' } ] }, textures: { all: { base: 'leaf' } } }"), variant, &shapes);
     try std.testing.expectEqualStrings("climatePlantTint", fern.climateColorMap.?);
+
+    // What a block entity adds to the shape goes on as an overlay, turned as it says, in the
+    // block's textures.
+    const screw = try describe(a, try Json.parse(a,
+        \\{ shape: { base: 'block/test/pot' }, textures: { all: { base: 'leaf' } }, entityBehaviors: [ { name: 'Other' },
+        \\  { name: 'Part', properties: { staticShapePartByType: { '*': { base: 'block/test/fern', rotateY: 90 } } } } ] }
+    ), variant, &shapes);
+    try std.testing.expectEqual(1, screw.shapes.len);
+    try std.testing.expectEqual(2, screw.shapes[0].geometry.boxes.len);
 }
 
 test "how high a block's selection box reaches" {
