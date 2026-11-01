@@ -22,8 +22,7 @@
 //! - for the `game` style, `colour(id: i32) world.Rgb`, `spritesOf(id: i32)
 //!   ?world.BlockSprites`, the block's sprites (`Options.sprites`), `isTinted(id: i32) bool`,
 //!   `variant(id: i32, x: i64, y: i64, z: i64, count: u32) u32`, which of `count` variants of
-//!   its textures, or of `count` shapes, the block at (x, y, z) shows, `turn(id: i32, x: i64, y:
-//!   i64, z: i64, count: u32) u32`, which of its `count` turns it's drawn in, `drawOffset(id:
+//!   its textures, `count` shapes or `count` turns the block at (x, y, z) shows, `drawOffset(id:
 //!   i32, x: i64, y: i64, z: i64) ?[2]f32`, how far east and south of the middle of its place
 //!   it's drawn, in blocks, and `isPlacedByPosition(id: i32) bool`, whether any of those depends
 //!   on more than its sprites and its position;
@@ -1294,9 +1293,9 @@ fn View(comptime Source: type) type {
                         const own = look.sprites;
                         const source = self.view.source;
                         const variant = if (own.variants > 1) source.variant(look.block, block.x, block.y, block.z, own.variants) else 0;
-                        // Shapes are picked as variants are.
+                        // Shapes and turns are picked as variants are.
                         const alternate = if (own.alternates > 1) source.variant(look.block, block.x, block.y, block.z, own.alternates) else 0;
-                        const turn = if (own.turns > 1) source.turn(look.block, block.x, block.y, block.z, own.turns) else 0;
+                        const turn = if (own.turns > 1) source.variant(look.block, block.x, block.y, block.z, own.turns) else 0;
                         const index = own.index(variant, alternate, turn);
                         const sprites = self.view.sprites.?;
                         const sprite = sprites.entries[index];

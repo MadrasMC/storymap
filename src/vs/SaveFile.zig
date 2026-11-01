@@ -212,7 +212,7 @@ pub const Appearance = struct {
     /// a loose stone does. A thin layer of the ground, of snow, sand or gravel, isn't.
     low: bool = false,
     /// How it's moved off the middle of its place (`drawOffset`), which of its position's axes
-    /// pick its variant, alternate and turn (`variant`, `turn`; its offset always uses x and z),
+    /// pick its variant, alternate and turn (`variant`; its offset always uses x and z),
     /// and whether it's turned.
     drawOffset: u8 = 0,
     randomizeAxes: BlockTypes.Axes = .xyz,
@@ -252,18 +252,6 @@ pub fn spritesOf(self: *const SaveFile, id: i32) ?world.BlockSprites {
 /// `GameMath.MurmurHash3Mod`, with height 0 for a block whose `randomizeAxes` is x and z. The
 /// game picks variants in closed code; that it hashes the position this way isn't checked.
 pub fn variant(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
-    return self.byPosition(id, x, y, z, count);
-}
-
-/// Which of its `count` turns block `id` at (x, y, z) is drawn in: picked as `variant` picks a
-/// variant, but with −x, as vssurvivalmod's `BEBehaviorCropProp` picks the turn of the crop it
-/// draws in place of the game's, so a block's turn and its variant don't go together. The game
-/// turns blocks in closed code.
-pub fn turn(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
-    return self.byPosition(id, -%x, y, z, count);
-}
-
-fn byPosition(self: *const SaveFile, id: i32, x: i64, y: i64, z: i64, count: u32) u32 {
     const height = if (self.appearance(id).randomizeAxes == .xz) 0 else y;
     const hash = murmurHash3(@truncate(x), @truncate(height), @truncate(z));
     return @intCast(@mod(hash, @as(i32, @intCast(count))));
@@ -349,14 +337,6 @@ test variant {
     try std.testing.expectEqual(save.variant(0, 3, -7, 11, 4), save.variant(0, 3, -7, 11, 4));
     // Picked by x and z alone, a column shows the same one all the way up.
     for (0..20) |y| try std.testing.expectEqual(save.variant(1, 3, 0, 11, 4), save.variant(1, 3, @intCast(y), 11, 4));
-    for (0..20) |y| try std.testing.expectEqual(save.turn(1, 3, 0, 11, 8), save.turn(1, 3, @intCast(y), 11, 8));
-    // A turn is picked as a variant is, at −x, so with as many of each, a block's turn and
-    // variant don't always agree.
-    try std.testing.expectEqual(save.variant(0, -3, -7, 11, 8), save.turn(0, 3, -7, 11, 8));
-    var differ: usize = 0;
-    z = -50;
-    while (z < 50) : (z += 1) differ += @intFromBool(save.turn(0, 25000, 110, z, 4) != save.variant(0, 25000, 110, z, 4));
-    try std.testing.expect(differ > 50);
 }
 
 pub fn isLow(self: *const SaveFile, id: i32) bool {

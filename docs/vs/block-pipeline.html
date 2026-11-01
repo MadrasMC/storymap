@@ -171,7 +171,7 @@
 			<ol class="list">
 				<li><b>Texture variants</b>, in the order of <a href="#textures">3</a>, the same variant for every face; a texture with fewer variants than the block's others counts round again. 1,248 cubes have variants, up to 10.</li>
 				<li><b>Shapes.</b> A shape with <code>alternates</code>, or whose base ends in <code>*</code>, gives a block several shapes, listed as the game lists them: the shape itself, its base's first file if that ends in <code>*</code>, or the plain cube if it stands for none; its base's other files, turned, scaled and picking elements as the shape does, but neither moved nor overlaid; then each of its <code>alternates</code>, or every file one with a base ending in <code>*</code> stands for. An alternate without a base takes the shape's, and its turn, offset, scale and overlays are its own. A shape listed twice is picked twice as often, as herbs' and lupins' are. The count is the number of shapes, so with as many shapes as variants, a block's shape and variant go together. 1,718 blocks of 1.22.7 with Primitive Survival pick from several shapes, up to 40, such as ferns, loose stones, flowers, coral and berry bushes; 86 of them, such as sand, gravel and old polished rock, pick from four plain cubes turned a quarter at a time, which turns their textures. The plinth picks between its own shape and <code>block/plinth-worn</code>.</li>
-				<li><b>Turns.</b> A block type with <code>randomizeRotations</code> turns each block of it about the vertical line through the middle of its place, by one of 8 angles 45 degrees apart, from −22.5 degrees east towards north, picked by <code>MurmurHash3Mod(−x, y, z, 8)</code>: the same hash at −x, so a block's turn and its variant don't go together. 727 blocks are turned so, such as coral, crops, flowers and mushrooms, and the renderer draws such a shape in each of the 8 turns.</li>
+				<li><b>Turns.</b> A block type with <code>randomizeRotations</code> turns each block of it about the vertical line through the middle of its place, by one of 8 angles 45 degrees apart, from −22.5 degrees east towards north, picked by <code>MurmurHash3Mod(x, y, z, 8)</code>: the hash that picks its variant, so with 8 of each, a block's turn and variant go together. 727 blocks are turned so, such as coral, crops, flowers and mushrooms, and the renderer draws such a shape in each of the 8 turns.</li>
 				<li><b>Moved off the middle.</b> A block type's <code>randomDrawOffset</code>, <code>true</code> for 1 or a number, moves each block of it east and south by up to 11/36 of a block either way, by another hash of its place (<code>GameMath.oaatHash</code>), the larger the number the less; the renderer moves the block's sprite by it, to the nearest pixel. 476 blocks are moved so, such as flowers, tall grass, saplings and coral.</li>
 			</ol>
 			<p>Below, a field of the plinth seen from above: each block coloured by the texture variant it picked, its top drawn as the shape it picked, with a mark on the top's north side, turned as the block is. The hash is the page's own, not the game's; what holds either way is which choices share one.</p>
@@ -464,7 +464,7 @@
 				const h = hash(x, 0, z);
 				const variant = h % field.variants;
 				const shape = h % field.shapes;
-				const turn = field.turned ? hash(-x, 0, z) % 8 : null;
+				const turn = field.turned ? h % 8 : null;
 				if (variant === shape) matching++;
 				const px = x * CELL;
 				const py = z * CELL;
@@ -495,7 +495,7 @@
 		if (field.variants > 1 && field.shapes > 1) {
 			parts.push(`variant and shape match in ${matching}${field.variants === field.shapes ? ", as they always do with as many shapes as variants" : ""}`);
 		}
-		parts.push(field.turned ? "turned by the hash at −x, apart from both" : "not turned");
+		parts.push(field.turned ? "turned by the same hash" : "not turned");
 		$("#field-status").textContent = parts.join(" · ") + ".";
 		canvas.setAttribute("aria-label", `A field of ${COLS} by ${ROWS} blocks seen from above, each coloured by its texture variant and its top turned as the block is`);
 	}

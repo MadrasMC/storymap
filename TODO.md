@@ -10,7 +10,6 @@ What's left for everything the game draws in a world to show on the map, in the 
 
 Wrong today, each small.
 
-- **Turns (small):** `SaveFile.turn` hashes −x, as the crop prop does, where blocks in their shapes hash x, so 727 blocks show the wrong turn, and a block's turn and variant do go together. Correct "Turned" in [`docs/blocks.md`](docs/blocks.md#shapes) with it.
 - **Archimedes screw's hull (small):** a block type's `shape` is only its shaft; the hull is named by its `MPArchimedesScrew` behaviour's `staticShapePart`, which can go into the shape's overlays. 5 blocks, and the only block type naming a shape this way.
 - **Ground storage drawn as a cube (small):** blocks without a sprite that aren't low are drawn as whole cubes in their map colour, so `groundstorage`, whose shape is invisible, is a forest-coloured cube for each thing on the ground. It shouldn't show until ground storage is drawn.
 - **`overrideRandomDrawOffset` (small):** `BlockPlant`, `BlockCrop` and `BlockBamboo` take a block's offset from this attribute, which isn't read. Tall grass and flowers use it.
