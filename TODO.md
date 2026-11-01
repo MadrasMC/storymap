@@ -6,12 +6,6 @@ Storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-st
 
 What's left for everything the game draws in a world to show on the map, in the order to do it. Block counts are for 1.22.7 with Primitive Survival, and counts of placed blocks for the largest test save. Difficulty: small is under a day in a file or two, fitting what's there; medium is a few days, or several modules, or a new data path; large is a new subsystem. Each was checked against the assets and test saves, except where it says otherwise.
 
-### Fixes
-
-Wrong today, each small.
-
-- **A cube face's `rotation` (small):** not read for cubes' textures, as charcoal piles' sides name. How many blocks name one hasn't been counted.
-
 ### Block types
 
 - **`BlockLayer` drawtype (small):** 15 blocks, but they include every snow layer: 119,744 placed. Today they're whole cubes in a flat colour. Each is the shape `block/basic/layers/{2N}voxel`, ignoring the block type's own shape, and needs no renderer change. Do it first: it changes how all cold land looks, and snow under plants needs it.

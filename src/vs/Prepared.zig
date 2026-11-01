@@ -62,7 +62,7 @@ const Image = world.Image;
 
 /// How the six sections' contents are read from the game's assets: raise it when that changes,
 /// so files prepared before are prepared again.
-pub const generatorVersion: u16 = 21;
+pub const generatorVersion: u16 = 22;
 /// The layout of the `colour_maps` section, and of each of the other five (spec §7).
 const colourMapsLayoutVersion: u8 = 2;
 const layoutVersion: u8 = 1;
@@ -393,7 +393,7 @@ const Images = struct {
             const alternateFiles = try self.textures.paths(alternate.base);
             if (alternateFiles.len > 0) if (try self.index(alternate, alternateFiles[0])) |i| try found.append(scratch, i);
         }
-        const bare: BlockTypes.Layer = .{ .base = wanted.base, .half = wanted.half };
+        const bare: BlockTypes.Layer = .{ .base = wanted.base, .half = wanted.half, .quarterTurns = wanted.quarterTurns };
         if (files.len > 1) for (files[1..]) |path| {
             if (try self.index(bare, path)) |i| try found.append(scratch, i);
         };
@@ -408,6 +408,7 @@ const Images = struct {
         try name.writer.print("{s}:{s}", .{ domainOf(layer.base), path });
         for (layer.overlays) |overlay| try name.writer.print("+{s}", .{overlay});
         if (layer.half) |half| try name.writer.print("#{t}", .{half});
+        if (layer.quarterTurns != 0) try name.writer.print("@{}", .{layer.quarterTurns});
         const entry = try self.indexes.getOrPut(arena, name.written());
         if (entry.found_existing) return entry.value_ptr.*;
         entry.key_ptr.* = try arena.dupe(u8, name.written());
@@ -430,9 +431,47 @@ const Images = struct {
             const overlay = try decode(scratch, try self.textures.readPng(location) orelse continue) orelse continue;
             drawOver(@constCast(image.pixels), image.width, image.height, overlay);
         }
-        return image;
+        return try rotate(scratch, image, layer.quarterTurns);
     }
 };
+
+/// `image` turned anticlockwise by `quarterTurns`, as the game turns a texture's `rotation`.
+fn rotate(arena: std.mem.Allocator, image: Image, quarterTurns: u2) !Image {
+    if (quarterTurns == 0) return image;
+    const width: usize = image.width;
+    const height: usize = image.height;
+    const sideways = quarterTurns != 2;
+    const pixels = try arena.alloc([4]u8, width * height);
+    const outWidth = if (sideways) height else width;
+    const outHeight = if (sideways) width else height;
+    for (0..outHeight) |row| for (0..outWidth) |column| {
+        const x, const y = switch (quarterTurns) {
+            0 => unreachable,
+            1 => [2]usize{ width - 1 - row, column },
+            2 => [2]usize{ width - 1 - column, height - 1 - row },
+            3 => [2]usize{ row, height - 1 - column },
+        };
+        pixels[row * outWidth + column] = image.pixels[y * width + x];
+    };
+    return .{ .width = @intCast(outWidth), .height = @intCast(outHeight), .pixels = pixels };
+}
+
+test rotate {
+    const a: [4]u8 = @splat(1);
+    const b: [4]u8 = @splat(2);
+    const c: [4]u8 = @splat(3);
+    const d: [4]u8 = @splat(4);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const image: Image = .{ .width = 2, .height = 2, .pixels = &.{ a, b, c, d } };
+    try std.testing.expectEqualSlices([4]u8, &.{ b, d, a, c }, (try rotate(arena.allocator(), image, 1)).pixels);
+    try std.testing.expectEqualSlices([4]u8, &.{ d, c, b, a }, (try rotate(arena.allocator(), image, 2)).pixels);
+    try std.testing.expectEqualSlices([4]u8, &.{ c, a, d, b }, (try rotate(arena.allocator(), image, 3)).pixels);
+    // Wider than tall, it comes out taller than wide.
+    const wide = try rotate(arena.allocator(), .{ .width = 2, .height = 1, .pixels = &.{ a, b } }, 1);
+    try std.testing.expectEqual(1, wide.width);
+    try std.testing.expectEqualSlices([4]u8, &.{ b, a }, wide.pixels);
+}
 
 /// A PNG's pixels, copied into `arena`; null if it can't be decoded or is larger than an
 /// `Image` holds.

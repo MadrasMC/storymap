@@ -106,6 +106,9 @@ pub const Layer = struct {
     /// For grassy soil's grass: the half of a texture twice as wide as tall that this face takes,
     /// the left for the sides and the right for the top.
     half: ?Half = null,
+    /// The texture's `rotation`: how many quarter turns anticlockwise it's drawn at, its overlays
+    /// with it, from 0 to 3.
+    quarterTurns: u2 = 0,
 
     pub const Half = enum { left, right };
 };
@@ -1085,9 +1088,18 @@ fn layerOf(arena: std.mem.Allocator, texture: ?Json.Value, domain: []const u8) !
     var alternates: std.ArrayList(Layer) = .empty;
     for (value.getArray("alternates")) |alternate| {
         const alternateBase = try textureLocation(arena, alternate, domain) orelse continue;
-        try alternates.append(arena, .{ .base = alternateBase, .overlays = try overlaysOf(arena, alternate, domain) });
+        try alternates.append(arena, .{ .base = alternateBase, .overlays = try overlaysOf(arena, alternate, domain), .quarterTurns = quarterTurnsOf(alternate) });
     }
-    return .{ .base = base, .overlays = try overlaysOf(arena, value, domain), .alternates = alternates.items };
+    return .{ .base = base, .overlays = try overlaysOf(arena, value, domain), .alternates = alternates.items, .quarterTurns = quarterTurnsOf(value) };
+}
+
+/// A texture's `rotation` in quarter turns; the game takes no other than these.
+fn quarterTurnsOf(texture: Json.Value) u2 {
+    const degrees = number(texture.get("rotation"), 0);
+    if (degrees == 90) return 1;
+    if (degrees == 180) return 2;
+    if (degrees == 270) return 3;
+    return 0;
 }
 
 /// A texture's overlays, each as "domain:path", in `domain` unless it names its own.
@@ -1603,6 +1615,12 @@ test "the cube a block is drawn as" {
     try std.testing.expectEqual(0, alternates[0].alternates.len);
     try std.testing.expectEqualStrings("mod:other", alternates[1].base);
     try std.testing.expectEqual(0, alternates[1].overlays.len);
+
+    // Turned as it says, and an alternate as it says itself.
+    const turned = (try describe(a, try Json.parse(a, "{ drawtype: 'cube', textures: { all: { base: 'planks', rotation: 90, alternates: [ { base: 'other' }, { base: 'third', rotation: 270 } ] } } }"), rock, &shapes)).cube.?.up.plain.?;
+    try std.testing.expectEqual(1, turned.quarterTurns);
+    try std.testing.expectEqual(0, turned.alternates[0].quarterTurns);
+    try std.testing.expectEqual(3, turned.alternates[1].quarterTurns);
 
     // Its own name, then its group's, then `all`; no drawtype or shape is the game's cube.
     const log = (try describe(a, try Json.parse(a, "{ textures: { all: { base: 'a' }, verticals: { base: 'v' }, south: { base: 's' } } }"), rock, &shapes)).cube.?;
