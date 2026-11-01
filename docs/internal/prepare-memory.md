@@ -35,6 +35,7 @@ Arena figures come from `queryCapacity` and counting allocators in throwaway bui
 
 Reading stayed at about 2 s throughout, and drawing at about 5 s, perhaps 0.2 s slower with the mapped file.
 From 83bfd70 on, each step's file was compared byte for byte with the last commit's and matched, apart from colour maps changing format in dd06565, and 8490221, which was compared between `storymap prepare` and a render instead.
+The switch itself changed 9,527 of the 55,096 sprites a little, and 57 in size, as the text format rounded boxes and texture coordinates to 1/100,000 and the file keeps them exact: with that rounding put back, every sprite matched byte for byte.
 
 ## Folder of files
 

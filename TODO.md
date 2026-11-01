@@ -10,7 +10,6 @@ What's left for everything the game draws in a world to show on the map, in the 
 
 Wrong today, each small.
 
-- **Ground storage drawn as a cube (small):** blocks without a sprite that aren't low are drawn as whole cubes in their map colour, so `groundstorage`, whose shape is invisible, is a forest-coloured cube for each thing on the ground. It shouldn't show until ground storage is drawn.
 - **`overrideRandomDrawOffset` (small):** `BlockPlant`, `BlockCrop` and `BlockBamboo` take a block's offset from this attribute, which isn't read. Tall grass and flowers use it.
 - **A cube face's `rotation` (small):** not read for cubes' textures, as charcoal piles' sides name. How many blocks name one hasn't been counted.
 

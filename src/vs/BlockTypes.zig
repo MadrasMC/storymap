@@ -560,7 +560,9 @@ pub const Shapes = struct {
     }
 
     /// The shapes the game picks one of for each block of a block type's `shape` (`resolve`),
-    /// each with the block's textures for it; empty if none shows a face.
+    /// each with the block's textures for it; empty if none shows a face and no file names any,
+    /// as a block whose shape files can't be read has. One whose files show nothing, as ground
+    /// storage's do, keeps its shapes, so it's drawn as nothing.
     fn alternatesOf(self: *Shapes, composite: Json.Value, textures: []const Json.Field, tinted: bool, domain: []const u8) ![]const Shape {
         const list = try self.resolve(composite, domain);
         const found = try self.scratch.alloc(Shape, list.len);
@@ -569,7 +571,12 @@ pub const Shapes = struct {
             shape.* = try self.shapeOf(placed, textures, tinted, domain) orelse .empty;
             any = any or shape.geometry.boxes.len > 0;
         }
-        return if (any) found else &.{};
+        if (any) return found;
+        for (list) |placed| {
+            const base = (placed.get("base") orelse continue).asString() orelse continue;
+            if (try self.file(try .parse(self.scratch, base, domain)) != null) return found;
+        }
+        return &.{};
     }
 
     /// A block type's `shape` (vsapi `CompositeShape`) with its overlays, and the block's
@@ -1794,6 +1801,11 @@ test "the shapes a block picks from" {
     try std.testing.expectEqual(0, hollow.shapes[1].geometry.boxes.len);
     const empty = try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/missing' }, textures: { all: { base: 'leaf' } } }"), variant, &shapes);
     try std.testing.expectEqual(0, empty.shapes.len);
+    // One whose file shows nothing keeps its shape, to be drawn as nothing.
+    try shapes.files.put(a, "game:block/test/nothing", try Json.parse(a, "{ elements: [ ] }"));
+    const nothing = try describe(a, try Json.parse(a, "{ shape: { base: 'block/test/nothing' }, textures: { all: { base: 'leaf' } } }"), variant, &shapes);
+    try std.testing.expectEqual(1, nothing.shapes.len);
+    try std.testing.expectEqual(0, nothing.shapes[0].geometry.boxes.len);
 
     // A block type naming no colour maps takes those of the first of its shapes naming any.
     try shapes.files.put(a, "game:block/test/fern", try Json.parse(a, "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 16, 0 ], climateColorMap: 'climatePlantTint', faces: { north: { texture: '#all' } } } ] }"));
