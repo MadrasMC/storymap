@@ -81,7 +81,7 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 ## Platforms
 
-13. **Run on macOS and Linux.** Writing the prepared blocks file through `FileBuffer` has only been run on Windows; it compiles for Linux and macOS. Test it in CI or on a real Mac, including a full disk, where `fallocate` and `F_PREALLOCATE` should give an error instead of stopping the program. `Assets.findFolder` also has no macOS locations yet, so a Mac needs `--game` and `--data`.
+13. **Run on macOS and Linux.** Preparing has only been run on Windows; it compiles for Linux and macOS. Test it in CI or on a real Mac. `Assets.findFolder` also has no macOS locations yet, so a Mac needs `--game` and `--data`.
 
 ## Testing
 

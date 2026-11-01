@@ -104,8 +104,8 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     return open(init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
 }
 
-/// Prepares the blocks from `assets`, draws their sprites straight into the partial file, and
-/// finishes the file at `path`. All it held is freed before it returns. A problem stops the
+/// Prepares the blocks from `assets`, writes their sprites to the partial file as they're drawn,
+/// and finishes the file at `path`. All it held is freed before it returns. A problem stops the
 /// program.
 fn prepareFile(init: std.process.Init, assets: *const Assets, path: []const u8, hash: u64) void {
     const io = init.io;
@@ -153,10 +153,10 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
     const entryBytes = try encoded.allocator().alloc(u8, Sprites.Sections.entriesLength(plan.count));
     const layout = try encodeSections(encoded.allocator(), contents, entryBytes);
 
-    var sprites: Sprites.Sections = .init(io, partial.file, try storyblk.lastOffset(info, &layout));
-    defer sprites.deinit();
+    var layersBuffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
+    var sprites: Sprites.Sections = .init(io, partial.file, try storyblk.lastOffset(info, &layout), &layersBuffer);
     contents.useSprites(try isometric.drawSprites(arena, drawables, plan, &sprites));
-    try sprites.close();
+    try sprites.flush();
     console.log("sprites: {} drawn in {d:.1} s", .{ sprites.entries.items.len, secondsSince(io, start) });
 
     const sections = try encodeSections(encoded.allocator(), contents, try sprites.entryBytes(encoded.allocator(), isometric.blockWidth));
