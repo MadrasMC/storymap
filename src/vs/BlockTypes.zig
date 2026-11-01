@@ -989,6 +989,7 @@ fn drawingOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shape
     if (std.ascii.eqlIgnoreCase(drawtype, "topsoil")) return .topSoil;
     // Liquids are a cube in their `all` texture, if lower where they flow, and see-through.
     if (std.ascii.eqlIgnoreCase(drawtype, "liquid")) return .cube;
+    if (try layerShape(arena, drawtype)) |layer| return .{ .shaped = layer };
     // A shape with a layer of snow over it, or in water, is drawn as the shape alone.
     const jsonDrawtypes = [_][]const u8{ "json", "jsonandsnowlayer", "jsonandwater" };
     for (jsonDrawtypes) |name| {
@@ -1001,6 +1002,18 @@ fn drawingOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shape
     const base = (distant.get("base") orelse return shaped).asString() orelse return shaped;
     const names = try shapes.cubeIn(try .parse(arena, base, Assets.gameDomain)) orelse return shaped;
     return .{ .distantCube = names };
+}
+
+/// The shape of a `BlockLayer_N` drawtype, a layer N eighths of a block high, whatever shape its
+/// block type names: the game's own cut to that height, as snow layers and embers are drawn. Null
+/// for any other drawtype.
+fn layerShape(arena: std.mem.Allocator, drawtype: []const u8) !?Json.Value {
+    const prefix = "blocklayer_";
+    if (drawtype.len != prefix.len + 1 or !std.ascii.startsWithIgnoreCase(drawtype, prefix)) return null;
+    const eighths = std.fmt.charToDigit(drawtype[prefix.len], 10) catch return null;
+    if (eighths < 1 or eighths > 7) return null;
+    const base = try std.fmt.allocPrint(arena, "game:block/basic/layers/{}voxel", .{2 * @as(u32, eighths)});
+    return .{ .object = try arena.dupe(Json.Field, &.{.{ .key = "base", .value = .{ .string = base } }}) };
 }
 
 /// `shape` with what a mechanical block's block entity adds to it as one of its overlays: its
@@ -1615,6 +1628,14 @@ test "the cube a block is drawn as" {
     try std.testing.expectEqual(0, alternates[0].alternates.len);
     try std.testing.expectEqualStrings("mod:other", alternates[1].base);
     try std.testing.expectEqual(0, alternates[1].overlays.len);
+
+    // A layer is the game's shape of its height, drawn in its textures, whatever shape it names.
+    try shapes.files.put(a, "game:block/basic/layers/6voxel", try Json.parse(a, "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 6, 16 ], faces: { up: { texture: '#up' } } } ] }"));
+    const layer = try describe(a, try Json.parse(a, "{ drawtype: 'BlockLayer_3', shape: { base: 'block/basic/cube' }, textures: { all: { base: 'snow' } } }"), rock, &shapes);
+    try std.testing.expectEqual(null, layer.cube);
+    try std.testing.expectEqual(1, layer.shapes.len);
+    try std.testing.expectEqual([3]f32{ 1, 0.375, 1 }, layer.shapes[0].geometry.boxes[0].size);
+    try std.testing.expectEqualStrings("game:snow", layer.shapes[0].textures[0].plain.?.base);
 
     // Turned as it says, and an alternate as it says itself.
     const turned = (try describe(a, try Json.parse(a, "{ drawtype: 'cube', textures: { all: { base: 'planks', rotation: 90, alternates: [ { base: 'other' }, { base: 'third', rotation: 270 } ] } } }"), rock, &shapes)).cube.?.up.plain.?;

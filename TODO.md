@@ -8,7 +8,6 @@ What's left for everything the game draws in a world to show on the map, in the 
 
 ### Block types
 
-- **`BlockLayer` drawtype (small):** 15 blocks, but they include every snow layer: 119,744 placed. Today they're whole cubes in a flat colour. Each is the shape `block/basic/layers/{2N}voxel`, ignoring the block type's own shape, and needs no renderer change. Do it first: it changes how all cold land looks, and snow under plants needs it.
 - **`Cross` drawtype (small):** 7 of tall grass's heights, not drawn at all today, and probably among the commonest blocks on the surface. Each is the shape `block/basic/cross`, turned. It adds detail to encode, so render time may rise.
 - **Snow under plants (small to medium):** `CrossAndSnowlayer` (21 blocks of tall grass) and `JSONAndSnowLayer` (1,054). Fences, loose stones and sticks already have snow in their shapes; plants don't. The game adds a box 1/8 to 3/8 high that neither moves nor turns with the block, so it's a sprite of its own and a flag on the block, not part of the plant's. Only 38 such blocks are in the test saves, as they come from weather, so played winters will have more.
 

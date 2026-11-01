@@ -62,7 +62,7 @@ const Image = world.Image;
 
 /// How the six sections' contents are read from the game's assets: raise it when that changes,
 /// so files prepared before are prepared again.
-pub const generatorVersion: u16 = 22;
+pub const generatorVersion: u16 = 23;
 /// The layout of the `colour_maps` section, and of each of the other five (spec §7).
 const colourMapsLayoutVersion: u8 = 2;
 const layoutVersion: u8 = 1;
