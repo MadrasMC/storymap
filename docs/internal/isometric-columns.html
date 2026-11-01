@@ -4,74 +4,95 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Isometric columns</title>
+<!-- Inline favicon so opening the file makes zero network requests. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='6' height='6' fill='%238a8f98'/%3E%3Crect x='9' y='1' width='6' height='6' fill='%236aae55'/%3E%3Crect x='1' y='9' width='6' height='6' fill='%239a6a3c'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232563eb'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../style/fonts.css">
+<link rel="stylesheet" href="../style/base.css">
 <style>
 	:root {
-		font-size: 16px;
-		--sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-		--mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
-		--t-small: 0.8125rem;
-		--t-micro: 0.6875rem;
-		--s2: 0.5rem;
-		--s3: 0.75rem;
-		--s4: 1rem;
-		--s5: 1.5rem;
-		--s6: 2rem;
-		--bg: #fbfaf7;
-		--fg: #1d1f23;
-		--muted: #5f656e;
-		--panel: #ffffff;
-		--border: #e3e0d8;
-		--soft: #ece9e1;
-		--accent: #2563eb;
+		/* Columns and rows get their own colours. */
 		--column: #2563eb;
 		--column-soft: #bcd0fb;
 		--row: #c2410c;
 		--row-soft: #f6d3c2;
-		color-scheme: light;
 	}
-	* { box-sizing: border-box; }
-	body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--sans); }
-	main { max-width: 60rem; margin: 0 auto; padding: var(--s6) var(--s4) 4rem; }
-	h1 { font-size: clamp(1.75rem, 1.2rem + 2.5vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 var(--s3); }
-	p { max-width: 42rem; margin: 0 0 var(--s3); }
-	code { font: 0.92em var(--mono); background: #f2f0ea; border-radius: 0.25rem; padding: 0.05rem 0.3rem; }
-	.panel { display: grid; gap: var(--s4); background: var(--panel); border: 1px solid var(--border); border-radius: 0.75rem; padding: var(--s5); margin: var(--s5) 0; }
 	.views { display: grid; grid-template-columns: 1fr 1.6fr; gap: var(--s5); align-items: end; }
-	.sub { font: 600 var(--t-micro)/1 var(--mono); color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 var(--s2); }
 	svg { display: block; width: 100%; height: auto; }
 	svg text { font-family: var(--mono); pointer-events: none; }
 	svg .tile { cursor: pointer; }
-	.readout { margin: 0; padding-top: var(--s3); border-top: 1px solid var(--border); font: var(--t-small)/1.6 var(--mono); min-height: 3.2em; }
+	#readout { min-height: 3.2em; }
 	@media (max-width: 44rem) {
-		.panel { padding: var(--s4) var(--s3); }
 		.views { grid-template-columns: 1fr; }
 	}
 </style>
 </head>
 <body>
 <main>
-	<h1>Isometric columns</h1>
-	<p>Turned 45° and squashed to half height, the map's square tiles become diamonds, and the diamonds line up in vertical columns and horizontal rows. Point at a tile to see its column and its row.</p>
+	<header>
+		<h1>Isometric columns</h1>
+		<p class="lede">Turned 45° and squashed to half height, the map's square tiles become diamonds, and the diamonds line up in vertical columns and horizontal rows.</p>
+	</header>
+	<nav class="toc" aria-label="Contents"><ol id="toc"></ol></nav>
 
-	<div class="panel">
-		<div class="views">
-			<div>
-				<p class="sub">Map</p>
-				<svg id="map" role="img" aria-label="Map tiles, x across, z down"></svg>
+	<section id="columns">
+		<div class="section-content">
+			<h2><span class="num">1</span><span>Columns</span></h2>
+			<p>Point at a tile to see its column and its row.</p>
+			<div class="panel stacked">
+				<div class="views">
+					<div>
+						<p class="sub">Map</p>
+						<svg id="map" role="img" aria-label="Map tiles, x across, z down"></svg>
+					</div>
+					<div>
+						<p class="sub">Isometric</p>
+						<svg id="iso" role="img" aria-label="The same tiles as diamonds, with their columns numbered"></svg>
+					</div>
+				</div>
+				<p class="status" id="readout" aria-live="polite"></p>
 			</div>
-			<div>
-				<p class="sub">Isometric</p>
-				<svg id="iso" role="img" aria-label="The same tiles as diamonds, with their columns numbered"></svg>
-			</div>
+			<p>A step east (x + 1) is one column to the right; a step south (z + 1) is one column to the left. From (0, 0) in column 0, a tile x steps east and z steps south is in column <code>x − z</code>.</p>
+			<p>Neighbouring columns are half a diamond apart. Storymap draws diamonds 32 pixels wide, so a tile is <code>(x − z) · 16</code> pixels across.</p>
 		</div>
-		<p class="readout" id="readout" aria-live="polite"></p>
-	</div>
+	</section>
 
-	<p>A step east (x + 1) is one column to the right; a step south (z + 1) is one column to the left. From (0, 0) in column 0, a tile x steps east and z steps south is in column <code>x − z</code>.</p>
-	<p>Neighbouring columns are half a diamond apart. Storymap draws diamonds 32 pixels wide, so a tile is <code>(x − z) · 16</code> pixels across.</p>
-	<p>Rows work the same way, with a sum: a step east and a step south both go one row down, so a tile is in row <code>x + z</code>. Neighbouring rows are half a diamond's height apart, 8 pixels, so a tile is <code>(x + z) · 8</code> pixels down. A block one level higher is drawn 16 pixels higher, which makes it <code>(x + z) · 8 − y · 16</code>.</p>
-	<p>Column 0 holds the tiles where x = z. A world's spawn is on it, so the area explored around spawn has tiles on both sides: columns below 0 as well as above. Rows don't: x + z adds two large positive positions, about 1,024,000 around spawn, far more than the most a block's height takes off.</p>
+	<section id="rows">
+		<div class="section-content">
+			<h2><span class="num">2</span><span>Rows</span></h2>
+			<p>Rows work the same way, with a sum: a step east and a step south both go one row down, so a tile is in row <code>x + z</code>. Neighbouring rows are half a diamond's height apart, 8 pixels, so a tile is <code>(x + z) · 8</code> pixels down. A block one level higher is drawn 16 pixels higher, which makes it <code>(x + z) · 8 − y · 16</code>.</p>
+		</div>
+	</section>
+
+	<section id="spawn">
+		<div class="section-content">
+			<h2><span class="num">3</span><span>Around spawn</span></h2>
+			<p>Column 0 holds the tiles where x = z. A world's spawn is on it, so the area explored around spawn has tiles on both sides: columns below 0 as well as above. Rows don't: x + z adds two large positive positions, about 1,024,000 around spawn, far more than the most a block's height takes off.</p>
+		</div>
+	</section>
 </main>
+<script>
+/* contents, from the sections' headings, nested as the sections are */
+(() => {
+	const items = new Map();
+	for (const section of document.querySelectorAll("main section[id]")) {
+		const heading = section.querySelector(":scope > .section-content > :is(h2, h3, h4)");
+		const link = document.createElement("a");
+		link.href = `#${section.id}`;
+		const num = document.createElement("span");
+		num.className = "num";
+		num.textContent = heading.querySelector(".num").textContent;
+		const title = heading.lastElementChild.cloneNode(true);
+		title.className = "title";
+		link.append(num, title);
+		const item = document.createElement("li");
+		item.append(link);
+		const parent = items.get(section.parentElement.closest("section"));
+		const list = parent ? parent.querySelector(":scope > ol") ?? parent.appendChild(document.createElement("ol")) : document.querySelector("#toc");
+		list.append(item);
+		items.set(section, item);
+	}
+})();
+</script>
 <script>
 "use strict";
 const size = 7;

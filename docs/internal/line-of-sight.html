@@ -4,90 +4,90 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lines of sight</title>
+<!-- Inline favicon so opening the file makes zero network requests. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='6' height='6' fill='%238a8f98'/%3E%3Crect x='9' y='1' width='6' height='6' fill='%236aae55'/%3E%3Crect x='1' y='9' width='6' height='6' fill='%239a6a3c'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232563eb'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../style/fonts.css">
+<link rel="stylesheet" href="../style/base.css">
 <style>
-	:root {
-		font-size: 16px;
-		--sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-		--mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
-		--t-small: 0.8125rem;
-		--t-micro: 0.6875rem;
-		--s2: 0.5rem;
-		--s3: 0.75rem;
-		--s4: 1rem;
-		--s5: 1.5rem;
-		--s6: 2rem;
-		--bg: #fbfaf7;
-		--fg: #1d1f23;
-		--muted: #5f656e;
-		--panel: #ffffff;
-		--border: #e3e0d8;
-		--soft: #f2f0ea;
-		--accent: #2563eb;
-		--accent-fg: #ffffff;
-		color-scheme: light;
-	}
-	* { box-sizing: border-box; }
-	body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--sans); }
-	main { max-width: 60rem; margin: 0 auto; padding: var(--s6) var(--s4) 4rem; }
-	h1 { font-size: clamp(1.75rem, 1.2rem + 2.5vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 var(--s3); }
-	h2 { font-size: 1.25rem; margin: var(--s6) 0 var(--s2); }
-	p, ol { max-width: 44rem; margin: 0 0 var(--s3); }
-	li { margin-bottom: var(--s2); }
-	code { font: 0.92em var(--mono); background: var(--soft); border-radius: 0.25rem; padding: 0.05rem 0.3rem; }
-	.panel { display: grid; gap: var(--s4); background: var(--panel); border: 1px solid var(--border); border-radius: 0.75rem; padding: var(--s5); margin: var(--s5) 0; }
-	.panel p { margin: 0; max-width: none; }
-	.controls { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
-	.btn { font: var(--t-small)/1 var(--sans); color: var(--fg); background: var(--soft); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.6rem var(--s4); cursor: pointer; }
-	.btn:hover:not(:disabled) { border-color: var(--muted); }
-	.btn:disabled { opacity: 0.45; cursor: default; }
-	.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 	canvas { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 0.5rem; }
-	.status { font: var(--t-small)/1.6 var(--mono); min-height: 3.2em; }
-	.counts { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); padding-top: var(--s3); border-top: 1px solid var(--border); font: var(--t-small)/1.4 var(--mono); color: var(--muted); }
-	.counts b { color: var(--fg); font-weight: 600; }
 	.key { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--t-small); color: var(--muted); }
 	.key span::before { content: ""; display: inline-block; width: 0.8rem; height: 0.8rem; margin-right: 0.35rem; vertical-align: -0.1rem; border-radius: 2px; background: var(--swatch, transparent); border: var(--edge, none); }
-	@media (max-width: 44rem) { .panel { padding: var(--s4) var(--s3); } }
+	#status { min-height: 3.2em; }
+	.counts { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); padding-top: var(--s3); border-top: 1px solid var(--border); font: var(--t-small)/1.4 var(--mono); color: var(--muted); }
+	.counts b { color: var(--fg); }
 </style>
 </head>
 <body>
 <main>
-	<h1>Lines of sight</h1>
-	<p>How the isometric view finds which block to draw on each square of a tile, and why it reads so few chunks. The code is <code>Worker.draw</code> and <code>nearestBlock</code> in <code>src/renderer/isometric.zig</code>.</p>
+	<header>
+		<h1>Lines of sight</h1>
+		<p class="lede">How the isometric view finds which block to draw on each square of a tile, and why it reads so few chunks. The code is <code>Worker.draw</code> and <code>nearestBlock</code> in <code>src/renderer/isometric.zig</code>.</p>
+	</header>
+	<nav class="toc" aria-label="Contents"><ol id="toc"></ol></nav>
 
-	<h2>The slice</h2>
-	<p>The view looks at the world from the south-east, from above. All the blocks drawn on one square of the screen lie on one line, each a block west, north and down from the one before, further from the viewer: a line of sight. Only the first block on it can be seen.</p>
-	<p>Below is one slice through a made-up world: the blocks where x = z, seen from the side, with x across and the height up. In it, every line of sight is a diagonal going down to the left. The chunks here are 8 blocks on a side, where the game's are 32, and the world is 32 blocks high, where the game's is 256. The explored area is the middle; there are no chunks either side of it.</p>
-
-	<div class="panel">
-		<div class="controls">
-			<button type="button" class="btn" id="play">Play</button>
-			<button type="button" class="btn" id="step">Step</button>
-			<button type="button" class="btn" id="line">Finish the line</button>
-			<button type="button" class="btn" id="all">All lines</button>
-			<button type="button" class="btn" id="reset">Start over</button>
+	<section id="world-slice">
+		<div class="section-content">
+			<h2><span class="num">1</span><span>The slice</span></h2>
+			<p>The view looks at the world from the south-east, from above. All the blocks drawn on one square of the screen lie on one line, each a block west, north and down from the one before, further from the viewer: a line of sight. Only the first block on it can be seen.</p>
+			<p>Below is one slice through a made-up world: the blocks where x = z, seen from the side, with x across and the height up. In it, every line of sight is a diagonal going down to the left. The chunks here are 8 blocks on a side, where the game's are 32, and the world is 32 blocks high, where the game's is 256. The explored area is the middle; there are no chunks either side of it.</p>
+			<div class="panel stacked">
+				<div class="buttons">
+					<button type="button" class="btn" id="play">Play</button>
+					<button type="button" class="btn" id="step">Step</button>
+					<button type="button" class="btn" id="line">Finish the line</button>
+					<button type="button" class="btn" id="all">All lines</button>
+					<button type="button" class="btn" id="reset">Start over</button>
+				</div>
+				<canvas id="slice" width="1280" height="640" aria-describedby="status"></canvas>
+				<div class="key">
+					<span style="--swatch: #2563eb">drawn: the first block on a line</span>
+					<span style="--edge: 2px solid #2563eb">chunk read from the save, then kept</span>
+					<span style="--edge: 2px dashed #9aa0a8">chunk with nothing to draw, kept</span>
+					<span style="--edge: 2px solid #c2410c">the chunk being looked at</span>
+				</div>
+				<p class="status" id="status" aria-live="polite"></p>
+				<div class="counts" id="counts"></div>
+			</div>
 		</div>
-		<canvas id="slice" width="1280" height="640" aria-describedby="status"></canvas>
-		<div class="key">
-			<span style="--swatch: #2563eb">drawn: the first block on a line</span>
-			<span style="--edge: 2px solid #2563eb">chunk read from the save, then kept</span>
-			<span style="--edge: 2px dashed #9aa0a8">chunk with nothing to draw, kept</span>
-			<span style="--edge: 2px solid #c2410c">the chunk being looked at</span>
-		</div>
-		<p class="status" id="status" aria-live="polite"></p>
-		<div class="counts" id="counts"></div>
-	</div>
+	</section>
 
-	<h2>The steps</h2>
-	<ol>
-		<li><b>Lines.</b> A tile lists the lines whose squares fall on it, about 1,150 at 32-pixel blocks.</li>
-		<li><b>From the top.</b> Each line starts at the top of the world and walks down it, a chunk at a time.</li>
-		<li><b>Chunks.</b> At each chunk it asks the worker's cache. A chunk not in it is read from the save, turned into one byte per block saying how it's drawn, and kept; a chunk the save doesn't have, or with nothing to draw, is kept as that. A chunk with nothing to draw is passed in one go.</li>
-		<li><b>Blocks.</b> In a chunk with blocks, the line checks its blocks one by one. The first one that's drawn is the one on its square; nothing behind it on the line can show, so the line stops there.</li>
-		<li><b>Drawing.</b> The block's sprite goes on the line's square. Squares of neighbouring lines overlap a little, and the depth buffer keeps the nearer block where they do.</li>
-	</ol>
-	<p>Lines stop near the ground, so chunks deep underground are never read: only those along the explored area's east and south edges, where lines come in from outside and meet the walls. In the game's worlds that's about a fifth of the chunks reading every chunk under each tile took.</p>
+	<section id="steps">
+		<div class="section-content">
+			<h2><span class="num">2</span><span>The steps</span></h2>
+			<ol class="steps">
+				<li><b>Lines.</b> A tile lists the lines whose squares fall on it, about 1,150 at 32-pixel blocks.</li>
+				<li><b>From the top.</b> Each line starts at the top of the world and walks down it, a chunk at a time.</li>
+				<li><b>Chunks.</b> At each chunk it asks the worker's cache. A chunk not in it is read from the save, turned into one byte per block saying how it's drawn, and kept; a chunk the save doesn't have, or with nothing to draw, is kept as that. A chunk with nothing to draw is passed in one go.</li>
+				<li><b>Blocks.</b> In a chunk with blocks, the line checks its blocks one by one. The first one that's drawn is the one on its square; nothing behind it on the line can show, so the line stops there.</li>
+				<li><b>Drawing.</b> The block's sprite goes on the line's square. Squares of neighbouring lines overlap a little, and the depth buffer keeps the nearer block where they do.</li>
+			</ol>
+			<p>Lines stop near the ground, so chunks deep underground are never read: only those along the explored area's east and south edges, where lines come in from outside and meet the walls. In the game's worlds that's about a fifth of the chunks reading every chunk under each tile took.</p>
+		</div>
+	</section>
 </main>
+<script>
+/* contents, from the sections' headings, nested as the sections are */
+(() => {
+	const items = new Map();
+	for (const section of document.querySelectorAll("main section[id]")) {
+		const heading = section.querySelector(":scope > .section-content > :is(h2, h3, h4)");
+		const link = document.createElement("a");
+		link.href = `#${section.id}`;
+		const num = document.createElement("span");
+		num.className = "num";
+		num.textContent = heading.querySelector(".num").textContent;
+		const title = heading.lastElementChild.cloneNode(true);
+		title.className = "title";
+		link.append(num, title);
+		const item = document.createElement("li");
+		item.append(link);
+		const parent = items.get(section.parentElement.closest("section"));
+		const list = parent ? parent.querySelector(":scope > ol") ?? parent.appendChild(document.createElement("ol")) : document.querySelector("#toc");
+		list.append(item);
+		items.set(section, item);
+	}
+})();
+</script>
 <script>
 "use strict";
 // The made-up slice: x from 0 to 63 across, heights 0 to 31, chunks of 8.

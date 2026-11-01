@@ -4,123 +4,121 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tile pyramid top</title>
+<!-- Inline favicon so opening the file makes zero network requests. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='6' height='6' fill='%238a8f98'/%3E%3Crect x='9' y='1' width='6' height='6' fill='%236aae55'/%3E%3Crect x='1' y='9' width='6' height='6' fill='%239a6a3c'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232563eb'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../style/fonts.css">
+<link rel="stylesheet" href="../style/base.css">
 <style>
-	:root {
-		font-size: 16px;
-		--sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-		--mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
-		--t-micro: 0.6875rem;
-		--t-small: 0.8125rem;
-		--s1: 0.25rem;
-		--s2: 0.5rem;
-		--s3: 0.75rem;
-		--s4: 1rem;
-		--s5: 1.5rem;
-		--s6: 2rem;
-		--radius: 0.75rem;
-		--bg: #fbfaf7;
-		--fg: #1d1f23;
-		--muted: #5f656e;
-		--panel: #ffffff;
-		--border: #e3e0d8;
-		--soft: #f2f0ea;
-		--accent: #2563eb;
-		--accent-fg: #ffffff;
-		color-scheme: light;
-	}
-	* { box-sizing: border-box; }
-	body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--sans); }
-	main { max-width: 60rem; margin: 0 auto; padding: var(--s6) var(--s4) 4rem; }
-	h1 { font-size: clamp(1.75rem, 1.2rem + 2.5vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 var(--s3); }
-	h2 { font-size: 1.25rem; margin: var(--s6) 0 var(--s2); }
-	p { max-width: 42rem; margin: 0 0 var(--s3); }
-	code { font: 0.92em var(--mono); background: var(--soft); border-radius: 0.25rem; padding: 0.05rem 0.3rem; }
-	.lead { color: var(--muted); font-size: 1.0625rem; }
-	.panel { display: grid; gap: var(--s4); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s5); margin: var(--s5) 0; }
-	.panel p { margin: 0; max-width: none; }
-	.controls { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: center; }
-	.btn { font: var(--t-small)/1 var(--sans); color: var(--fg); background: var(--soft); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.6rem var(--s4); cursor: pointer; }
-	.btn:hover:not(:disabled) { border-color: var(--muted); }
-	.btn:disabled { opacity: 0.45; cursor: default; }
-	.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 0.6rem; padding: 3px; gap: 3px; background: var(--soft); }
-	.seg span { font: 600 var(--t-micro)/1 var(--mono); color: var(--muted); padding: 0 var(--s2); align-self: center; }
-	.seg button { font: var(--t-small)/1 var(--sans); border: 0; border-radius: 0.4rem; padding: 0.45rem 0.7rem; background: transparent; color: var(--fg); cursor: pointer; }
-	.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
-	.btn:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 	.stage { display: grid; grid-template-columns: minmax(0, 34rem) minmax(12rem, 1fr); gap: var(--s5); align-items: start; }
 	canvas { display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--border); border-radius: 0.5rem; touch-action: none; cursor: crosshair; }
 	.levels { display: grid; gap: 2px; font: var(--t-small)/1.5 var(--mono); }
 	.levels div { color: var(--muted); padding: 0 var(--s2); border-radius: 0.3rem; }
 	.levels div.current { color: var(--fg); background: var(--soft); }
 	.levels div.stop { color: var(--muted); font-style: italic; }
-	.status { padding-top: var(--s3); border-top: 1px solid var(--border); font: var(--t-small)/1.6 var(--mono); }
-	.status b { font-weight: 600; }
-	.note { font-size: var(--t-small); color: var(--muted); }
-	table { border-collapse: collapse; font-size: var(--t-small); margin: var(--s3) 0; }
-	th, td { text-align: left; padding: 0.4rem 0.9rem 0.4rem 0; border-bottom: 1px solid var(--border); }
-	th { font: 600 var(--t-micro)/1 var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-	td { font-family: var(--mono); }
+	.parents td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 	@media (max-width: 44rem) {
-		.panel { padding: var(--s4) var(--s3); }
 		.stage { grid-template-columns: 1fr; }
 	}
 </style>
 </head>
 <body>
 <main>
-	<h1>The top of the tile pyramid</h1>
-	<p class="lead">Why tiles either side of 0 never end up in the same zoomed-out tile, and where the pipeline stops building levels. The code is <code>Pyramid.init</code> in <code>src/tiles/tiles.zig</code>; the pipeline as a whole is in <a href="tile-pipeline.html">tile-pipeline.html</a>.</p>
+	<header>
+		<h1>The top of the tile pyramid</h1>
+		<p class="lede">Why tiles either side of 0 never end up in the same zoomed-out tile, and where the pipeline stops building levels. The code is <code>Pyramid.init</code> in <code>src/tiles/tiles.zig</code>; the pipeline as a whole is in <a href="tile-pipeline.html">tile-pipeline.html</a>.</p>
+	</header>
+	<nav class="toc" aria-label="Contents"><ol id="toc"></ol></nav>
 
-	<h2>Parents</h2>
-	<p>Each zoomed-out level is built from the one below: a tile's parent is its position halved and rounded down, across and down separately. Tiles 0 and 1 share parent 0, tiles 2 and 3 share parent 1, and so on. Rounding down works the same below 0, so tiles −2 and −1 share parent −1.</p>
-	<table>
-		<thead><tr><th>tile</th><th>halved</th><th>parent</th></tr></thead>
-		<tbody>
-			<tr><td>3</td><td>1.5</td><td>1</td></tr>
-			<tr><td>1</td><td>0.5</td><td>0</td></tr>
-			<tr><td>0</td><td>0</td><td>0</td></tr>
-			<tr><td>−1</td><td>−0.5</td><td>−1</td></tr>
-			<tr><td>−2</td><td>−1</td><td>−1</td></tr>
-		</tbody>
-	</table>
-	<p>So 0 stays 0 and −1 stays −1 at every level. A tile on one side of 0 never shares a parent with a tile on the other: 0 is a wall all the way up. Every multiple of a power of two is a wall for a while: tiles either side of a multiple of 2ⁿ stay apart for n levels. Tiles 7 and 8 sit either side of 8, which is 2³, and meet 4 levels up. 0 is a multiple of every power of two, so its wall never ends.</p>
-	<p>Below, the level-0 tiles are a grid like the map's, 32 × 32 around position 0, 0, with the walls at 0 dashed. Play to watch each level's tiles grow into their parents. Click or drag on the grid to add or remove level-0 tiles.</p>
-
-	<div class="panel">
-		<div class="controls">
-			<div class="seg" role="group" aria-label="Level-0 tiles">
-				<span>TILES</span>
-				<button type="button" data-preset="positive" aria-pressed="false">Positive</button>
-				<button type="button" data-preset="column" aria-pressed="true">Across x = 0</button>
-				<button type="button" data-preset="corner" aria-pressed="false">Around 0, 0</button>
-				<button type="button" data-preset="eight" aria-pressed="false">Across x = 8</button>
+	<section id="parents">
+		<div class="section-content">
+			<h2><span class="num">1</span><span>Parents</span></h2>
+			<p>Each zoomed-out level is built from the one below: a tile's parent is its position halved and rounded down, across and down separately. Tiles 0 and 1 share parent 0, tiles 2 and 3 share parent 1, and so on. Rounding down works the same below 0, so tiles −2 and −1 share parent −1.</p>
+			<div class="table-wrap">
+				<table class="parents">
+					<thead><tr><th>tile</th><th>halved</th><th>parent</th></tr></thead>
+					<tbody>
+						<tr><td>3</td><td>1.5</td><td>1</td></tr>
+						<tr><td>1</td><td>0.5</td><td>0</td></tr>
+						<tr><td>0</td><td>0</td><td>0</td></tr>
+						<tr><td>−1</td><td>−0.5</td><td>−1</td></tr>
+						<tr><td>−2</td><td>−1</td><td>−1</td></tr>
+					</tbody>
+				</table>
 			</div>
-			<div class="seg" role="group" aria-label="Where levels stop">
-				<span>STOP</span>
-				<button type="button" data-rule="single" aria-pressed="false">At one tile</button>
-				<button type="button" data-rule="settled" aria-pressed="true">When tiles come no closer</button>
+			<p>So 0 stays 0 and −1 stays −1 at every level. A tile on one side of 0 never shares a parent with a tile on the other: 0 is a wall all the way up. Every multiple of a power of two is a wall for a while: tiles either side of a multiple of 2ⁿ stay apart for n levels. Tiles 7 and 8 sit either side of 8, which is 2³, and meet 4 levels up. 0 is a multiple of every power of two, so its wall never ends.</p>
+			<p>Below, the level-0 tiles are a grid like the map's, 32 × 32 around position 0, 0, with the walls at 0 dashed. Play to watch each level's tiles grow into their parents. Click or drag on the grid to add or remove level-0 tiles.</p>
+			<div class="panel stacked">
+				<div class="controls">
+					<div class="control">
+						<span class="sub">Tiles</span>
+						<div class="seg-control" role="group" aria-label="Level-0 tiles">
+							<button type="button" data-preset="positive" aria-pressed="false">Positive</button>
+							<button type="button" data-preset="column" aria-pressed="true">Across x = 0</button>
+							<button type="button" data-preset="corner" aria-pressed="false">Around 0, 0</button>
+							<button type="button" data-preset="eight" aria-pressed="false">Across x = 8</button>
+						</div>
+					</div>
+					<div class="control">
+						<span class="sub">Stop</span>
+						<div class="seg-control" role="group" aria-label="Where levels stop">
+							<button type="button" data-rule="single" aria-pressed="false">At one tile</button>
+							<button type="button" data-rule="settled" aria-pressed="true">When tiles come no closer</button>
+						</div>
+					</div>
+				</div>
+				<div class="buttons">
+					<button type="button" class="btn" id="play">Play</button>
+					<button type="button" class="btn" id="back">Back</button>
+					<button type="button" class="btn" id="step">Step</button>
+					<button type="button" class="btn" id="reset">Level 0</button>
+				</div>
+				<div class="stage">
+					<canvas id="grid" aria-describedby="status"></canvas>
+					<div class="levels" id="levels" aria-label="Levels"></div>
+				</div>
+				<p class="status" id="status" aria-live="polite"></p>
 			</div>
 		</div>
-		<div class="controls">
-			<button type="button" class="btn" id="play">Play</button>
-			<button type="button" class="btn" id="back">Back</button>
-			<button type="button" class="btn" id="step">Step</button>
-			<button type="button" class="btn" id="reset">Level 0</button>
-		</div>
-		<div class="stage">
-			<canvas id="grid" aria-describedby="status"></canvas>
-			<div class="levels" id="levels" aria-label="Levels"></div>
-		</div>
-		<p class="status" id="status" aria-live="polite"></p>
-	</div>
+	</section>
 
-	<h2>Where the levels stop</h2>
-	<p><b>Before:</b> levels were added until one had a single tile. For tiles either side of 0 that never happens, so the render kept adding levels of two tiles until it ran out of memory.</p>
-	<p><b>Now:</b> levels stop at the top level: across and down, the tiles are all at one position, or at exactly −1 and 0. Halving brings neither any closer; any other tiles still come closer further up, even ones on either side of 0 that never meet, such as (−1, 4) and (0, 7), which end side by side at (−1, 1) and (0, 1). Top-down maps, whose tiles are all positive, still end in a single tile; where tiles lie either side of 0, the top level has 2 or 4.</p>
+	<section id="stop">
+		<div class="section-content">
+			<h2><span class="num">2</span><span>Where the levels stop</span></h2>
+			<p><b>Before:</b> levels were added until one had a single tile. For tiles either side of 0 that never happens, so the render kept adding levels of two tiles until it ran out of memory.</p>
+			<p><b>Now:</b> levels stop at the top level: across and down, the tiles are all at one position, or at exactly −1 and 0. Halving brings neither any closer; any other tiles still come closer further up, even ones on either side of 0 that never meet, such as (−1, 4) and (0, 7), which end side by side at (−1, 1) and (0, 1). Top-down maps, whose tiles are all positive, still end in a single tile; where tiles lie either side of 0, the top level has 2 or 4.</p>
+		</div>
+	</section>
 
-	<h2>Why the isometric view meets it</h2>
-	<p>Top-down tile numbers in Vintage Story are always positive, around 1,000. The walls the test worlds straddle are multiples of small powers of two, such as 1,000, which is 125 × 8, so their tiles meet a few levels up. The isometric view puts a block at screen x = (x − z) · 8. Vintage Story worlds lie around x = z, so the isometric tiles straddle screen x = 0: tile columns −1 and 0, like "Across x = 0".</p>
+	<section id="isometric">
+		<div class="section-content">
+			<h2><span class="num">3</span><span>Why the isometric view meets it</span></h2>
+			<p>Top-down tile numbers in Vintage Story are always positive, around 1,000. The walls the test worlds straddle are multiples of small powers of two, such as 1,000, which is 125 × 8, so their tiles meet a few levels up. The isometric view puts a block at screen x = (x − z) · 8. Vintage Story worlds lie around x = z, so the isometric tiles straddle screen x = 0: tile columns −1 and 0, like "Across x = 0".</p>
+		</div>
+	</section>
 </main>
+<script>
+/* contents, from the sections' headings, nested as the sections are */
+(() => {
+	const items = new Map();
+	for (const section of document.querySelectorAll("main section[id]")) {
+		const heading = section.querySelector(":scope > .section-content > :is(h2, h3, h4)");
+		const link = document.createElement("a");
+		link.href = `#${section.id}`;
+		const num = document.createElement("span");
+		num.className = "num";
+		num.textContent = heading.querySelector(".num").textContent;
+		const title = heading.lastElementChild.cloneNode(true);
+		title.className = "title";
+		link.append(num, title);
+		const item = document.createElement("li");
+		item.append(link);
+		const parent = items.get(section.parentElement.closest("section"));
+		const list = parent ? parent.querySelector(":scope > ol") ?? parent.appendChild(document.createElement("ol")) : document.querySelector("#toc");
+		list.append(item);
+		items.set(section, item);
+	}
+})();
+</script>
 <script>
 "use strict";
 // The level-0 tiles shown: positions first to first + count − 1, across and down.
