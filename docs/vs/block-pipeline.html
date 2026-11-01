@@ -6,7 +6,12 @@
 <title>Storymap block pipeline</title>
 <!-- Inline favicon so opening the file makes zero network requests. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='6' height='6' fill='%238a8f98'/%3E%3Crect x='9' y='1' width='6' height='6' fill='%236aae55'/%3E%3Crect x='1' y='9' width='6' height='6' fill='%239a6a3c'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%232563eb'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="../style/fonts.css">
+<link rel="stylesheet" href="../style/base.css">
+<style>
+	.faces .swatch { margin: 0; }
+	canvas.sprite, canvas.sprite-field { display: block; max-width: 100%; border-radius: 0.25rem; }
+</style>
 </head>
 <body>
 <main>
@@ -158,7 +163,7 @@
 						</div>
 					</div>
 				</div>
-				<p class="stat" id="face-status" aria-live="polite"></p>
+				<p class="status" id="face-status" aria-live="polite"></p>
 			</div>
 			<p class="source">Sources: <a href="../blocks.md#cube-faces">blocks.md: cube faces</a> · <a href="../blocks.md#shapes">blocks.md: shapes</a></p>
 		</div>
@@ -201,7 +206,7 @@
 					</div>
 				</div>
 				<canvas class="sprite-field" id="field" role="img" aria-describedby="field-status"></canvas>
-				<p class="stat" id="field-status" aria-live="polite"></p>
+				<p class="status" id="field-status" aria-live="polite"></p>
 			</div>
 			<p class="source">Sources: <a href="../blocks.md#cube-faces">blocks.md: cube faces</a> · <a href="../blocks.md#shapes">blocks.md: shapes</a></p>
 		</div>

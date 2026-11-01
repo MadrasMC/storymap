@@ -1,0 +1,351 @@
+/* Shared by the pages under docs/: tokens, the text column, headings, panels, tables and controls. Each page keeps the rules of its own parts. */
+
+:root {
+	font-size: 16px;
+	--sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--mono: "Geist Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+
+	/* type scale */
+	--t-micro: 0.6875rem;
+	--t-small: 0.8125rem;
+	--t-body: 1rem;
+	--t-h2: 1.375rem;
+	--t-display: clamp(1.875rem, 1.2rem + 3vw, 2.75rem);
+
+	/* spacing scale */
+	--s1: 0.25rem;
+	--s2: 0.5rem;
+	--s3: 0.75rem;
+	--s4: 1rem;
+	--s5: 1.5rem;
+	--s6: 2rem;
+	--s7: 3rem;
+	--s8: 4rem;
+
+	--radius: 0.75rem;
+	--radius-sm: 0.375rem;
+	--ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+	--bg: #fbfaf7;
+	--fg: #1d1f23;
+	--muted: #5f656e;
+	--panel: #ffffff;
+	--border: #e3e0d8;
+	--soft: #f2f0ea;
+	/* The accent has one job: the thing you're pointing at or acting on. */
+	--accent: #2563eb;
+	--accent-fg: #ffffff;
+	--accent-soft: #dce7fd;
+	--error: #c62828;
+	color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--fg);
+	font: var(--t-body)/1.6 var(--sans);
+}
+/* A text column, with room on either side for panels and figures, which span the whole
+   width. Every section is a subgrid of it, holding its own heading and text (.section-content)
+   and then its subsections. The gaps space everything: 48px between the header, the
+   contents and sections, and between a section's text and each subsection; 16px between
+   things in a section's text, with 8px more around panels and tables. */
+main {
+	display: grid;
+	grid-template-columns: [wide-start] minmax(0, 1fr) [text-start] min(42rem, 100%) [text-end] minmax(0, 1fr) [wide-end];
+	row-gap: var(--s7);
+	align-content: start;
+	max-width: calc(54rem + 2 * var(--s4));
+	margin: 0 auto;
+	padding: var(--s8) var(--s4) 6rem;
+}
+section, .section-content { grid-column: wide; display: grid; grid-template-columns: subgrid; align-content: start; }
+section { row-gap: var(--s7); scroll-margin-top: var(--s5); }
+.section-content { row-gap: var(--s4); }
+main > :not(section), .section-content > * { grid-column: text; margin-block: 0; }
+.section-content > :is(.panel, .table-wrap) { margin-block: var(--s2); }
+.section-content > .panel { grid-column: wide; }
+a { color: inherit; text-underline-offset: 0.2em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+h1 {
+	font-size: var(--t-display);
+	font-weight: 600;
+	line-height: 1.1;
+	letter-spacing: -0.025em;
+	margin: 0 0 var(--s3);
+}
+.lede { color: var(--muted); font-size: 1.125rem; margin: 0; max-width: 40rem; }
+.versions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-top: var(--s4); }
+.versions .label { font: var(--t-small)/1 var(--mono); color: var(--muted); margin-right: var(--s1); }
+.version {
+	font: 600 var(--t-small)/1 var(--mono);
+	font-variant-numeric: tabular-nums;
+	border: 1px solid var(--border);
+	background: var(--panel);
+	border-radius: 999px;
+	padding: var(--s2) var(--s3);
+}
+
+.toc {
+	/* The space between the tree lines and the numbers' digits, every way. */
+	--tree-gap: 8px;
+	/* Where the numbers' digits are in an entry: they sit on the title's baseline, this far
+	   below the top of its text (1.6rem tall), are this tall, and start this far into the
+	   number. Measured in Geist and Geist Mono; rem and px, so they hold in either font. */
+	--digits-bottom: 1.158rem;
+	--digits-height: 0.5rem;
+	--digits-inset: 0.5px;
+}
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc > ol { columns: 2; column-gap: var(--s6); }
+.toc a { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s1) 0; text-decoration: none; break-inside: avoid; }
+.toc a:hover .title { text-decoration: underline; }
+.toc .num { flex: none; font: 600 var(--t-micro)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.toc > ol > li > a { font: 600 var(--t-body)/1.6 var(--sans); padding-top: var(--s2); }
+/* The trunk joins the top-level numbers, from --tree-gap under each to --tree-gap over the
+   next, centred on them as the branches are; entries are set in the numbers' font for its
+   ch. A top-level entry's text starts --s2 down. */
+.toc > ol > li { position: relative; font: 600 var(--t-micro)/1 var(--mono); }
+.toc > ol > li:not(:last-child)::before {
+	content: "";
+	position: absolute;
+	left: calc(0.5ch - 0.5px);
+	top: calc(var(--s2) + var(--digits-bottom) + var(--tree-gap));
+	bottom: calc(-1 * (var(--s2) + var(--digits-bottom) - var(--digits-height) - var(--tree-gap)));
+	border-left: 1px solid var(--border);
+}
+/* Tree lines: each entry draws the line down its side and a tick across to its number; the
+   last entry's line stops at its tick, and the first one's reaches up to --tree-gap under its
+   parent's number, whose row ends 1.6rem + --s1 below its text's top. A branch's line is
+   centred on its parent's number: the lists are set in the numbers' font, so a number of n
+   characters is centred n / 2 ch in (1 for "3", 3 for "3.1"). A tick's 1px line is level
+   with the middle of its number's digits, and ends --tree-gap before them. */
+.toc ol ol { font: 600 var(--t-micro)/1 var(--mono); margin-left: calc(0.5ch - 0.5px); }
+.toc ol ol ol { margin-left: calc(1.5ch - 0.5px); }
+.toc li li {
+	--tick: calc(var(--s1) + var(--digits-bottom) - var(--digits-height) / 2 - 0.5px);
+	position: relative;
+	padding-left: var(--s4);
+	font: var(--t-body)/1.6 var(--sans);
+}
+.toc li li:first-child { --reach: calc(1.6rem + var(--s1) - var(--digits-bottom) - var(--tree-gap)); }
+.toc li li::before, .toc li li::after { content: ""; position: absolute; left: 0; border: 0 solid var(--border); }
+.toc li li::before { top: calc(-1 * var(--reach, 0px)); bottom: 0; border-left-width: 1px; }
+.toc li li:last-child::before { bottom: auto; height: calc(var(--tick) + 1px + var(--reach, 0px)); }
+.toc li li::after { top: var(--tick); width: calc(var(--s4) + var(--digits-inset) - var(--tree-gap)); border-top-width: 1px; }
+
+h2, h3, h4 {
+	display: flex;
+	align-items: center;
+	gap: var(--s3);
+	font-weight: 600;
+	line-height: 1.3;
+	margin: 0 0 var(--s3);
+}
+h2 { font-size: var(--t-h2); letter-spacing: -0.01em; }
+h3 { font-size: 1.1875rem; }
+h4 { font-size: 1.0625rem; }
+h2 .num, h3 .num, h4 .num {
+	flex: none;
+	font: 600 var(--t-small)/1 var(--mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--muted);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	padding: 0.3rem 0.45rem;
+}
+p { margin: 0 0 var(--s4); max-width: 42rem; }
+b, strong { font-weight: 600; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+code { background: var(--soft); border-radius: 0.25rem; padding: 0.05rem 0.3rem; }
+.muted { color: var(--muted); }
+.num-tab { font-variant-numeric: tabular-nums; }
+
+.panel {
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: var(--s5);
+	margin: var(--s5) 0;
+}
+.sub {
+	font: 600 var(--t-micro)/1 var(--mono);
+	color: var(--muted);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	margin: 0 0 var(--s3);
+}
+.stat { font: var(--t-small)/1.5 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.stat b { color: var(--fg); }
+
+.figure { display: grid; justify-items: center; gap: var(--s4); }
+.figure figcaption { font-size: var(--t-small); color: var(--muted); max-width: 36rem; }
+
+label.field { display: grid; gap: var(--s1); font: 600 var(--t-micro)/1.2 var(--mono); letter-spacing: 0.04em; color: var(--muted); }
+input[type="number"], input[type="text"] {
+	font: var(--t-body)/1.2 var(--mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--fg);
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	padding: var(--s2) var(--s3);
+	width: 100%;
+	min-width: 0;
+}
+input[aria-invalid="true"] { border-color: var(--error); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+button { font: inherit; color: inherit; }
+.btn {
+	font: var(--t-small)/1 var(--sans);
+	background: var(--soft);
+	border: 1px solid var(--border);
+	border-radius: 0.5rem;
+	padding: 0.6rem var(--s4);
+	cursor: pointer;
+	transition: border-color 0.15s var(--ease);
+}
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.error-line { font: var(--t-small)/1.4 var(--mono); color: var(--error); margin: var(--s2) 0 0; min-height: 1.4em; }
+
+.chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.chip {
+	font: var(--t-small)/1 var(--mono);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	padding: var(--s2) var(--s3);
+	color: var(--fg);
+	text-decoration: none;
+}
+a.chip:hover { border-color: var(--fg); }
+
+/* fields */
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: var(--t-small); }
+th, td { text-align: left; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font: 600 var(--t-micro)/1.2 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+td:first-child { font-family: var(--mono); font-variant-numeric: tabular-nums; width: 3.5em; white-space: nowrap; }
+td code { background: none; padding: 0; }
+tr.key td { background: var(--soft); font-weight: 600; }
+.tag {
+	display: inline-block;
+	font: 600 var(--t-micro)/1.2 var(--mono);
+	padding: 0.2rem 0.45rem;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	color: var(--muted);
+	white-space: nowrap;
+}
+.tag.ok { border-color: var(--z); color: var(--z); }
+.tag.partial { border-color: var(--x); color: var(--x); }
+a.tag { text-decoration: none; }
+a.tag:hover { text-decoration: underline; }
+
+/* blob */
+.seg-control { display: inline-flex; border: 1px solid var(--border); border-radius: 0.6rem; padding: 3px; gap: 3px; background: var(--soft); }
+.seg-control button {
+	border: 0;
+	background: none;
+	padding: var(--s2) var(--s3);
+	border-radius: 0.4rem;
+	font: var(--t-small)/1 var(--mono);
+	color: var(--muted);
+	cursor: pointer;
+}
+.seg-control button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+
+.legend { display: flex; flex-wrap: wrap; gap: var(--s4); margin-top: var(--s3); font: var(--t-micro)/1 var(--mono); color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: var(--s2); }
+.legend i { width: 0.75rem; height: 0.75rem; border-radius: 0.2rem; display: inline-block; }
+
+/* order */
+.two-col { display: grid; grid-template-columns: minmax(0, 20rem) minmax(0, 1fr); gap: var(--s5); align-items: start; }
+.formula {
+	font: var(--t-small)/1.8 var(--mono);
+	font-variant-numeric: tabular-nums;
+	background: var(--soft);
+	border-radius: 0.5rem;
+	padding: var(--s3) var(--s4);
+	margin-top: var(--s4);
+	overflow-x: auto;
+	white-space: nowrap;
+}
+
+.buttons { display: flex; gap: var(--s2); margin-top: var(--s3); flex-wrap: wrap; }
+
+/* example */
+ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 0; display: grid; gap: var(--s3); }
+ol.steps li {
+	counter-increment: step;
+	display: grid;
+	grid-template-columns: 1.75rem 1fr;
+	gap: var(--s3);
+	padding: var(--s4);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--panel);
+}
+ol.steps li::before {
+	content: counter(step);
+	font: 600 var(--t-micro)/1 var(--mono);
+	width: 1.625rem;
+	height: 1.625rem;
+	display: grid;
+	place-items: center;
+	border-radius: 50%;
+	background: var(--soft);
+	color: var(--muted);
+}
+ol.steps p { margin: 0; }
+ol.steps .calc { font: var(--t-small)/1.6 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); margin-top: var(--s1); overflow-wrap: anywhere; }
+ol.steps .calc b { color: var(--fg); }
+
+.swatch { display: inline-block; width: 0.75rem; height: 0.75rem; border-radius: 0.2rem; margin-right: var(--s2); vertical-align: -0.05rem; }
+
+.source { font-size: var(--t-small); color: var(--muted); }
+
+ul.list, ol.list { padding-left: var(--s5); margin: 0; }
+.list li { margin-bottom: var(--s2); max-width: 42rem; }
+
+@media (max-width: 44rem) {
+	.two-col { grid-template-columns: minmax(0, 1fr); }
+	.panel { padding: var(--s4) var(--s3); }
+	.toc > ol { columns: 1; }
+	td code { overflow-wrap: anywhere; }
+}
+@media (prefers-reduced-motion: reduce) {
+	*, *::before, *::after { transition: none !important; }
+}
+
+pre { font: var(--t-small)/1.5 var(--mono); background: var(--soft); border-radius: 0.5rem; padding: var(--s3) var(--s4); margin: 0; overflow-x: auto; tab-size: 2; }
+pre code { background: none; padding: 0; font: inherit; }
+.stacked { display: grid; gap: var(--s4); }
+.stacked > * { margin: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: var(--s3) var(--s5); align-items: end; }
+.control { display: grid; gap: var(--s1); justify-items: start; }
+.control .sub, .buttons .sub { margin: 0; align-self: center; }
+.controls .buttons { margin: 0; }
+.toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--s2);
+	font: var(--t-small)/1 var(--mono);
+	color: var(--fg);
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	padding: var(--s2) var(--s3);
+	cursor: pointer;
+}
+.toggle[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.toggle .swatch { margin: 0; }
+
+/* panels' notes and status lines */
+.note { font-size: var(--t-small); color: var(--muted); }
+.note b { color: var(--fg); }
+.status { padding-top: var(--s4); border-top: 1px solid var(--border); font: var(--t-small)/1.6 var(--mono); }
