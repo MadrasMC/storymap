@@ -2,9 +2,53 @@
 
 Storymap renders Vintage Story saves as a **top-down map** and a **Mapcrafter-style isometric render**. Format knowledge lives in [`docs/save-format/README.md`](docs/save-format/README.md), renderer research in [`docs/rendering.md`](docs/rendering.md) and how blocks are read and drawn in [`docs/blocks.md`](docs/blocks.md): record every finding there, with its source, as it's made.
 
-## Top-down map
+## Feature completion
+
+What's left for everything the game draws in a world to show on the map, in the order to do it. Block counts are for 1.22.7 with Primitive Survival, and counts of placed blocks for the largest test save. Difficulty: small is under a day in a file or two, fitting what's there; medium is a few days, or several modules, or a new data path; large is a new subsystem. Each was checked against the assets and test saves, except where it says otherwise.
+
+### Fixes
+
+Wrong today, each small.
+
+- **Turns (small):** `SaveFile.turn` hashes −x, as the crop prop does, where blocks in their shapes hash x, so 727 blocks show the wrong turn, and a block's turn and variant do go together. Correct "Turned" in [`docs/blocks.md`](docs/blocks.md#shapes) with it.
+- **Archimedes screw's hull (small):** a block type's `shape` is only its shaft; the hull is named by its `MPArchimedesScrew` behaviour's `staticShapePart`, which can go into the shape's overlays. 5 blocks, and the only block type naming a shape this way.
+- **Ground storage drawn as a cube (small):** blocks without a sprite that aren't low are drawn as whole cubes in their map colour, so `groundstorage`, whose shape is invisible, is a forest-coloured cube for each thing on the ground. It shouldn't show until ground storage is drawn.
+- **`overrideRandomDrawOffset` (small):** `BlockPlant`, `BlockCrop` and `BlockBamboo` take a block's offset from this attribute, which isn't read. Tall grass and flowers use it.
+- **A cube face's `rotation` (small):** not read for cubes' textures, as charcoal piles' sides name. How many blocks name one hasn't been counted.
+
+### Block types
+
+- **`BlockLayer` drawtype (small):** 15 blocks, but they include every snow layer: 119,744 placed. Today they're whole cubes in a flat colour. Each is the shape `block/basic/layers/{2N}voxel`, ignoring the block type's own shape, and needs no renderer change. Do it first: it changes how all cold land looks, and snow under plants needs it.
+- **`Cross` drawtype (small):** 7 of tall grass's heights, not drawn at all today, and probably among the commonest blocks on the surface. Each is the shape `block/basic/cross`, turned. It adds detail to encode, so render time may rise.
+- **Snow under plants (small to medium):** `CrossAndSnowlayer` (21 blocks of tall grass) and `JSONAndSnowLayer` (1,054). Fences, loose stones and sticks already have snow in their shapes; plants don't. The game adds a box 1/8 to 3/8 high that neither moves nor turns with the block, so it's a sprite of its own and a flag on the block, not part of the plant's. Only 38 such blocks are in the test saves, as they come from weather, so played winters will have more.
+
+### World surfaces
+
+- **Liquid behind blocks that don't fill their square (small):** a chunk keeps one look per place, a solid block over its liquid, so a place with both loses the liquid. 209,459 places in the largest save, 70% of them underwater plants, with 70,517 at the water's surface, where a dent shows. Needs a second look for those places, kept sparsely, drawn behind the block.
+- **Leaves' gaps (small):** stop filling holes in `cubeLayers` and clear `fills`. No blending is needed, as small leaves' textures are about half fully transparent. Lines pass through 18% of the time with no measurable cost. Whether it looks better is the open question.
+- **Water and ice (medium):** lines go on past them, with a second pixel and depth buffer for the nearest see-through surface, composited at the end, and a fade by depth, as there's no block light to darken a deep seabed. Walking past water is cheap, at 10% more chunks read in the wettest test save; encoding the added detail is the likely cost, not measured yet. Needs `renderPass` read, and a sprite flag.
+- **Glass (small to medium):** needs alpha through `rasterizer.triangle`. Panes show as their frames alone today, but only 18–57 glass blocks are in the test saves, so it can wait.
+- **Decor (medium, high end):** blocks kept on a face of the block beside them, in each chunk's `DecorsSerialized` ([save format §3](docs/save-format/README.md#3-chunk-data-protobuf-fields)), a flat run of 8-byte pairs (packed position, face and rotation, then block ID), checked against all test saves. 38 block type files, 18 of them with shapes rather than `SurfaceLayer`. About a million in the largest save, 67% of them spotty moss, 13% rust and 6% mold; paint, plaster, banners and wallpaper aren't in any. Only 37% are on faces the view shows, and about 17% in the open, so the gain is modest, and most of it is moss. Needs decoding, a sparse list of extra looks per chunk, and drawing over a face. Cave art, wrapping onto shapes and decor on chiseled blocks would make it large; leave them out at first.
+
+### Block entities
+
+Blocks whose look comes from their block entity. All need the first item.
+
+- **Per-instance looks (medium, once):** a block entity's data has to reach the renderer, and sprites are drawn once while preparing, so a look only known at render time needs what it's drawn from. The likely way is to keep boxes and face images in the file, tens of MB by estimate, and give each worker a fixed cache of sprites by hash.
+- **Typed shapes (medium):** about 72,000 blocks that are whole coloured cubes today: clutter 51,348, rock-typed 6,925, bookshelves 4,578, crates 3,932, chests 5,009, which also always face east. A block entity's `type` picks a shape and textures from the block type's attributes, at an angle in 22.5° steps, in about 3,400 combinations, which suits a cache.
+- **Chiseled blocks (medium):** 119,906 in the largest save, whole `land`-coloured cubes today, in 7,302 distinct combinations, so a cache would hit about 94% of the time. Cutting each box's faces from its material's cube sprite may avoid keeping textures in the file; untested. Their decor and snow can wait.
+6. **Item stacks.** Decoding what a stack refers to is small: the class and id resolve for all 26,428 stacks in the largest save. Getting from a stack to something drawable is medium, as it means reading `itemtypes/` as blocks are, and some stacks depend on their attributes.
+- **Ground storage (medium, high end):** after item stacks. 3,041 in the largest save. Firewood piles and stacked blocks are 68% of it, and need no items, so they're small to medium. A place can hold up to 12 sprites, which is new.
+10. **Other block entities.** Containers' contents, displays, doors and fruiting bushes, each medium or less once the above exist. Which are worth it hasn't been decided: a display's contents, 868 blocks, need item stacks, and fruiting bushes, 14,310, may already look right. Check those first.
+
+Left out: shapes in other formats than the game's JSON, 4 blocks of one test block type, which would need triangles in `world.Shape`. Item 14 will show whether any mod uses them.
+
+### Top-down map
 
 1. **Closer season tint.** Grassland in `style game:coloured` is 15–20% darker than the game's map, forest about 10%: the game's season colour is brighter than the season map's columns average, and how it picks it is closed ([`docs/blocks.md`](docs/blocks.md#climate-and-season-tint)). Also not followed: frost, the southern hemisphere, and block classes with their own colour (forest floor, water lilies, leaves coloured by their shape).
+
+## Top-down map
+
 2. **Incremental rendering.** Re-render only the tiles whose chunks changed since the last render, and the zoomed-out tiles above them, instead of the whole world every time. The save has no change times, so a render compares hashes:
 	- **Per tile:** a hash of the raw rows its pixels come from (the map chunks of its columns and their ring, the chunks holding its surface, its map region), with the style, the theme's colours, the prepared blocks and the season. A tile whose hash matches isn't decoded, drawn or encoded.
 	- **Interrupted renders:** each tile is written to a temporary file and renamed into place, and its hash is recorded at once, not at the end (perhaps in a text chunk of the PNG itself). The next render then resumes where the last one stopped.
@@ -20,10 +64,6 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 4. **Buffers sized at startup.** Nothing is allocated per tile, but a render's buffers are sized and allocated when it starts; once a process renders more than once (incremental rendering), they should be set up once.
 5. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`).
 15. **Profile a render.** A render of both views of an 80 MB save, preparing first, peaked at 571 MB of private memory, and what takes it hasn't been measured, nor how a render's memory and time divide between its stages. Measure both on `large.vcdbs` first: it decides what items 4 and 5 should go after.
-
-## Block entities
-
-6. **Item stacks.** Decode what a stack's class and id refer to (needed for ground storage and containers).
 
 ## Isometric render
 
@@ -59,11 +99,9 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 	- **Texture variants by position:** a texture named with `*` (`granite*`) has variants, one picked per block by its position. Done, by vsapi's `GameMath.MurmurHash3Mod`; the game picks in closed code, so that it hashes the same way isn't checked. Variants make the isometric tiles 21% larger (599 MB against 496 MB for the larger world) and its view about 0.5 s slower, all in compressing.
 9. **Shapes.** A rasterizer for the game's shapes (boxes with rotations and per-face texture coordinates) draws the images of every other block: stairs, slabs, fences, plants, leaves and liquids.
 	- **Reading:** done, into prepared blocks as boxes the blocks placed the same share (`world.Shape`, [docs/blocks.md](docs/blocks.md#shapes)): 11,734 blocks of 1.22.7 with Primitive Survival, 51,007 boxes, which only drawing the sprites reads.
-	- **Drawing:** done ([docs/blocks.md](docs/blocks.md#shapes)): each block's shape is rasterized into its sprite when the blocks are prepared, by a rasterizer that draws into any pixel and depth buffer, so entities can later be drawn per instance into a tile. A line of sight goes on past a block whose sprite doesn't fill its square; plants and low blocks are drawn in their shapes. Parts of shapes outside their block are drawn up to a block beyond its square, a tile keeping each pixel's real depth. About 20% slower on the larger world, most of it encoding the added detail.
+	- **Drawing:** done ([docs/blocks.md](docs/blocks.md#shapes)): each block's shape is rasterized into its sprite when the blocks are prepared, by a rasterizer that draws into its own target of samples, so what's drawn per instance can go through a sprite of its own. A line of sight goes on past a block whose sprite doesn't fill its square; plants and low blocks are drawn in their shapes. Parts of shapes outside their block are drawn up to a block beyond its square, a tile keeping each pixel's real depth. About 20% slower on the larger world, most of it encoding the added detail.
 	- **Sprites when preparing:** done ([docs/blocks.md](docs/blocks.md#sprites)): every block's sprites are drawn once into the prepared blocks file, which a render maps; the file leaves out the face images and shapes, which only drawing them needs.
-	- **Archimedes screw:** its hull isn't drawn; why hasn't been looked into.
-	- **Then:** see-through blocks (water, glass, ice, leaves' gaps); the `Cross` and `SurfaceLayer` drawtypes; the snow over `JSONAndSnowLayer` blocks (1,054 blocks, the snowy variants of fences, loose stones and sticks, flowers, saplings and berry bushes) and the water around `JSONAndWater` blocks (27, underwater plants such as seaweed and seagrass), which are read as their shapes alone. Done: `randomDrawOffset`, `randomizeAxes`, `randomizeRotations`, shapes' alternates and `*` bases, the plain cube's turned ones too, and texture `alternates`, with a texture's variants in vsapi's order.
-10. **Block entities.** Chiseled blocks first, drawn per block at render time from their boxes and their materials' textures; then ground storage (needs item stacks and item models), then containers, displays and decorations.
+	- **Then:** see [Feature completion](#feature-completion). Done: `randomDrawOffset`, `randomizeAxes`, `randomizeRotations`, shapes' alternates and `*` bases, the plain cube's turned ones too, and texture `alternates`, with a texture's variants in vsapi's order.
 
 ## Output
 
