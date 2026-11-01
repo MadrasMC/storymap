@@ -10,7 +10,6 @@ What's left for everything the game draws in a world to show on the map, in the 
 
 Wrong today, each small.
 
-- **`overrideRandomDrawOffset` (small):** `BlockPlant`, `BlockCrop` and `BlockBamboo` take a block's offset from this attribute, which isn't read. Tall grass and flowers use it.
 - **A cube face's `rotation` (small):** not read for cubes' textures, as charcoal piles' sides name. How many blocks name one hasn't been counted.
 
 ### Block types

@@ -327,7 +327,7 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         .cube = cube,
         .shapes = shaped,
         .height = try heightOf(arena, json, variant),
-        .drawOffset = try drawOffsetOf(arena, json, variant),
+        .drawOffset = try drawOffsetOf(arena, json, attributes, variant),
         .randomizeAxes = if (try property(arena, json, "randomizeAxes", variant)) |axes| (if (std.ascii.eqlIgnoreCase(axes.asString() orelse "", "xz")) .xz else .xyz) else .xyz,
         .randomizeRotations = if (try property(arena, json, "randomizeRotations", variant)) |turned| turned == .bool and turned.bool else false,
     };
@@ -350,14 +350,30 @@ fn texturesOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) ![]c
     return textures;
 }
 
-/// A block type's `randomDrawOffset`: `true` is 1, and `false` or none 0.
-fn drawOffsetOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !u8 {
+/// Block classes that take their offset from their `overrideRandomDrawOffset` attribute
+/// (vssurvivalmod `BlockPlant`, `BlockCrop` and `BlockBamboo`, and the classes built on them).
+const offsetOverridingClasses = [_][]const u8{
+    "BlockPlant",   "BlockBerryBush", "BlockCactus", "BlockSapling",  "BlockWaterLily", "BlockWaterLilyGiant", "BlockWaterPlant",
+    "BlockSeaweed", "BlockCoral",     "BlockReeds",  "BlockMushroom", "BlockLupine",    "BlockFern",           "BlockCrop",
+    "BlockBamboo",
+};
+
+/// A block type's `randomDrawOffset`: `true` is 1, and `false` or none 0, unless its class takes
+/// another from its attributes, as flowers and tall grass do.
+fn drawOffsetOf(arena: std.mem.Allocator, json: Json.Value, attributes: ?Json.Value, variant: Variant) !u8 {
     const value = try property(arena, json, "randomDrawOffset", variant) orelse return 0;
-    return switch (value) {
+    const offset: u8 = switch (value) {
         .bool => |on| @intFromBool(on),
         .number => |n| std.math.cast(u8, std.fmt.parseInt(i64, n, 10) catch 0) orelse 0,
         else => 0,
     };
+    if (offset == 0) return 0;
+    const override = (attributes orelse return offset).get("overrideRandomDrawOffset") orelse return offset;
+    const class = (try property(arena, json, "class", variant) orelse return offset).asString() orelse return offset;
+    for (offsetOverridingClasses) |name| {
+        if (std.mem.eql(u8, name, class)) return std.math.cast(u8, @as(i64, @intFromFloat(number(override, 1)))) orelse offset;
+    }
+    return offset;
 }
 
 /// The top of a block's selection box, `selectionBox`, else `collisionSelectionBox`, in
@@ -1848,6 +1864,10 @@ test "how a block is placed by where it is" {
         .{ .json = "{ RandomDrawOffset: 14, randomizeAxes: 'XZ' }", .offset = 14, .axes = .xz, .turned = false },
         .{ .json = "{ randomDrawOffsetByType: { '*-tall': false }, randomizeRotations: false }", .offset = 0, .axes = .xyz, .turned = false },
         .{ .json = "{ code: 'rock' }", .offset = 0, .axes = .xyz, .turned = false },
+        // A plant's class takes its offset from its attributes, if it has an offset at all.
+        .{ .json = "{ class: 'BlockPlant', randomDrawOffset: true, attributes: { overrideRandomDrawOffset: 2 } }", .offset = 2, .axes = .xyz, .turned = false },
+        .{ .json = "{ class: 'BlockPlant', attributes: { overrideRandomDrawOffset: 2 } }", .offset = 0, .axes = .xyz, .turned = false },
+        .{ .json = "{ randomDrawOffset: true, attributes: { overrideRandomDrawOffset: 2 } }", .offset = 1, .axes = .xyz, .turned = false },
     };
     for (cases) |case| {
         const look = try describe(a, try Json.parse(a, case.json), variant, &shapes);
