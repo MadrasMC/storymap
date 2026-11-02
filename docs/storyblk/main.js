@@ -7,7 +7,7 @@ const HEADER_LENGTH = 24;
 // The sections this viewer reads, each with the layout version it reads of it (spec §7). It skips
 // any others.
 const SECTIONS = new Map([
-	["blocks", 2],
+	["blocks", 3],
 	["materials", 1],
 	["colour_codes", 1],
 	["texture_colours", 1],

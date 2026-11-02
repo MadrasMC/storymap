@@ -21,7 +21,7 @@
 //!   `isLow(id: i32) bool`, a block taking up only the bottom of its place;
 //! - for the `game` style, `colour(id: i32) world.Rgb`, `spritesOf(id: i32)
 //!   ?world.BlockSprites`, the block's sprites (`Options.sprites`), `isTinted(id: i32) bool`,
-//!   `isLiquid(id: i32) bool`,
+//!   `isLiquid(id: i32) bool`, `isSeeThrough(id: i32) bool`, a block that shows what's behind it,
 //!   `variant(id: i32, x: i64, y: i64, z: i64, count: u32) u32`, which of `count` variants of
 //!   its textures, `count` shapes or `count` turns the block at (x, y, z) shows, `drawOffset(id:
 //!   i32, x: i64, y: i64, z: i64) ?[2]f32`, how far east and south of the middle of its place
@@ -1154,10 +1154,10 @@ fn View(comptime Source: type) type {
             /// Each face in a colour times the tint of a block where it is.
             tintedColour: struct { colour: world.Rgb, block: i32 },
             /// In its sprites, the block that picks its variant, shape, turn and offset by where
-            /// it is, and whether its tint colours their tinted layer.
+            /// it is, whether its tint colours their tinted layer, and whether it's see-through.
             sprite: SpriteLook,
 
-            const SpriteLook = struct { sprites: world.BlockSprites, block: i32, tinted: bool = false };
+            const SpriteLook = struct { sprites: world.BlockSprites, block: i32, tinted: bool = false, seeThrough: bool = false };
         };
 
         fn init(allocator: std.mem.Allocator, source: *const Source, style: Style, sprites: ?*const Sprites) !Self {
@@ -1204,9 +1204,11 @@ fn View(comptime Source: type) type {
                             const tinted = isTinted and own.tinted;
                             const placed = source.isPlacedByPosition(id);
                             anyPlaced = anyPlaced or placed;
-                            if (tinted or placed or own.cover != null) {
+                            const seeThrough = source.isSeeThrough(id);
+                            if (tinted or placed or own.cover != null or seeThrough) {
                                 var ownLook = spriteLook;
                                 ownLook.tinted = tinted;
+                                ownLook.seeThrough = seeThrough;
                                 look.* = try addLook(allocator, &looks, .{ .sprite = ownLook });
                                 continue;
                             }
@@ -1277,6 +1279,10 @@ fn View(comptime Source: type) type {
             /// The depth of what each pixel shows: x + y + z of its point, in `depthSteps`ths of
             /// a block, larger nearer.
             depth: *[tiles.size * tiles.size]i64,
+            /// The nearest see-through surface at each pixel, and its depth, mixed over what's
+            /// behind it once the tile is drawn (`composite`).
+            surface: *tiles.Pixels,
+            surfaceDepth: *[tiles.size * tiles.size]i64,
 
             pub fn init(view: *const Self, allocator: std.mem.Allocator) !Worker {
                 var reader: Source.Reader = try .init(view.source, allocator, null);
@@ -1288,10 +1294,16 @@ fn View(comptime Source: type) type {
                 var cache: ChunkCache = try .init(allocator, ChunkCache.defaultChunks, ChunkCache.defaultChunksWithBlocks);
                 errdefer cache.deinit(allocator);
                 const depth = try allocator.create([tiles.size * tiles.size]i64);
-                return .{ .view = view, .reader = reader, .chunk = chunk, .slot = slot, .cache = cache, .depth = depth };
+                errdefer allocator.destroy(depth);
+                const surface = try allocator.create(tiles.Pixels);
+                errdefer allocator.destroy(surface);
+                const surfaceDepth = try allocator.create([tiles.size * tiles.size]i64);
+                return .{ .view = view, .reader = reader, .chunk = chunk, .slot = slot, .cache = cache, .depth = depth, .surface = surface, .surfaceDepth = surfaceDepth };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
+                allocator.destroy(self.surfaceDepth);
+                allocator.destroy(self.surface);
                 allocator.destroy(self.depth);
                 self.cache.deinit(allocator);
                 allocator.destroy(self.slot);
@@ -1304,6 +1316,7 @@ fn View(comptime Source: type) type {
             pub fn draw(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) !bool {
                 @memset(pixels, tiles.transparent);
                 @memset(self.depth, std.math.minInt(i64));
+                @memset(self.surfaceDepth, std.math.minInt(i64));
                 const x0 = @as(i64, tile.x) * tiles.size;
                 const y0 = @as(i64, tile.y) * tiles.size;
                 var any = false;
@@ -1317,30 +1330,46 @@ fn View(comptime Source: type) type {
                         if (@mod(u + v, 2) != 0) continue;
                         const line: Line = .{ .u = u, .v = v };
                         var y: i64 = @as(i64, self.view.height) - 1;
+                        // Whether a see-through block is drawn on the line. It covers its
+                        // square, so those further down wouldn't show.
+                        var surfaced = false;
                         // A block whose sprite leaves parts of its square empty, such as a
-                        // plant, shows what's behind it on the line there. A liquid in its place
-                        // covers what of it is inside the liquid.
+                        // plant, shows what's behind it on the line there, and so does a
+                        // see-through one. A liquid in its place covers what of it is inside
+                        // the liquid.
                         while (try self.nextBlock(line, &y)) |block| {
-                            const drawn = try self.drawLook(line, block, x0, y0, pixels);
+                            const drawn = try self.drawLook(line, block, &surfaced, x0, y0, pixels);
                             if (drawn.any) any = true;
                             if (drawn.fills) break;
                             if (block.liquid == 0) continue;
                             var liquid = block;
                             liquid.look = block.liquid;
-                            const around = try self.drawLook(line, liquid, x0, y0, pixels);
+                            const around = try self.drawLook(line, liquid, &surfaced, x0, y0, pixels);
                             if (around.any) any = true;
                             if (around.fills) break;
                         }
                     }
                 }
+                self.composite(pixels);
                 return any;
             }
 
-            /// Draws `block`, on `line`, in its look. Returns whether it drew any pixel, and
-            /// whether it fills its square, hiding what's behind it on the line.
-            fn drawLook(self: *Worker, line: Line, block: Block, x0: i64, y0: i64, pixels: *tiles.Pixels) !struct { any: bool, fills: bool } {
+            /// Mixes each pixel's see-through surface over what's behind it, by how far behind
+            /// it is, or takes the surface where nothing is.
+            fn composite(self: *const Worker, pixels: *tiles.Pixels) void {
+                for (pixels, self.depth, self.surface, self.surfaceDepth) |*pixel, depth, surface, surfaceDepth| {
+                    if (surfaceDepth <= depth) continue;
+                    pixel.* = if (depth == std.math.minInt(i64)) surface else mix(pixel.*, surface, surfaceOpacity(surfaceDepth - depth));
+                }
+            }
+
+            /// Draws `block`, on `line`, in its look. A see-through block is drawn as the line's
+            /// surface, unless the line has one (`surfaced`). Returns whether it drew any pixel,
+            /// and whether it fills its square, hiding what's behind it on the line.
+            fn drawLook(self: *Worker, line: Line, block: Block, surfaced: *bool, x0: i64, y0: i64, pixels: *tiles.Pixels) !struct { any: bool, fills: bool } {
                 var tintedColours: [3]u32 = undefined;
                 var fills = true;
+                var target: Target = .{ .pixels = pixels, .depths = self.depth };
                 // The block that picks a sprite's variant and offset.
                 var placedBy: ?i32 = null;
                 var cover: ?u32 = null;
@@ -1356,6 +1385,11 @@ fn View(comptime Source: type) type {
                         break :colour .{ .faces = &tintedColours };
                     },
                     .sprite => |look| sprite: {
+                        if (look.seeThrough) {
+                            if (surfaced.*) return .{ .any = false, .fills = false };
+                            surfaced.* = true;
+                            target = .{ .pixels = self.surface, .depths = self.surfaceDepth };
+                        }
                         placedBy = look.block;
                         const own = look.sprites;
                         cover = own.cover;
@@ -1367,7 +1401,7 @@ fn View(comptime Source: type) type {
                         const index = own.index(variant, alternate, turn);
                         const sprites = self.view.sprites.?;
                         const sprite = sprites.entries[index];
-                        fills = sprite.flags.fills;
+                        fills = sprite.flags.fills and !look.seeThrough;
                         const tint = if (!sprite.flags.tinted or !look.tinted) @as(world.Rgb, @splat(255)) else try self.reader.tint(look.block, block.x, block.y, block.z);
                         break :sprite .{ .sprite = .{ .sprite = sprite, .layers = sprites.layersOf(index), .tint = tint } };
                     },
@@ -1380,7 +1414,7 @@ fn View(comptime Source: type) type {
                 if (cover) |index| if (try self.isFilledBelow(block)) {
                     const sprites = self.view.sprites.?;
                     const paintCover: Paint = .{ .sprite = .{ .sprite = sprites.entries[index], .layers = sprites.layersOf(index), .tint = @splat(255) } };
-                    any = self.drawBlock(left, top, depth, paintCover, pixels);
+                    any = drawBlock(left, top, depth, paintCover, target);
                 };
                 // Moved east and south off the middle of its place, its sprite moves across and
                 // down, and nearer, and no longer covers its square.
@@ -1390,9 +1424,12 @@ fn View(comptime Source: type) type {
                     top += @intFromFloat(@round((by[0] + by[1]) * down));
                     depth += @intFromFloat(@round((by[0] + by[1]) * depthSteps));
                 };
-                if (self.drawBlock(left, top, depth, paint, pixels)) any = true;
+                if (drawBlock(left, top, depth, paint, target)) any = true;
                 return .{ .any = any, .fills = fills };
             }
+
+            /// The pixels drawn into, and their depths.
+            const Target = struct { pixels: *tiles.Pixels, depths: *[tiles.size * tiles.size]i64 };
 
             /// Whether a solid block under `block` fills its place, top and sides. What it's drawn
             /// in tells: a look without sprites is a cube.
@@ -1498,7 +1535,7 @@ fn View(comptime Source: type) type {
             /// Draws a block whose square's top left is at (`left`, `top`) in the tile, at
             /// `depth`, x + y + z of the block in `depthSteps`ths, on each pixel where what it
             /// shows is nearer than what's there. Returns whether it drew any.
-            fn drawBlock(self: *Worker, left: i64, top: i64, depth: i64, paint: Paint, pixels: *tiles.Pixels) bool {
+            fn drawBlock(left: i64, top: i64, depth: i64, paint: Paint, target: Target) bool {
                 var any = false;
                 switch (paint) {
                     .sprite => |from| {
@@ -1515,9 +1552,9 @@ fn View(comptime Source: type) type {
                                 if (!layers.shows(at)) continue;
                                 const p: usize = @intCast(py * tiles.size + px);
                                 const pointDepth = depth + layers.depths[at];
-                                if (pointDepth <= self.depth[p]) continue;
-                                self.depth[p] = pointDepth;
-                                pixels[p] = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], from.tint) else layers.plain[at];
+                                if (pointDepth <= target.depths[p]) continue;
+                                target.depths[p] = pointDepth;
+                                target.pixels[p] = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], from.tint) else layers.plain[at];
                                 any = true;
                             }
                         }
@@ -1532,9 +1569,9 @@ fn View(comptime Source: type) type {
                             if (face == .none) continue;
                             const p: usize = @intCast(py * tiles.size + px);
                             const pointDepth = depth + cubeDepths[row][column];
-                            if (pointDepth <= self.depth[p]) continue;
-                            self.depth[p] = pointDepth;
-                            pixels[p] = colours[@backingInt(face) - 1];
+                            if (pointDepth <= target.depths[p]) continue;
+                            target.depths[p] = pointDepth;
+                            target.pixels[p] = colours[@backingInt(face) - 1];
                             any = true;
                         }
                     },
@@ -1543,6 +1580,52 @@ fn View(comptime Source: type) type {
             }
         };
     };
+}
+
+/// How opaque a see-through surface is, of 255, with what shows through it `depth` behind it, in
+/// `depthSteps`ths of `x + y + z`: three of those for each block along a line of sight. It's
+/// `surfaceClearest` with something right behind it, and the rest of the way to opaque comes on
+/// over `surfaceThickening` blocks: there's no light to darken what's deep.
+fn surfaceOpacity(depth: i64) u8 {
+    return surfaceOpacities[@intCast(@min(@divFloor(depth, depthSteps), surfaceOpacities.len - 1))];
+}
+
+const surfaceClearest = 0.4;
+const surfaceThickening = 4.0;
+
+/// By a third of a block along a line of sight.
+const surfaceOpacities: [64]u8 = opacities: {
+    @setEvalBranchQuota(10_000);
+    var out: [64]u8 = undefined;
+    for (&out, 0..) |*opacity, i| {
+        const blocks = @as(f64, @floatFromInt(i)) / 3;
+        opacity.* = @intFromFloat(@round(255 * (1 - (1 - surfaceClearest) * @exp(-blocks / surfaceThickening))));
+    }
+    break :opacities out;
+};
+
+test surfaceOpacity {
+    try std.testing.expectEqual(102, surfaceOpacity(0));
+    try std.testing.expect(surfaceOpacity(3 * depthSteps) > surfaceOpacity(0));
+    // Deep enough that little shows.
+    try std.testing.expect(surfaceOpacity(3 * 12 * depthSteps) > 240);
+    try std.testing.expectEqual(surfaceOpacity(1000 * depthSteps), surfaceOpacity(2000 * depthSteps));
+}
+
+/// `over` mixed over `under`, opaque, by `opacity` of 255.
+fn mix(under: u32, over: u32, opacity: u8) u32 {
+    const a: u32 = opacity;
+    var out: [3]u8 = undefined;
+    for (&out, std.mem.asBytes(&under)[0..3], std.mem.asBytes(&over)[0..3]) |*channel, u, o| {
+        channel.* = @intCast((@as(u32, u) * (255 - a) + @as(u32, o) * a) / 255);
+    }
+    return tiles.rgba(out[0], out[1], out[2], 255);
+}
+
+test mix {
+    try std.testing.expectEqual(tiles.rgba(100, 0, 50, 255), mix(tiles.rgba(100, 0, 50, 255), tiles.rgba(0, 200, 0, 255), 0));
+    try std.testing.expectEqual(tiles.rgba(0, 200, 0, 255), mix(tiles.rgba(100, 0, 50, 255), tiles.rgba(0, 200, 0, 255), 255));
+    try std.testing.expectEqual(tiles.rgba(49, 100, 24, 255), mix(tiles.rgba(100, 0, 50, 255), tiles.rgba(0, 200, 0, 255), 128));
 }
 
 /// `pixel`'s colour times `factor` 256ths.

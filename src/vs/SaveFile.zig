@@ -199,6 +199,8 @@ pub const Appearance = struct {
     lake: bool = false,
     /// Water or lava. Lake ice is on the map as a lake, but isn't.
     liquid: bool = false,
+    /// Water or ice that shows what's behind it.
+    seeThrough: bool = false,
     /// A thin layer, such as snow, that the shaded map looks under to show the block beneath.
     cover: bool = false,
     /// Not seen in play, such as the meta blocks world generation places: looked through in a
@@ -349,6 +351,10 @@ pub fn isLiquid(self: *const SaveFile, id: i32) bool {
     return self.appearance(id).liquid;
 }
 
+pub fn isSeeThrough(self: *const SaveFile, id: i32) bool {
+    return self.appearance(id).seeThrough;
+}
+
 /// Whether the climate or the season colours the block (`Reader.tint`).
 pub fn isTinted(self: *const SaveFile, id: i32) bool {
     return !self.blockTint(id).isNone();
@@ -379,6 +385,7 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
             .mapType = mapTypeOf(block),
             .lake = water or (ice and !std.mem.eql(u8, code, "glacierice")),
             .liquid = water or std.mem.eql(u8, block.material, "Lava"),
+            .seeThrough = block.seeThrough,
             .cover = cover,
             .invisible = std.mem.eql(u8, block.material, "Meta"),
             .colour = block.colour,

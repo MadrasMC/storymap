@@ -178,7 +178,7 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 | `season_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
 | `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../blocks.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block |
 | `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../blocks.md#shapes)) |
-| `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its sprites has a tinted layer |
+| `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its sprites has a tinted layer; bit 4: it's water or ice that shows what's behind it ([Liquids](../blocks.md#cube-faces)) |
 | `first_sprite` | u32 | the index of its first Sprite in `sprites.entries` |
 | `variants` | u16 | 0 for a block without sprites |
 | `alternates` | u16 | at least 1 when `variants` isn't 0 |
@@ -243,7 +243,7 @@ It depends on file times, so the same game and mods give a different hash on ano
 A layout version says how to read something, and a generator version how its contents were made:
 
 - The container's version, `header.version`, changes when `header`, `info` or `section_table` change.
-- A section's `layout_version` changes when that section's layout changes. In container version 1, `blocks`'s and `colour_maps`'s `layout_version` is 2, and every other section's is 1.
+- A section's `layout_version` changes when that section's layout changes. In container version 1, `blocks`'s `layout_version` is 3, `colour_maps`'s 2, and every other section's 1.
 - A section's `generator_version` changes when the code that makes its contents changes without the layout changing: a block read differently, or a sprite drawn differently. Storymap gives `blocks`, `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `domains` the version of how it reads the game's assets, and `sprites` and `sprite_layers` the version of how it draws sprites.
 
 A reader rejects a file with a layout version it doesn't know (§5). A `generator_version` other than the reader's own doesn't make the file invalid: the section was made by other code, and what to do with it is the reader's choice. Readers that only show the file go on reading it. Storymap, with the game, finds the hash different (§6) and prepares the file again; without it, it compares the generator versions themselves (§1).

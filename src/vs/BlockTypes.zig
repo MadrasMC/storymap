@@ -42,6 +42,8 @@ pub const Block = struct {
     randomizeRotations: bool = false,
     /// How many eighths of a block of snow the game draws under it, by its drawtype.
     snowLayer: u8 = 0,
+    /// Water or ice the game draws see-through (`renderpass`).
+    seeThrough: bool = false,
 };
 
 pub const Axes = enum { xyz, xz };
@@ -260,6 +262,7 @@ pub const Reader = struct {
                 .randomizeAxes = look.randomizeAxes,
                 .randomizeRotations = look.randomizeRotations,
                 .snowLayer = look.snowLayer,
+                .seeThrough = look.seeThrough,
             });
         }
         return blocks.items;
@@ -287,6 +290,7 @@ const Look = struct {
     randomizeAxes: Axes = .xyz,
     randomizeRotations: bool = false,
     snowLayer: u8 = 0,
+    seeThrough: bool = false,
 };
 
 /// A variant's `Look`, from its block type's properties with their `…ByType` forms resolved.
@@ -338,7 +342,17 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         .randomizeAxes = if (try property(arena, json, "randomizeAxes", variant)) |axes| (if (std.ascii.eqlIgnoreCase(axes.asString() orelse "", "xz")) .xz else .xyz) else .xyz,
         .randomizeRotations = if (try property(arena, json, "randomizeRotations", variant)) |turned| turned == .bool and turned.bool else false,
         .snowLayer = try snowLayerOf(arena, json, variant),
+        .seeThrough = try isSeeThrough(arena, json, variant, material),
     };
+}
+
+/// Whether a block of `material` is water or ice in a see-through render pass. Packed ice is
+/// drawn opaque, and lava, drawn in the pass of water, is no material here.
+fn isSeeThrough(arena: std.mem.Allocator, json: Json.Value, variant: Variant, material: []const u8) !bool {
+    if (!std.mem.eql(u8, material, "Water") and !std.mem.eql(u8, material, "Ice")) return false;
+    const value = try property(arena, json, "renderpass", variant) orelse return false;
+    const pass = value.asString() orelse return false;
+    return std.ascii.eqlIgnoreCase(pass, "liquid") or std.ascii.eqlIgnoreCase(pass, "transparent");
 }
 
 /// How many eighths of a block of snow a drawtype draws under its block.
@@ -1678,6 +1692,18 @@ test "the cube a block is drawn as" {
         try std.testing.expectEqual(2, cross.shapes[0].geometry.boxes.len);
         try std.testing.expectEqualStrings("game:a", cross.shapes[0].textures[0].plain.?.base);
         try std.testing.expectEqualStrings("game:b", cross.shapes[0].textures[1].plain.?.base);
+    }
+
+    // Water and ice in a see-through render pass, and nothing else.
+    const seeThrough = [_]struct { json: []const u8, material: []const u8, expected: bool }{
+        .{ .json = "{ renderpass: 'liquid' }", .material = "Water", .expected = true },
+        .{ .json = "{ renderpass: 'transparent' }", .material = "Ice", .expected = true },
+        .{ .json = "{ renderpass: 'Opaque' }", .material = "Ice", .expected = false },
+        .{ .json = "{ renderpass: 'liquid' }", .material = "Lava", .expected = false },
+        .{ .json = "{ }", .material = "Water", .expected = false },
+    };
+    for (seeThrough) |case| {
+        try std.testing.expectEqual(case.expected, try isSeeThrough(a, try Json.parse(a, case.json), rock, case.material));
     }
 
     // The snow a drawtype draws under its block.

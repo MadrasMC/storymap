@@ -57,6 +57,8 @@ pub const Block = struct {
     /// How many eighths of a block of snow are drawn under it (`BlockTypes.Block.snowLayer`). Only
     /// while preparing: the file keeps the sprite instead.
     snowLayer: u8 = 0,
+    /// Water or ice that shows what's behind it (`BlockTypes.Block.seeThrough`).
+    seeThrough: bool = false,
     /// Its sprites, drawn from its `cube` or `shapes` (`Contents.useSprites`).
     sprites: world.BlockSprites = .{},
 };
@@ -65,9 +67,9 @@ const Image = world.Image;
 
 /// How the six sections' contents are read from the game's assets: raise it when that changes,
 /// so files prepared before are prepared again.
-pub const generatorVersion: u16 = 25;
+pub const generatorVersion: u16 = 26;
 /// The layout of the `colour_maps` section, and of each of the other five (spec §7).
-const blocksLayoutVersion: u8 = 2;
+const blocksLayoutVersion: u8 = 3;
 const colourMapsLayoutVersion: u8 = 2;
 const layoutVersion: u8 = 1;
 
@@ -237,6 +239,7 @@ pub const Contents = struct {
             .turned = block.randomizeRotations,
             .shape = block.sprites.shape,
             .tinted = block.sprites.tinted,
+            .seeThrough = block.seeThrough,
         };
         try w.writeByte(@bitCast(flags));
         try w.writeInt(u32, block.sprites.first, .little);
@@ -257,7 +260,9 @@ const BlockFlags = packed struct(u8) {
     shape: bool = false,
     /// Any of its sprites has a tinted layer.
     tinted: bool = false,
-    _: u4 = 0,
+    /// It shows what's behind it.
+    seeThrough: bool = false,
+    _: u3 = 0,
 };
 
 /// A Block's index of none, in a field of one byte or four.
@@ -309,6 +314,7 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
                 .randomizeAxes = block.randomizeAxes,
                 .randomizeRotations = block.randomizeRotations,
                 .snowLayer = block.snowLayer,
+                .seeThrough = block.seeThrough,
             },
             .colour = try textures.index(block.textures.colour),
             .grain = try textures.index(block.textures.grain),
@@ -728,6 +734,7 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
             .drawOffset = drawOffset,
             .randomizeAxes = if (flags.xz) .xz else .xyz,
             .randomizeRotations = flags.turned,
+            .seeThrough = flags.seeThrough,
             .sprites = sprites,
         });
     }
