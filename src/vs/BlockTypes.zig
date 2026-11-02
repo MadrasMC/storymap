@@ -990,6 +990,11 @@ fn drawingOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shape
     // Liquids are a cube in their `all` texture, if lower where they flow, and see-through.
     if (std.ascii.eqlIgnoreCase(drawtype, "liquid")) return .cube;
     if (try layerShape(arena, drawtype)) |layer| return .{ .shaped = layer };
+    // Two planes corner to corner, whatever shape the block type names; with a layer of snow under
+    // them, they're drawn alone.
+    if (std.ascii.eqlIgnoreCase(drawtype, "cross") or std.ascii.startsWithIgnoreCase(drawtype, "crossandsnowlayer")) {
+        return .{ .shaped = try shapeOf(arena, "game:block/basic/cross") };
+    }
     // A shape with a layer of snow over it, or in water, is drawn as the shape alone.
     const jsonDrawtypes = [_][]const u8{ "json", "jsonandsnowlayer", "jsonandwater" };
     for (jsonDrawtypes) |name| {
@@ -1012,7 +1017,11 @@ fn layerShape(arena: std.mem.Allocator, drawtype: []const u8) !?Json.Value {
     if (drawtype.len != prefix.len + 1 or !std.ascii.startsWithIgnoreCase(drawtype, prefix)) return null;
     const eighths = std.fmt.charToDigit(drawtype[prefix.len], 10) catch return null;
     if (eighths < 1 or eighths > 7) return null;
-    const base = try std.fmt.allocPrint(arena, "game:block/basic/layers/{}voxel", .{2 * @as(u32, eighths)});
+    return try shapeOf(arena, try std.fmt.allocPrint(arena, "game:block/basic/layers/{}voxel", .{2 * @as(u32, eighths)}));
+}
+
+/// The shape of the file at `base`, placed as it is, as a block type's `shape` would name it.
+fn shapeOf(arena: std.mem.Allocator, base: []const u8) !Json.Value {
     return .{ .object = try arena.dupe(Json.Field, &.{.{ .key = "base", .value = .{ .string = base } }}) };
 }
 
@@ -1636,6 +1645,18 @@ test "the cube a block is drawn as" {
     try std.testing.expectEqual(1, layer.shapes.len);
     try std.testing.expectEqual([3]f32{ 1, 0.375, 1 }, layer.shapes[0].geometry.boxes[0].size);
     try std.testing.expectEqualStrings("game:snow", layer.shapes[0].textures[0].plain.?.base);
+
+    // So is a cross, under snow too, and in the two textures its planes name.
+    try shapes.files.put(a, "game:block/basic/cross", try Json.parse(a, "{ elements: [ { from: [ 0, 0, 0 ], to: [ 16, 22, 1 ], faces: { north: { texture: '#north' } } }, { from: [ 0, 0, 15 ], to: [ 16, 22, 16 ], faces: { south: { texture: '#south' } } } ] }"));
+    for ([_][]const u8{ "cross", "Cross", "crossandsnowlayer", "crossandsnowlayer_3" }) |drawtype| {
+        const json = try Json.parse(a, try std.fmt.allocPrint(a, "{{ drawtype: '{s}', shape: {{ base: 'block/basic/cube' }}, textures: {{ north: {{ base: 'a' }}, south: {{ base: 'b' }} }} }}", .{drawtype}));
+        const cross = try describe(a, json, rock, &shapes);
+        try std.testing.expectEqual(null, cross.cube);
+        try std.testing.expectEqual(1, cross.shapes.len);
+        try std.testing.expectEqual(2, cross.shapes[0].geometry.boxes.len);
+        try std.testing.expectEqualStrings("game:a", cross.shapes[0].textures[0].plain.?.base);
+        try std.testing.expectEqualStrings("game:b", cross.shapes[0].textures[1].plain.?.base);
+    }
 
     // Turned as it says, and an alternate as it says itself.
     const turned = (try describe(a, try Json.parse(a, "{ drawtype: 'cube', textures: { all: { base: 'planks', rotation: 90, alternates: [ { base: 'other' }, { base: 'third', rotation: 270 } ] } } }"), rock, &shapes)).cube.?.up.plain.?;
