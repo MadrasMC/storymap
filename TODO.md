@@ -8,7 +8,6 @@ What's left for everything the game draws in a world to show on the map, in the 
 
 ### Block types
 
-- **Snow under plants (small to medium):** `CrossAndSnowlayer` (21 blocks of tall grass) and `JSONAndSnowLayer` (1,054). Fences, loose stones and sticks already have snow in their shapes; plants don't. The game adds a box 1/8 to 3/8 high that neither moves nor turns with the block, so it's a sprite of its own and a flag on the block, not part of the plant's. Only 38 such blocks are in the test saves, as they come from weather, so played winters will have more.
 
 ### World surfaces
 

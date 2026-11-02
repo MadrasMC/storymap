@@ -54,6 +54,9 @@ pub const Block = struct {
     randomizeAxes: BlockTypes.Axes = .xyz,
     /// Whether it's turned about its vertical middle by where it is.
     randomizeRotations: bool = false,
+    /// How many eighths of a block of snow are drawn under it (`BlockTypes.Block.snowLayer`). Only
+    /// while preparing: the file keeps the sprite instead.
+    snowLayer: u8 = 0,
     /// Its sprites, drawn from its `cube` or `shapes` (`Contents.useSprites`).
     sprites: world.BlockSprites = .{},
 };
@@ -62,15 +65,16 @@ const Image = world.Image;
 
 /// How the six sections' contents are read from the game's assets: raise it when that changes,
 /// so files prepared before are prepared again.
-pub const generatorVersion: u16 = 24;
+pub const generatorVersion: u16 = 25;
 /// The layout of the `colour_maps` section, and of each of the other five (spec §7).
+const blocksLayoutVersion: u8 = 2;
 const colourMapsLayoutVersion: u8 = 2;
 const layoutVersion: u8 = 1;
 
 /// The sections this writes and reads, in the order it writes them.
 pub const sectionNames = [_][]const u8{ "blocks", "materials", "colour_codes", "texture_colours", "colour_maps", "domains" };
 /// Each section's layout, by `sectionNames`.
-pub const sectionLayoutVersions = [sectionNames.len]u8{ layoutVersion, layoutVersion, layoutVersion, layoutVersion, colourMapsLayoutVersion, layoutVersion };
+pub const sectionLayoutVersions = [sectionNames.len]u8{ blocksLayoutVersion, layoutVersion, layoutVersion, layoutVersion, colourMapsLayoutVersion, layoutVersion };
 
 /// The game, as the file's `info` names it.
 pub const game = "vintagestory";
@@ -144,10 +148,20 @@ pub const Contents = struct {
         seasonColourMap: ?u8 = null,
     };
 
-    /// Gives each block its sprites, by its index.
+    /// Gives each block its sprites, by its index. The snow under a block is the first sprite of
+    /// the snow layer of its height.
     pub fn useSprites(self: *Contents, sprites: []const world.BlockSprites) void {
         std.debug.assert(sprites.len == self.blocks.len);
-        for (self.blocks, sprites) |*entry, own| entry.block.sprites = own;
+        var snowLayers: [8]?u32 = @splat(null);
+        for (self.blocks, sprites) |entry, own| {
+            if (entry.code.len != "snowlayer-N".len or !std.mem.startsWith(u8, entry.code, "snowlayer-")) continue;
+            const eighths = std.fmt.charToDigit(entry.code["snowlayer-".len], 10) catch continue;
+            if (eighths < snowLayers.len and own.variants > 0) snowLayers[eighths] = own.first;
+        }
+        for (self.blocks, sprites) |*entry, own| {
+            entry.block.sprites = own;
+            if (entry.block.snowLayer > 0) entry.block.sprites.cover = snowLayers[entry.block.snowLayer];
+        }
     }
 
     /// The file's `info`, its list of mods kept in `arena`, so it can outlast these contents.
@@ -229,6 +243,7 @@ pub const Contents = struct {
         try w.writeInt(u16, block.sprites.variants, .little);
         try w.writeInt(u16, block.sprites.alternates, .little);
         try w.writeByte(block.sprites.turns);
+        try w.writeInt(u32, block.sprites.cover orelse none32, .little);
     }
 };
 
@@ -293,6 +308,7 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
                 .drawOffset = block.drawOffset,
                 .randomizeAxes = block.randomizeAxes,
                 .randomizeRotations = block.randomizeRotations,
+                .snowLayer = block.snowLayer,
             },
             .colour = try textures.index(block.textures.colour),
             .grain = try textures.index(block.textures.grain),
@@ -630,7 +646,7 @@ fn domainOf(location: []const u8) []const u8 {
 }
 
 /// The bytes of the smallest Block, with an empty code.
-const blockLength = 2 + 1 + 1 + 4 + 4 + 1 + 1 + 1 + 1 + 1 + 4 + 2 + 2 + 1;
+const blockLength = 2 + 1 + 1 + 4 + 4 + 1 + 1 + 1 + 1 + 1 + 4 + 2 + 2 + 1 + 4;
 /// The bytes of a TextureColours.
 const textureLength = 3 + TextureColours.samples * 3;
 
@@ -670,7 +686,7 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
         };
     }
 
-    var blocks: storyblk.Reader = .{ .bytes = (try file.section("blocks", layoutVersion)).bytes };
+    var blocks: storyblk.Reader = .{ .bytes = (try file.section("blocks", blocksLayoutVersion)).bytes };
     const count = try blocks.int(u32);
     if (count > blocks.bytes.len / blockLength) return error.NotPreparedBlocks;
     try self.blocks.ensureTotalCapacity(arena, count);
@@ -685,7 +701,7 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
         const height = try blocks.int(u8);
         const drawOffset = try blocks.int(u8);
         const flags: BlockFlags = @bitCast(try blocks.int(u8));
-        const sprites: world.BlockSprites = .{
+        var sprites: world.BlockSprites = .{
             .first = try blocks.int(u32),
             .variants = try blocks.int(u16),
             .alternates = try blocks.int(u16),
@@ -693,8 +709,13 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
             .shape = flags.shape,
             .tinted = flags.tinted,
         };
+        const cover = try blocks.int(u32);
         if (sprites.variants > 0 and (sprites.alternates == 0 or sprites.turns == 0)) return error.NotPreparedBlocks;
         if (sprites.variants > 0 and @as(u64, sprites.first) + sprites.count() > spriteCount) return error.NotPreparedBlocks;
+        if (cover != none32) {
+            if (cover >= spriteCount) return error.NotPreparedBlocks;
+            sprites.cover = cover;
+        }
         self.blocks.putAssumeCapacity(code, .{
             .index = @intCast(i),
             .material = material,
@@ -775,6 +796,22 @@ fn find(contents: *const Contents, code: []const u8) *const Block {
 
 fn expectTransformRow(expected: [4]f32, actual: [4]f32) !void {
     for (expected, actual) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-6);
+}
+
+test "the snow under a block" {
+    const snowLayer: Block = .{ .material = "Snow", .colorCode = "snow" };
+    var blocks = [_]Contents.Entry{
+        .{ .code = "snowlayer-1", .block = snowLayer },
+        .{ .code = "snowlayer-2", .block = snowLayer },
+        .{ .code = "tallgrass-tall-snow2", .block = .{ .material = "Snow", .colorCode = "snow", .snowLayer = 2 } },
+        .{ .code = "tallgrass-tall-snow3", .block = .{ .material = "Snow", .colorCode = "snow", .snowLayer = 3 } },
+    };
+    var contents: Contents = .{ .gameVersion = "1.22.7", .mods = &.{}, .domains = &.{}, .textures = &.{}, .colourMaps = &.{}, .blocks = &blocks };
+    contents.useSprites(&.{ .{ .first = 0, .variants = 6 }, .{ .first = 6, .variants = 6 }, .{ .first = 12, .variants = 1 }, .{ .first = 13, .variants = 1 } });
+    try std.testing.expectEqual(null, blocks[0].block.sprites.cover);
+    try std.testing.expectEqual(6, blocks[2].block.sprites.cover);
+    // No snow layer of its height.
+    try std.testing.expectEqual(null, blocks[3].block.sprites.cover);
 }
 
 test "prepare, write, load and compare with a save" {
@@ -885,7 +922,7 @@ test "prepare, write, load and compare with a save" {
     // The rock in two sprites, and the step in three; the others in none.
     var drawn: [5]world.BlockSprites = @splat(.{});
     drawn[find(&contents, "rock-granite").index] = .{ .first = 0, .variants = 2, .tinted = true };
-    drawn[step.index] = .{ .first = 2, .variants = 1, .alternates = 3, .shape = true };
+    drawn[step.index] = .{ .first = 2, .variants = 1, .alternates = 3, .shape = true, .cover = 1 };
     contents.useSprites(&drawn);
 
     const sections = try contents.encode(arena.allocator());

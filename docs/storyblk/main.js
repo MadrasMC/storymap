@@ -7,7 +7,7 @@ const HEADER_LENGTH = 24;
 // The sections this viewer reads, each with the layout version it reads of it (spec §7). It skips
 // any others.
 const SECTIONS = new Map([
-	["blocks", 1],
+	["blocks", 2],
 	["materials", 1],
 	["colour_codes", 1],
 	["texture_colours", 1],
@@ -223,6 +223,7 @@ function parse(buffer) {
 			variants: blockFields.takeU16(),
 			alternates: blockFields.takeU16(),
 			turns: blockFields.takeU8(),
+			cover: blockFields.takeU32(),
 		};
 		if (
 			block.material >= materials.length ||
@@ -237,6 +238,7 @@ function parse(buffer) {
 		if (block.variants > 0 && (block.alternates === 0 || block.turns === 0)) rejectFile(`block ${index} has variants but no shapes or turns`);
 		block.count = block.variants * block.alternates * block.turns;
 		if (block.count > 0 && block.first + block.count > spriteCount) rejectFile(`block ${index}'s sprites go past the last sprite`);
+		if (isOutside(block.cover, spriteCount, NONE32)) rejectFile(`block ${index}'s cover sprite goes past the last sprite`);
 		blocks.push(block);
 	}
 

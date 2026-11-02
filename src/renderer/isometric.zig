@@ -1154,7 +1154,7 @@ fn View(comptime Source: type) type {
                             const tinted = isTinted and own.tinted;
                             const placed = source.isPlacedByPosition(id);
                             anyPlaced = anyPlaced or placed;
-                            if (tinted or placed) {
+                            if (tinted or placed or own.cover != null) {
                                 var ownLook = spriteLook;
                                 ownLook.tinted = tinted;
                                 look.* = try addLook(allocator, &looks, .{ .sprite = ownLook });
@@ -1277,6 +1277,7 @@ fn View(comptime Source: type) type {
                 var fills = true;
                 // The block that picks a sprite's variant and offset.
                 var placedBy: ?i32 = null;
+                var cover: ?u32 = null;
                 const paint: Paint = switch (self.view.looks[block.look - 1]) {
                     .relief => |mapType| relief: {
                         const at = (@as(usize, @backingInt(mapType)) * self.view.height + @as(usize, @intCast(block.y))) * 3;
@@ -1291,6 +1292,7 @@ fn View(comptime Source: type) type {
                     .sprite => |look| sprite: {
                         placedBy = look.block;
                         const own = look.sprites;
+                        cover = own.cover;
                         const source = self.view.source;
                         const variant = if (own.variants > 1) source.variant(look.block, block.x, block.y, block.z, own.variants) else 0;
                         // Shapes and turns are picked as variants are.
@@ -1308,6 +1310,12 @@ fn View(comptime Source: type) type {
                 var left = square.left - x0;
                 var top = square.top - y0;
                 var depth = (block.x + block.y + block.z) * depthSteps;
+                var any = false;
+                if (cover) |index| if (try self.isFilledBelow(block)) {
+                    const sprites = self.view.sprites.?;
+                    const paintCover: Paint = .{ .sprite = .{ .sprite = sprites.entries[index], .layers = sprites.layersOf(index), .tint = @splat(255) } };
+                    any = self.drawBlock(left, top, depth, paintCover, pixels);
+                };
                 // Moved east and south off the middle of its place, its sprite moves across and
                 // down, and nearer, and no longer covers its square.
                 if (placedBy) |id| if (self.view.source.drawOffset(id, block.x, block.y, block.z)) |by| {
@@ -1316,8 +1324,28 @@ fn View(comptime Source: type) type {
                     top += @intFromFloat(@round((by[0] + by[1]) * down));
                     depth += @intFromFloat(@round((by[0] + by[1]) * depthSteps));
                 };
-                const any = self.drawBlock(left, top, depth, paint, pixels);
+                if (self.drawBlock(left, top, depth, paint, pixels)) any = true;
                 return .{ .any = any, .fills = fills };
+            }
+
+            /// Whether the block under `block` fills its place, top and sides. What it's drawn
+            /// in tells: a look without sprites is a cube.
+            fn isFilledBelow(self: *Worker, block: Block) !bool {
+                const y = block.y - 1;
+                if (y < 0) return false;
+                const cx = @divFloor(block.x, side);
+                const cy = @divFloor(y, side);
+                const cz = @divFloor(block.z, side);
+                const looks = try self.chunkLooks(cx, cy, cz) orelse return false;
+                const lx: usize = @intCast(block.x - cx * side);
+                const ly: usize = @intCast(y - cy * side);
+                const lz: usize = @intCast(block.z - cz * side);
+                const look = looks[(ly * side + lz) * side + lx];
+                if (look == 0) return false;
+                return switch (self.view.looks[look - 1]) {
+                    .sprite => |spriteLook| self.view.sprites.?.entries[spriteLook.sprites.first].flags.fills,
+                    else => true,
+                };
             }
 
             const Block = struct { x: i64, y: i64, z: i64, look: u16 };

@@ -40,6 +40,8 @@ pub const Block = struct {
     randomizeAxes: Axes = .xyz,
     /// Whether it's turned about its vertical middle by where it is (`randomizeRotations`).
     randomizeRotations: bool = false,
+    /// How many eighths of a block of snow the game draws under it, by its drawtype.
+    snowLayer: u8 = 0,
 };
 
 pub const Axes = enum { xyz, xz };
@@ -257,6 +259,7 @@ pub const Reader = struct {
                 .drawOffset = look.drawOffset,
                 .randomizeAxes = look.randomizeAxes,
                 .randomizeRotations = look.randomizeRotations,
+                .snowLayer = look.snowLayer,
             });
         }
         return blocks.items;
@@ -283,6 +286,7 @@ const Look = struct {
     drawOffset: u8 = 0,
     randomizeAxes: Axes = .xyz,
     randomizeRotations: bool = false,
+    snowLayer: u8 = 0,
 };
 
 /// A variant's `Look`, from its block type's properties with their `…ByType` forms resolved.
@@ -333,7 +337,25 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
         .drawOffset = try drawOffsetOf(arena, json, attributes, variant),
         .randomizeAxes = if (try property(arena, json, "randomizeAxes", variant)) |axes| (if (std.ascii.eqlIgnoreCase(axes.asString() orelse "", "xz")) .xz else .xyz) else .xyz,
         .randomizeRotations = if (try property(arena, json, "randomizeRotations", variant)) |turned| turned == .bool and turned.bool else false,
+        .snowLayer = try snowLayerOf(arena, json, variant),
     };
+}
+
+/// How many eighths of a block of snow a drawtype draws under its block.
+fn snowLayerOf(arena: std.mem.Allocator, json: Json.Value, variant: Variant) !u8 {
+    const value = try property(arena, json, "drawtype", variant) orelse return 0;
+    const drawtype = value.asString() orelse return 0;
+    const drawtypes = [_]struct { name: []const u8, eighths: u8 }{
+        .{ .name = "jsonandsnowlayer", .eighths = 1 },
+        .{ .name = "crossandsnowlayer", .eighths = 1 },
+        .{ .name = "crossandsnowlayer_2", .eighths = 2 },
+        .{ .name = "crossandsnowlayer_3", .eighths = 3 },
+        .{ .name = "crossandsnowlayer_4", .eighths = 4 },
+    };
+    for (drawtypes) |known| {
+        if (std.ascii.eqlIgnoreCase(drawtype, known.name)) return known.eighths;
+    }
+    return 0;
 }
 
 /// A block type's `textures`, with its `texture`, if any, as their `all`, over one of its own,
@@ -1656,6 +1678,18 @@ test "the cube a block is drawn as" {
         try std.testing.expectEqual(2, cross.shapes[0].geometry.boxes.len);
         try std.testing.expectEqualStrings("game:a", cross.shapes[0].textures[0].plain.?.base);
         try std.testing.expectEqualStrings("game:b", cross.shapes[0].textures[1].plain.?.base);
+    }
+
+    // The snow a drawtype draws under its block.
+    const snowy = [_]struct { drawtype: []const u8, eighths: u8 }{
+        .{ .drawtype = "JSONAndSnowLayer", .eighths = 1 },
+        .{ .drawtype = "crossandsnowlayer", .eighths = 1 },
+        .{ .drawtype = "crossandsnowlayer_3", .eighths = 3 },
+        .{ .drawtype = "cross", .eighths = 0 },
+    };
+    for (snowy) |case| {
+        const json = try Json.parse(a, try std.fmt.allocPrint(a, "{{ drawtype: '{s}' }}", .{case.drawtype}));
+        try std.testing.expectEqual(case.eighths, try snowLayerOf(a, json, rock));
     }
 
     // Turned as it says, and an alternate as it says itself.

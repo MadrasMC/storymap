@@ -163,6 +163,9 @@ pub const BlockSprites = struct {
     shape: bool = false,
     /// Any of its sprites has a tinted layer.
     tinted: bool = false,
+    /// The sprite drawn at the foot of it where the block under it fills its place, staying in
+    /// the middle of its place and unturned whatever the block does; null for none.
+    cover: ?u32 = null,
 
     pub fn count(self: BlockSprites) usize {
         return @as(usize, self.variants) * self.alternates * self.turns;
