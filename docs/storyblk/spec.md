@@ -183,7 +183,7 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 | `variants` | u16 | 0 for a block without sprites |
 | `alternates` | u16 | at least 1 when `variants` isn't 0 |
 | `turns` | u8 | at least 1 when `variants` isn't 0 |
-| `cover_sprite` | u32 | the index in `sprites.entries` of the Sprite drawn at its foot where the block under it fills its place ([Shapes](../blocks.md#shapes)), neither moved nor turned with it; 0xFFFFFFFF for none |
+| `cover_sprite` | u32 | the index in `sprites.entries` of the Sprite drawn at its foot where a solid block under it fills its place ([Shapes](../blocks.md#shapes)), neither moved nor turned with it; 0xFFFFFFFF for none |
 
 A block's sprites are a run of `variants` × `alternates` × `turns` Sprites in `sprites.entries` (§2). The Sprite at index `first_sprite + (turn × alternates + alternate) × variants + variant` is that variant of that alternate, in that turn. Blocks drawn from the same textures, in the same shapes and turns, share their sprites: their `first_sprite`, `variants`, `alternates` and `turns` are the same. Blocks drawn from different textures have sprites of their own, even where those look the same.
 

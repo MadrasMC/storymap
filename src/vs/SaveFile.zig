@@ -197,6 +197,8 @@ pub const Appearance = struct {
     /// Water, and ice other than glacier ice: the shaded map draws it unshaded, with an edge
     /// where it meets anything else.
     lake: bool = false,
+    /// Water or lava. Lake ice is on the map as a lake, but isn't.
+    liquid: bool = false,
     /// A thin layer, such as snow, that the shaded map looks under to show the block beneath.
     cover: bool = false,
     /// Not seen in play, such as the meta blocks world generation places: looked through in a
@@ -343,6 +345,10 @@ pub fn isLow(self: *const SaveFile, id: i32) bool {
     return self.appearance(id).low;
 }
 
+pub fn isLiquid(self: *const SaveFile, id: i32) bool {
+    return self.appearance(id).liquid;
+}
+
 /// Whether the climate or the season colours the block (`Reader.tint`).
 pub fn isTinted(self: *const SaveFile, id: i32) bool {
     return !self.blockTint(id).isNone();
@@ -366,11 +372,13 @@ pub fn useBlocks(self: *SaveFile, prepared: *const Prepared) void {
         const code = maybeCode orelse continue;
         const block = prepared.blocks.getPtr(code) orelse continue;
         const ice = std.mem.eql(u8, block.material, "Ice");
+        const water = std.mem.eql(u8, block.material, "Water");
         const cover = std.mem.eql(u8, block.material, "Snow");
         const ground = cover or std.mem.eql(u8, block.material, "Sand") or std.mem.eql(u8, block.material, "Gravel");
         blockAppearance.* = .{
             .mapType = mapTypeOf(block),
-            .lake = std.mem.eql(u8, block.material, "Water") or (ice and !std.mem.eql(u8, code, "glacierice")),
+            .lake = water or (ice and !std.mem.eql(u8, code, "glacierice")),
+            .liquid = water or std.mem.eql(u8, block.material, "Lava"),
             .cover = cover,
             .invisible = std.mem.eql(u8, block.material, "Meta"),
             .colour = block.colour,
@@ -429,11 +437,11 @@ fn appearancesByCode(allocator: std.mem.Allocator, gameData: GameData) ![]Appear
     for (appearances, gameData.blockCodes) |*blockAppearance, code| {
         const name = code orelse "";
         blockAppearance.* = if (std.mem.startsWith(u8, name, "saltwater-"))
-            .{ .mapType = .ocean, .lake = true }
+            .{ .mapType = .ocean, .lake = true, .liquid = true }
         else if (std.mem.startsWith(u8, name, "lava-"))
-            .{ .mapType = .lava }
+            .{ .mapType = .lava, .liquid = true }
         else if (std.mem.startsWith(u8, name, "water-") or std.mem.startsWith(u8, name, "boilingwater-"))
-            .{ .mapType = .lake, .lake = true }
+            .{ .mapType = .lake, .lake = true, .liquid = true }
         else if (std.mem.startsWith(u8, name, "snowlayer-"))
             .{ .mapType = .glacier, .cover = true }
         else if (std.mem.startsWith(u8, name, "meta-"))
@@ -451,10 +459,10 @@ test appearancesByCode {
     defer std.testing.allocator.free(appearances);
     const expected = [_]Appearance{
         .{ .mapType = .land },
-        .{ .mapType = .lake, .lake = true },
-        .{ .mapType = .ocean, .lake = true },
-        .{ .mapType = .lava },
-        .{ .mapType = .lake, .lake = true },
+        .{ .mapType = .lake, .lake = true, .liquid = true },
+        .{ .mapType = .ocean, .lake = true, .liquid = true },
+        .{ .mapType = .lava, .liquid = true },
+        .{ .mapType = .lake, .lake = true, .liquid = true },
         .{ .mapType = .glacier, .cover = true },
         .{ .mapType = .land, .invisible = true },
         .{ .mapType = .land },

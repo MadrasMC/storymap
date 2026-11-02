@@ -21,6 +21,7 @@
 //!   `isLow(id: i32) bool`, a block taking up only the bottom of its place;
 //! - for the `game` style, `colour(id: i32) world.Rgb`, `spritesOf(id: i32)
 //!   ?world.BlockSprites`, the block's sprites (`Options.sprites`), `isTinted(id: i32) bool`,
+//!   `isLiquid(id: i32) bool`,
 //!   `variant(id: i32, x: i64, y: i64, z: i64, count: u32) u32`, which of `count` variants of
 //!   its textures, `count` shapes or `count` turns the block at (x, y, z) shows, `drawOffset(id:
 //!   i32, x: i64, y: i64, z: i64) ?[2]f32`, how far east and south of the middle of its place
@@ -1328,7 +1329,7 @@ fn View(comptime Source: type) type {
                 return .{ .any = any, .fills = fills };
             }
 
-            /// Whether the block under `block` fills its place, top and sides. What it's drawn
+            /// Whether a solid block under `block` fills its place, top and sides. What it's drawn
             /// in tells: a look without sprites is a cube.
             fn isFilledBelow(self: *Worker, block: Block) !bool {
                 const y = block.y - 1;
@@ -1343,7 +1344,7 @@ fn View(comptime Source: type) type {
                 const look = looks[(ly * side + lz) * side + lx];
                 if (look == 0) return false;
                 return switch (self.view.looks[look - 1]) {
-                    .sprite => |spriteLook| self.view.sprites.?.entries[spriteLook.sprites.first].flags.fills,
+                    .sprite => |spriteLook| self.view.sprites.?.entries[spriteLook.sprites.first].flags.fills and !self.view.source.isLiquid(spriteLook.block),
                     else => true,
                 };
             }
