@@ -20,7 +20,7 @@ pub const spec: args.Spec = .{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
         .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
         .{ .name = "isometric", .description = "Also draw the isometric view." },
-        .{ .name = "clip", .value = "shape", .description = "Draw only part of the world, around a position as the game shows it: circle:radius@x,z, rect:width@x,z or rect:widthxheight@x,z, in blocks." },
+        .{ .name = "clip", .value = "shape", .description = "Draw only part of the world, around a position as the game shows it: circle:radius@x,z, rect:width@x,z or rect:widthxheight@x,z, in blocks, or between two corners, rect:x,z..x,z." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
         .{ .name = "jpegxl", .description = "Encode the tiles as lossless JPEG XL instead of PNG, which not every browser shows." },
@@ -58,7 +58,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     else
         null;
     const area: ?SaveFile.Area = if (parsed.value("clip")) |text|
-        parseClip(text) orelse console.fail("`--clip`: invalid clip {s}. expected: circle:radius@x,z or rect:width[xheight]@x,z", .{text})
+        parseClip(text) orelse console.fail("`--clip`: invalid clip {s}. expected: circle:radius@x,z, rect:width[xheight]@x,z or rect:x,z..x,z", .{text})
     else
         null;
     const paths: prepare.Paths = .{
@@ -292,10 +292,13 @@ const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
 /// The area `--clip` names, or null if it isn't one.
 fn parseClip(text: []const u8) ?SaveFile.Area {
     const colon = std.mem.indexOfScalar(u8, text, ':') orelse return null;
+    if (std.mem.indexOf(u8, text, "..")) |dots| {
+        if (!std.mem.eql(u8, text[0..colon], "rect") or dots < colon) return null;
+        return rectBetween(parsePosition(text[colon + 1 .. dots]) orelse return null, parsePosition(text[dots + 2 ..]) orelse return null);
+    }
     const at = std.mem.indexOfScalarPos(u8, text, colon, '@') orelse return null;
     const size = text[colon + 1 .. at];
-    const position = text[at + 1 ..];
-    const comma = std.mem.indexOfScalar(u8, position, ',') orelse return null;
+    const position = parsePosition(text[at + 1 ..]) orelse return null;
     const shape: SaveFile.Area.Shape = if (std.mem.eql(u8, text[0..colon], "circle"))
         .{ .circle = std.fmt.parseInt(u32, size, 10) catch return null }
     else if (std.mem.eql(u8, text[0..colon], "rect")) rect: {
@@ -305,18 +308,38 @@ fn parseClip(text: []const u8) ?SaveFile.Area {
         if (width == 0 or height == 0) return null;
         break :rect .{ .rect = .{ .width = width, .height = height } };
     } else return null;
+    return .{ .x = position[0], .z = position[1], .shape = shape };
+}
+
+/// Position x,z, or null if it isn't one.
+fn parsePosition(text: []const u8) ?[2]i64 {
+    const comma = std.mem.indexOfScalar(u8, text, ',') orelse return null;
     return .{
-        .x = std.fmt.parseInt(i64, position[0..comma], 10) catch return null,
-        .z = std.fmt.parseInt(i64, position[comma + 1 ..], 10) catch return null,
-        .shape = shape,
+        std.fmt.parseInt(i64, text[0..comma], 10) catch return null,
+        std.fmt.parseInt(i64, text[comma + 1 ..], 10) catch return null,
     };
+}
+
+/// The rectangle with these opposite corners, both in it; null if it's too large to name.
+fn rectBetween(a: [2]i64, b: [2]i64) ?SaveFile.Area {
+    const west = @min(a[0], b[0]);
+    const north = @min(a[1], b[1]);
+    const width = std.math.cast(u32, @abs(a[0] - b[0]) + 1) orelse return null;
+    const height = std.math.cast(u32, @abs(a[1] - b[1]) + 1) orelse return null;
+    return .{ .x = west + width / 2, .z = north + height / 2, .shape = .{ .rect = .{ .width = width, .height = height } } };
 }
 
 test parseClip {
     try std.testing.expectEqual(SaveFile.Area{ .x = 220, .z = -5997, .shape = .{ .circle = 100 } }, parseClip("circle:100@220,-5997").?);
     try std.testing.expectEqual(SaveFile.Area{ .x = -1, .z = 2, .shape = .{ .rect = .{ .width = 300, .height = 100 } } }, parseClip("rect:300x100@-1,2").?);
     try std.testing.expectEqual(SaveFile.Area{ .x = 0, .z = 0, .shape = .{ .rect = .{ .width = 200, .height = 200 } } }, parseClip("rect:200@0,0").?);
-    for ([_][]const u8{ "", "abc", "circle:100", "circle:100@1", "circle:x@1,2", "circle:-1@1,2", "circle:1x2@1,2", "oval:1@1,2", "rect:0@1,2", "rect:1x0@1,2", "rect:1x@1,2", "rect:2@1,z" }) |text| {
+    // Corners, both in it, in any order: 5 by 3 blocks, from x 10 to 14 and z -3 to -1.
+    const corners: SaveFile.Area = .{ .x = 12, .z = -2, .shape = .{ .rect = .{ .width = 5, .height = 3 } } };
+    try std.testing.expectEqual(corners, parseClip("rect:10,-3..14,-1").?);
+    try std.testing.expectEqual(corners, parseClip("rect:14,-1..10,-3").?);
+    // An even size reaches further west: 10 to 13 is 4 blocks, 2 west of 12.
+    try std.testing.expectEqual(SaveFile.Area{ .x = 12, .z = 0, .shape = .{ .rect = .{ .width = 4, .height = 1 } } }, parseClip("rect:10,0..13,0").?);
+    for ([_][]const u8{ "circle:1,2..3,4", "rect:1,2..", "rect:..3,4", "rect:1..3,4", "rect:1,2..3,z", "rect:0,0..9999999999,0", "..:1,2", "", "abc", "circle:100", "circle:100@1", "circle:x@1,2", "circle:-1@1,2", "circle:1x2@1,2", "oval:1@1,2", "rect:0@1,2", "rect:1x0@1,2", "rect:1x@1,2", "rect:2@1,z" }) |text| {
         try std.testing.expectEqual(null, parseClip(text));
     }
 }
