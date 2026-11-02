@@ -2,7 +2,7 @@
 // specifies: each block's sprites for the isometric view, tinted by its colour maps.
 
 const MAGIC = "STORYBLK";
-const CONTAINER_VERSION = 1;
+const CONTAINER_VERSION = 2;
 const HEADER_LENGTH = 24;
 // The sections this viewer reads, each with the layout version it reads of it (spec §7). It skips
 // any others.

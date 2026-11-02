@@ -22,6 +22,8 @@ pub const layoutVersion: u8 = 1;
 
 pub const entriesSection = "sprites";
 pub const layersSection = "sprite_layers";
+/// The sections of the other rotations, which a file's table keeps room for from the start.
+pub const rotatedSections = [_][]const u8{ "sprites@90", "sprite_layers@90", "sprites@180", "sprite_layers@180", "sprites@270", "sprite_layers@270" };
 
 /// The width of a cube's square the sprites were drawn for, in pixels.
 blockWidth: u16,

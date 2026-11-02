@@ -8,6 +8,8 @@ Storymap keeps one file, `prepared.storyblk` in the current folder, or the one g
 
 A writer writes a new file beside the old one, under the name `<file name>.<process id>.partial`, and renames it over the old file once it's complete, so an interrupted write leaves the old file whole. It removes the partial file if writing or renaming fails. It never replaces a file that doesn't start with the magic `STORYBLK`.
 
+A writer adds a rotation to a file in place, without changing its other sections. It writes the rotation's sections past the end of the file, flushes them to disk, and only then fills in their entries in `section_table`, so an interrupted write leaves the file as it was, with unused bytes at its end.
+
 ## 2. Conventions
 
 All integers are little-endian. `[n]T` is n values of type T one after another. The types are in §4. Indexes count from 0. `part.field` is a field of one of the parts in §3, e.g. `blocks.count`.
@@ -22,7 +24,7 @@ A cube's square is the square a cube's sprite is drawn in, `sprites.block_width`
 
 ## 3. Layout
 
-`header`, `info` and `section_table` come first, in that order, from the start of the file. `header` is 24 bytes, so `header.hash` can be read without reading the rest. Each section starts on a multiple of 8 bytes from the start of the file, after `section_table`, and lies wholly within the file. A section's length doesn't count the bytes after it up to the next multiple of 8, which are 0. A file has each of the sections below once, and a reader skips sections whose names it doesn't know. They can be in any order; Storymap writes them in the order below, so the pixel data in `sprite_layers` comes last.
+`header`, `info` and `section_table` come first, in that order, from the start of the file. `header` is 24 bytes, so `header.hash` can be read without reading the rest. Each section starts on a multiple of 8 bytes from the start of the file, after `section_table`, and lies wholly within the file. A section's length doesn't count the bytes after it up to the next multiple of 8, which are 0. Bytes in no section and its padding are unused, and a reader ignores them. A file has each of the sections below once, and a reader skips sections whose names it doesn't know. They can be in any order; Storymap writes them in the order below, so the pixel data in `sprite_layers` comes last, and lists the [rotated sections](#rotated-sections) before it in `section_table`.
 
 `sprites` and `sprite_layers` are read where the file is mapped: every integer in them lies at a multiple of its own size, and every Sprite and SpriteLayers at a multiple of 4. The other sections are read a field at a time: strings of any length put the integers after them anywhere.
 
@@ -31,7 +33,7 @@ A cube's square is the square a cube's sprite is drawn in, `sprites.block_width`
 | Field | Type | Contents |
 | --- | --- | --- |
 | `magic` | [8]u8 | `STORYBLK` |
-| `version` | u8 | the container's version, 1 (§7) |
+| `version` | u8 | the container's version, 2 (§7) |
 | `reserved` | u8 | 0 |
 | `section_count` | u16 | – |
 | `info_length` | u32 | bytes in `info` |
@@ -113,6 +115,12 @@ The section is 8 + 16 × `count` bytes long.
 | --- | --- | --- |
 | `entries` | [SpriteLayers](#spritelayers), one for each [Sprite](#sprite) | each at its Sprite's `offset`, to the end of the section |
 
+### Rotated sections
+
+`sprites` and `sprite_layers` hold the isometric view facing north-west, rotation 0. Rotations 90, 180 and 270 move the viewer clockwise, to face north-east, south-east and south-west. Each has a section of the same layout for either: `sprites@90` and `sprite_layers@90`, `sprites@180` and `sprite_layers@180`, `sprites@270` and `sprite_layers@270`. Their Sprites are in the same order as those in `sprites`, so a Block's `first_sprite` and `cover_sprite` hold for every rotation.
+
+`section_table` lists all six from when the file is written. A rotation that hasn't been added has its two sections reserved: their `offset` and `length` are 0 (§4). A rotation is there when neither of its two sections is reserved.
+
 ## 4. Types
 
 ### String
@@ -137,8 +145,8 @@ The section is 8 + 16 × `count` bytes long.
 
 | Field | Type | Contents |
 | --- | --- | --- |
-| `offset` | u64 | where the section starts, from the start of the file |
-| `length` | u32 | bytes in the section |
+| `offset` | u64 | where the section starts, from the start of the file; 0 for a reserved section |
+| `length` | u32 | bytes in the section; 0 for a reserved section |
 | `layout_version` | u8 | the version of the section's layout (§7) |
 | `generator_version` | u16 | the version of the code that made the section's contents (§7) |
 | `name` | [String](#string) | one of the section names in §3, e.g. `blocks` |
@@ -219,7 +227,8 @@ A reader rejects the whole file when:
 
 - it doesn't start with `STORYBLK`, or `header.version` is one the reader doesn't know
 - `info` or `section_table` goes past the end of the file, or `info`'s fields go past `header.info_length` bytes
-- a section the reader needs is missing, appears twice, has a `layout_version` the reader doesn't know, starts before the end of `section_table` or not on a multiple of 8, or doesn't lie wholly within the file
+- a section the reader needs is missing or reserved, appears twice, has a `layout_version` the reader doesn't know, starts before the end of `section_table` or not on a multiple of 8, or doesn't lie wholly within the file
+- a section with `offset` 0 has a `length` other than 0
 - a section's fields go past its length
 - a ColourMap isn't wider and taller than twice its `padding`
 - a Block's `material` isn't below `materials.count`, its `colour_code` isn't below `colour_codes.count`, its `colour` or `grain` isn't below `texture_colours.count` and isn't 0xFFFFFFFF, or its `climate_colour_map` or `season_colour_map` isn't below `colour_maps.count` and isn't 0xFF
@@ -236,14 +245,14 @@ A reader rejects the whole file when:
 - the game and its version
 - each mod, in the order of `info.mods`: its zip or folder name in `Mods/`, and for a zip, its size and modification time, or for a folder, the modification time of each folder in its `assets/`
 
-It depends on file times, so the same game and mods give a different hash on another machine: it's for checking, not for naming. Readers other than Storymap don't need it; `info` names the game and mods.
+It depends on file times, so the same game and mods give a different hash on another machine: it's for checking, not for naming. It doesn't depend on which rotations a file has, so adding one leaves it as it was. Readers other than Storymap don't need it; `info` names the game and mods.
 
 ## 7. Versions
 
 A layout version says how to read something, and a generator version how its contents were made:
 
 - The container's version, `header.version`, changes when `header`, `info` or `section_table` change.
-- A section's `layout_version` changes when that section's layout changes. In container version 1, `blocks`'s `layout_version` is 3, `colour_maps`'s 2, and every other section's 1.
-- A section's `generator_version` changes when the code that makes its contents changes without the layout changing: a block read differently, or a sprite drawn differently. Storymap gives `blocks`, `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `domains` the version of how it reads the game's assets, and `sprites` and `sprite_layers` the version of how it draws sprites.
+- A section's `layout_version` changes when that section's layout changes. In container version 2, `blocks`'s `layout_version` is 3, `colour_maps`'s 2, and every other section's 1.
+- A section's `generator_version` changes when the code that makes its contents changes without the layout changing: a block read differently, or a sprite drawn differently. Storymap gives `blocks`, `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `domains` the version of how it reads the game's assets, and `sprites`, `sprite_layers` and the rotated sections the version of how it draws sprites.
 
 A reader rejects a file with a layout version it doesn't know (§5). A `generator_version` other than the reader's own doesn't make the file invalid: the section was made by other code, and what to do with it is the reader's choice. Readers that only show the file go on reading it. Storymap, with the game, finds the hash different (§6) and prepares the file again; without it, it compares the generator versions themselves (§1).

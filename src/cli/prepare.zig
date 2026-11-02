@@ -182,12 +182,16 @@ fn hashAssets(io: std.Io, assets: *const Assets) u64 {
 }
 
 /// Every section of the file, in the order they're written, with the `sprites` section's bytes
-/// `entries`. `sprite_layers`, last, is in the file already.
-fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, entries: []const u8) ![Prepared.sectionNames.len + 2]storyblk.Section {
-    return (try contents.encode(arena)) ++ [2]storyblk.Section{
-        .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries },
-        .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "" },
-    };
+/// `entries`. The other rotations' are reserved, and `sprite_layers`, last, is in the file already.
+fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, entries: []const u8) ![Prepared.sectionNames.len + Sprites.rotatedSections.len + 2]storyblk.Section {
+    var rotated: [Sprites.rotatedSections.len]storyblk.Section = undefined;
+    for (&rotated, Sprites.rotatedSections) |*section, name| {
+        section.* = .{ .name = name, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "", .reserved = true };
+    }
+    return (try contents.encode(arena)) ++
+        [1]storyblk.Section{.{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries }} ++
+        rotated ++
+        [1]storyblk.Section{.{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "" }};
 }
 
 /// The hash in the header of the file at `path`, which is closed again before it's compared
