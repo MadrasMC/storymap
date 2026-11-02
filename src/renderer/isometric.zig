@@ -157,15 +157,47 @@ test Line {
 const ChunkCache = struct {
     pub const Position = struct { x: i32, y: i32, z: i32 };
     pub const Looks = [world.Chunk.volume]u16;
-    pub const Lookup = union(enum) { uncached, empty, looks: *const Looks };
+    pub const Lookup = union(enum) { uncached, empty, slot: *const Slot };
 
-    /// Chunks remembered, and how many of them can have blocks to draw: 64 KB each.
+    /// A liquid at the same place as a block that doesn't fill it: `place` in `Looks`, and the
+    /// liquid's look.
+    pub const Liquid = struct { place: u16, look: u16 };
+
+    /// A chunk's looks: a place's block, and the liquids in the places of those that don't fill
+    /// theirs, by place.
+    pub const Slot = struct {
+        looks: Looks,
+        liquids: [maxLiquids]Liquid,
+        liquidCount: u16,
+
+        /// The test saves' fullest chunk has 980. Past it, a place shows without its liquid.
+        pub const maxLiquids = 4096;
+
+        fn addLiquid(self: *Slot, place: usize, look: u16) void {
+            if (self.liquidCount == maxLiquids) return;
+            self.liquids[self.liquidCount] = .{ .place = @intCast(place), .look = look };
+            self.liquidCount += 1;
+        }
+
+        /// The look of the liquid in `place`, with a block; 0 for none.
+        fn liquidAt(self: *const Slot, place: usize) u16 {
+            const list = self.liquids[0..self.liquidCount];
+            const i = std.sort.binarySearch(Liquid, list, place, struct {
+                fn order(target: usize, item: Liquid) std.math.Order {
+                    return std.math.order(target, item.place);
+                }
+            }.order) orelse return 0;
+            return list[i].look;
+        }
+    };
+
+    /// Chunks remembered, and how many of them can have blocks to draw: 80 KB each.
     pub const defaultChunks = 4096;
     pub const defaultChunksWithBlocks = 128;
 
     const Entry = struct {
         position: Position,
-        /// Where its looks are in `looks`, or null for a chunk with nothing to draw.
+        /// Where its looks are in `slots`, or null for a chunk with nothing to draw.
         slot: ?u32,
         /// When it was last used, by `clock`.
         used: u64,
@@ -175,8 +207,8 @@ const ChunkCache = struct {
     count: usize = 0,
     /// Each position's index in `entries`.
     byPosition: std.AutoHashMapUnmanaged(Position, u32),
-    looks: []Looks,
-    /// Slots in `looks` no entry holds, the first `freeCount` of them.
+    slots: []Slot,
+    /// Slots no entry holds, the first `freeCount` of them.
     free: []u32,
     freeCount: usize,
     clock: u64 = 0,
@@ -187,16 +219,16 @@ const ChunkCache = struct {
         var byPosition: std.AutoHashMapUnmanaged(Position, u32) = .empty;
         try byPosition.ensureTotalCapacity(allocator, chunks);
         errdefer byPosition.deinit(allocator);
-        const looks = try allocator.alloc(Looks, chunksWithBlocks);
-        errdefer allocator.free(looks);
+        const slots = try allocator.alloc(Slot, chunksWithBlocks);
+        errdefer allocator.free(slots);
         const free = try allocator.alloc(u32, chunksWithBlocks);
         for (free, 0..) |*slot, i| slot.* = @intCast(i);
-        return .{ .entries = entries, .byPosition = byPosition, .looks = looks, .free = free, .freeCount = free.len };
+        return .{ .entries = entries, .byPosition = byPosition, .slots = slots, .free = free, .freeCount = free.len };
     }
 
     fn deinit(self: *ChunkCache, allocator: std.mem.Allocator) void {
         allocator.free(self.free);
-        allocator.free(self.looks);
+        allocator.free(self.slots);
         self.byPosition.deinit(allocator);
         allocator.free(self.entries);
     }
@@ -206,12 +238,12 @@ const ChunkCache = struct {
         const entry = &self.entries[index];
         self.clock += 1;
         entry.used = self.clock;
-        return if (entry.slot) |slot| .{ .looks = &self.looks[slot] } else .empty;
+        return if (entry.slot) |slot| .{ .slot = &self.slots[slot] } else .empty;
     }
 
     /// Remembers `position`, which must not be cached yet, and returns where to write its looks
     /// if it has `blocks`, or null.
-    fn put(self: *ChunkCache, position: Position, blocks: bool) ?*Looks {
+    fn put(self: *ChunkCache, position: Position, blocks: bool) ?*Slot {
         var index: usize = undefined;
         var slot: ?u32 = null;
         if (blocks and self.freeCount == 0) {
@@ -239,7 +271,7 @@ const ChunkCache = struct {
         self.clock += 1;
         self.entries[index] = .{ .position = position, .slot = slot, .used = self.clock };
         self.byPosition.putAssumeCapacity(position, @intCast(index));
-        return if (slot) |s| &self.looks[s] else null;
+        return if (slot) |s| &self.slots[s] else null;
     }
 
     /// The entry used longest ago, of those with blocks if `withBlocks`.
@@ -265,20 +297,37 @@ test ChunkCache {
     const c: ChunkCache.Position = .{ .x = 3, .y = 0, .z = 0 };
     const d: ChunkCache.Position = .{ .x = 4, .y = 0, .z = 0 };
     try std.testing.expect(cache.get(a) == .uncached);
-    cache.put(a, true).?[0] = 7;
-    cache.put(b, true).?[0] = 8;
+    cache.put(a, true).?.looks[0] = 7;
+    cache.put(b, true).?.looks[0] = 8;
     try std.testing.expect(cache.put(c, false) == null);
-    try std.testing.expectEqual(7, cache.get(a).looks[0]);
+    try std.testing.expectEqual(7, cache.get(a).slot.looks[0]);
     try std.testing.expect(cache.get(c) == .empty);
     // No slot is free for d's blocks: b, used longest ago of the chunks with blocks, makes room.
-    cache.put(d, true).?[0] = 9;
+    cache.put(d, true).?.looks[0] = 9;
     try std.testing.expect(cache.get(b) == .uncached);
-    try std.testing.expectEqual(9, cache.get(d).looks[0]);
-    try std.testing.expectEqual(7, cache.get(a).looks[0]);
+    try std.testing.expectEqual(9, cache.get(d).slot.looks[0]);
+    try std.testing.expectEqual(7, cache.get(a).slot.looks[0]);
     // Every entry is taken: c, now used longest ago, makes room for an empty chunk.
     try std.testing.expect(cache.put(b, false) == null);
     try std.testing.expect(cache.get(c) == .uncached);
     try std.testing.expect(cache.get(b) == .empty);
+}
+
+test "ChunkCache.Slot.liquidAt" {
+    const slot = try std.testing.allocator.create(ChunkCache.Slot);
+    defer std.testing.allocator.destroy(slot);
+    slot.liquidCount = 0;
+    try std.testing.expectEqual(0, slot.liquidAt(7));
+    slot.addLiquid(7, 3);
+    slot.addLiquid(900, 4);
+    try std.testing.expectEqual(3, slot.liquidAt(7));
+    try std.testing.expectEqual(4, slot.liquidAt(900));
+    try std.testing.expectEqual(0, slot.liquidAt(8));
+    // Past what it holds, a place has none.
+    for (0..ChunkCache.Slot.maxLiquids) |i| slot.addLiquid(1000 + i, 5);
+    try std.testing.expectEqual(ChunkCache.Slot.maxLiquids, slot.liquidCount);
+    try std.testing.expectEqual(5, slot.liquidAt(1000));
+    try std.testing.expectEqual(0, slot.liquidAt(1000 + ChunkCache.Slot.maxLiquids - 1));
 }
 
 /// The tiles the chunk columns are drawn on, from the bottom of the world to its top.
@@ -1191,6 +1240,15 @@ fn View(comptime Source: type) type {
             allocator.free(self.blockLooks);
         }
 
+        /// Whether blocks of `look` fill their place, top and sides, so nothing behind them on
+        /// a line shows. A look without sprites is a cube.
+        fn isFilled(self: *const Self, look: u16) bool {
+            return switch (self.looks[look - 1]) {
+                .sprite => |own| self.sprites.?.entries[own.sprites.first].flags.fills,
+                else => true,
+            };
+        }
+
         /// Plants aren't drawn, nor low blocks, nor blocks not seen in play.
         fn isDrawn(source: *const Source, id: i32) bool {
             return source.isVisible(id) and source.mapType(id) != .plant and !source.isLow(id);
@@ -1214,7 +1272,7 @@ fn View(comptime Source: type) type {
             /// Where a chunk is read into, and its blocks' looks worked out, before they go into
             /// the cache.
             chunk: *world.Chunk,
-            looks: *ChunkCache.Looks,
+            slot: *ChunkCache.Slot,
             cache: ChunkCache,
             /// The depth of what each pixel shows: x + y + z of its point, in `depthSteps`ths of
             /// a block, larger nearer.
@@ -1225,18 +1283,18 @@ fn View(comptime Source: type) type {
                 errdefer reader.deinit(allocator);
                 const chunk = try allocator.create(world.Chunk);
                 errdefer allocator.destroy(chunk);
-                const looks = try allocator.create(ChunkCache.Looks);
-                errdefer allocator.destroy(looks);
+                const slot = try allocator.create(ChunkCache.Slot);
+                errdefer allocator.destroy(slot);
                 var cache: ChunkCache = try .init(allocator, ChunkCache.defaultChunks, ChunkCache.defaultChunksWithBlocks);
                 errdefer cache.deinit(allocator);
                 const depth = try allocator.create([tiles.size * tiles.size]i64);
-                return .{ .view = view, .reader = reader, .chunk = chunk, .looks = looks, .cache = cache, .depth = depth };
+                return .{ .view = view, .reader = reader, .chunk = chunk, .slot = slot, .cache = cache, .depth = depth };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
                 allocator.destroy(self.depth);
                 self.cache.deinit(allocator);
-                allocator.destroy(self.looks);
+                allocator.destroy(self.slot);
                 allocator.destroy(self.chunk);
                 self.reader.deinit(allocator);
             }
@@ -1260,11 +1318,18 @@ fn View(comptime Source: type) type {
                         const line: Line = .{ .u = u, .v = v };
                         var y: i64 = @as(i64, self.view.height) - 1;
                         // A block whose sprite leaves parts of its square empty, such as a
-                        // plant, shows what's behind it on the line there.
+                        // plant, shows what's behind it on the line there. A liquid in its place
+                        // covers what of it is inside the liquid.
                         while (try self.nextBlock(line, &y)) |block| {
                             const drawn = try self.drawLook(line, block, x0, y0, pixels);
                             if (drawn.any) any = true;
                             if (drawn.fills) break;
+                            if (block.liquid == 0) continue;
+                            var liquid = block;
+                            liquid.look = block.liquid;
+                            const around = try self.drawLook(line, liquid, x0, y0, pixels);
+                            if (around.any) any = true;
+                            if (around.fills) break;
                         }
                     }
                 }
@@ -1337,19 +1402,20 @@ fn View(comptime Source: type) type {
                 const cx = @divFloor(block.x, side);
                 const cy = @divFloor(y, side);
                 const cz = @divFloor(block.z, side);
-                const looks = try self.chunkLooks(cx, cy, cz) orelse return false;
+                const slot = try self.chunkLooks(cx, cy, cz) orelse return false;
                 const lx: usize = @intCast(block.x - cx * side);
                 const ly: usize = @intCast(y - cy * side);
                 const lz: usize = @intCast(block.z - cz * side);
-                const look = looks[(ly * side + lz) * side + lx];
-                if (look == 0) return false;
+                const look = slot.looks[(ly * side + lz) * side + lx];
+                if (look == 0 or !self.view.isFilled(look)) return false;
                 return switch (self.view.looks[look - 1]) {
-                    .sprite => |spriteLook| self.view.sprites.?.entries[spriteLook.sprites.first].flags.fills and !self.view.source.isLiquid(spriteLook.block),
+                    .sprite => |spriteLook| !self.view.source.isLiquid(spriteLook.block),
                     else => true,
                 };
             }
 
-            const Block = struct { x: i64, y: i64, z: i64, look: u16 };
+            /// `liquid` is the look of a liquid in its place; 0 for none.
+            const Block = struct { x: i64, y: i64, z: i64, look: u16, liquid: u16 };
 
             /// What a block's pixels come from: a colour for each face, top, south and east, or
             /// a sprite.
@@ -1373,12 +1439,13 @@ fn View(comptime Source: type) type {
                     var lz: usize = @intCast(z - cz * side);
                     // The line's blocks in this chunk, from here until it leaves it.
                     const steps = @min(lx, ly, lz) + 1;
-                    if (try self.chunkLooks(cx, cy, cz)) |looks| {
+                    if (try self.chunkLooks(cx, cy, cz)) |slot| {
                         for (0..steps) |step| {
-                            const look = looks[(ly * side + lz) * side + lx];
+                            const place = (ly * side + lz) * side + lx;
+                            const look = slot.looks[place];
                             if (look != 0) {
                                 const back: i64 = @intCast(step);
-                                const found: Block = .{ .x = x - back, .y = y.* - back, .z = z - back, .look = look };
+                                const found: Block = .{ .x = x - back, .y = y.* - back, .z = z - back, .look = look, .liquid = slot.liquidAt(place) };
                                 y.* = found.y - 1;
                                 return found;
                             }
@@ -1394,13 +1461,13 @@ fn View(comptime Source: type) type {
 
             /// How each block of chunk (x, y, z) is drawn, from the cache or else read; null for a
             /// chunk with nothing to draw.
-            fn chunkLooks(self: *Worker, x: i64, y: i64, z: i64) !?*const ChunkCache.Looks {
+            fn chunkLooks(self: *Worker, x: i64, y: i64, z: i64) !?*const ChunkCache.Slot {
                 const limit = std.math.maxInt(i32);
                 if (@abs(x) > limit or @abs(y) > limit or @abs(z) > limit) return null;
                 const position: ChunkCache.Position = .{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
                 switch (self.cache.get(position)) {
                     .empty => return null,
-                    .looks => |looks| return looks,
+                    .slot => |slot| return slot,
                     .uncached => {},
                 }
                 if (!try self.reader.readChunk(position.x, position.y, position.z, self.chunk)) {
@@ -1409,11 +1476,13 @@ fn View(comptime Source: type) type {
                 }
                 const byId = self.view.blockLooks;
                 var drawn: u16 = 0;
-                for (self.looks, self.chunk.solid, self.chunk.liquid) |*look, solid, liquid| {
+                self.slot.liquidCount = 0;
+                for (&self.slot.looks, self.chunk.solid, self.chunk.liquid, 0..) |*look, solid, liquid, place| {
                     const solidLook = if (solid >= 0 and solid < byId.len) byId[@intCast(solid)] else 0;
                     const liquidLook = if (liquid >= 0 and liquid < byId.len) byId[@intCast(liquid)] else 0;
                     look.* = if (solidLook != 0) solidLook else liquidLook;
                     drawn |= look.*;
+                    if (solidLook != 0 and liquidLook != 0 and !self.view.isFilled(solidLook)) self.slot.addLiquid(place, liquidLook);
                 }
                 // A chunk of only air, plants or invisible blocks, such as those in the sky, is kept
                 // as having nothing to draw: lines pass it in one step, and it takes no slot.
@@ -1421,9 +1490,9 @@ fn View(comptime Source: type) type {
                     _ = self.cache.put(position, false);
                     return null;
                 }
-                const looks = self.cache.put(position, true).?;
-                looks.* = self.looks.*;
-                return looks;
+                const slot = self.cache.put(position, true).?;
+                slot.* = self.slot.*;
+                return slot;
             }
 
             /// Draws a block whose square's top left is at (`left`, `top`) in the tile, at
