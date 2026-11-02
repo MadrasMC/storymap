@@ -976,8 +976,8 @@ test shapeSprite {
     defer tmp.cleanup();
     const file = try tmp.dir.createFile(io, "sprites", .{ .read = true });
     defer file.close(io);
-    var sections: Sprites.Sections = .init(io, file, 0);
-    defer sections.deinit();
+    var buffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
+    var sections: Sprites.Sections = .init(io, file, 0, &buffer);
     const red: [4][4]u8 = @splat(.{ 200, 0, 0, 255 });
     const image: world.Image = .{ .width = 2, .height = 2, .pixels = &red };
     const textures = [_]world.CubeFaces.Face{.{ .plain = &.{&image} }};
@@ -1088,12 +1088,12 @@ test drawSprites {
     defer tmp.cleanup();
     const file = try tmp.dir.createFile(io, "sprites", .{ .read = true });
     defer file.close(io);
-    var sections: Sprites.Sections = .init(io, file, 0);
-    defer sections.deinit();
+    var buffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
+    var sections: Sprites.Sections = .init(io, file, 0, &buffer);
     const plan = try planSprites(allocator, &drawables);
     try std.testing.expectEqual(3 + turns + 6, plan.count);
     const blocks = try drawSprites(allocator, &drawables, plan, &sections);
-    try sections.close();
+    try sections.flush();
 
     const sprites = try Sprites.parse(try sections.entryBytes(allocator, blockWidth), try sections.readLayers(allocator));
     try std.testing.expectEqual(plan.count, sprites.entries.len);

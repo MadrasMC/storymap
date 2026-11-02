@@ -84,26 +84,24 @@ pub const SpriteLayers = struct {
     }
 };
 
-/// The two sections as they're made, a sprite at a time: each sprite is drawn where it goes in
-/// `sprite_layers`, in the file itself, so its pixels are never copied or held in memory for
-/// longer than it takes to draw them.
+/// The two sections as they're made, a sprite at a time: each sprite is drawn in place in a small
+/// buffer of `sprite_layers`, which goes to the file whenever it's full, so memory holds only
+/// the sprites drawn since. `entries` is left to the allocator given to `add`.
 pub const Sections = struct {
     entries: std.ArrayList(Sprite) = .empty,
     layers: FileBuffer,
 
-    /// With `sprite_layers` at `start` in `file`, which must be open for reading and writing.
-    pub fn init(io: std.Io, file: std.Io.File, start: u64) Sections {
-        return .{ .layers = .init(io, file, start, std.math.maxInt(u32)) };
-    }
+    /// How long a buffer to give `init`: enough for many sprites, the largest about 92 KB.
+    pub const bufferLength = 1 << 20;
 
-    /// `entries` is left to the allocator given to `add`.
-    pub fn deinit(self: *Sections) void {
-        self.layers.close() catch {};
+    /// With `sprite_layers` at `start` in `file`, which must be open for writing.
+    pub fn init(io: std.Io, file: std.Io.File, start: u64, buffer: *align(4) [bufferLength]u8) Sections {
+        return .{ .layers = .init(io, file, start, std.math.maxInt(u32), buffer) };
     }
 
     /// `sprite_layers` is done, and all of it in the file.
-    pub fn close(self: *Sections) !void {
-        try self.layers.close();
+    pub fn flush(self: *Sections) !void {
+        try self.layers.flush();
     }
 
     /// `sprite_layers`, read back from the file, on a multiple of 4 as a mapped file's sections
@@ -208,8 +206,8 @@ test "add and parse" {
         .{ .plain = &.{ 1, 2 }, .tinted = null, .depths = &.{ 3, 4 } },
         .{ .plain = &.{ 5, 6, 7 }, .tinted = &.{ 8, 9, 10 }, .depths = &.{ -1, 0, 1 } },
     };
-    var sections: Sections = .init(io, file, 8);
-    defer sections.deinit();
+    var buffer: [Sections.bufferLength]u8 align(4) = undefined;
+    var sections: Sections = .init(io, file, 8, &buffer);
     defer sections.entries.deinit(allocator);
     for (sprites, layers) |sprite, each| {
         const room = try sections.add(allocator, sprite);
@@ -217,7 +215,7 @@ test "add and parse" {
         if (room.tinted) |tinted| @memcpy(tinted, each.tinted.?);
         @memcpy(room.depths, each.depths);
     }
-    try sections.close();
+    try sections.flush();
     const entries = try sections.entryBytes(allocator, 32);
     defer allocator.free(entries);
     try std.testing.expectEqual(Sections.entriesLength(2), entries.len);
