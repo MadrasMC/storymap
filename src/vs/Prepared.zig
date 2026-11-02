@@ -301,26 +301,29 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
     while (try reader.next(scratch)) |types| {
         // A few files take many times what the rest do, and shouldn't hold that for those after.
         defer _ = fileArena.reset(.{ .retain_with_limit = fileArenaLimit });
-        for (types) |block| try entries.append(gpa, .{
-            .code = try arena.dupe(u8, block.code),
-            .block = .{
-                .index = @intCast(entries.items.len),
-                .material = try arena.dupe(u8, block.material),
-                .colorCode = try arena.dupe(u8, block.colorCode),
-                .cube = try cubeOf(&images, block.cube),
-                .height = block.height,
-                .shapes = try shapesOf(arena, &images, block.shapes),
-                .drawOffset = block.drawOffset,
-                .randomizeAxes = block.randomizeAxes,
-                .randomizeRotations = block.randomizeRotations,
-                .snowLayer = block.snowLayer,
-                .seeThrough = block.seeThrough,
-            },
-            .colour = try textures.index(block.textures.colour),
-            .grain = try textures.index(block.textures.grain),
-            .climateColourMap = colourMapIndex(colourMaps, block.climateColorMap),
-            .seasonColourMap = colourMapIndex(colourMaps, block.seasonColorMap),
-        });
+        for (types) |block| {
+            try textures.select(block.textures);
+            try entries.append(gpa, .{
+                .code = try arena.dupe(u8, block.code),
+                .block = .{
+                    .index = @intCast(entries.items.len),
+                    .material = try arena.dupe(u8, block.material),
+                    .colorCode = try arena.dupe(u8, block.colorCode),
+                    .cube = try cubeOf(&images, block.cube),
+                    .height = block.height,
+                    .shapes = try shapesOf(arena, &images, block.shapes),
+                    .drawOffset = block.drawOffset,
+                    .randomizeAxes = block.randomizeAxes,
+                    .randomizeRotations = block.randomizeRotations,
+                    .snowLayer = block.snowLayer,
+                    .seeThrough = block.seeThrough,
+                },
+                .colour = try textures.index(block.textures.colour),
+                .grain = try textures.index(block.textures.grain),
+                .climateColourMap = colourMapIndex(colourMaps, block.climateColorMap),
+                .seasonColourMap = colourMapIndex(colourMaps, block.seasonColorMap),
+            });
+        }
     }
     const blocks = try arena.dupe(Contents.Entry, entries.items);
     // Pointing into the textures and colour maps once all are read.
@@ -474,8 +477,10 @@ const Images = struct {
     fn make(self: *Images, layer: BlockTypes.Layer, path: []const u8) !?Image {
         const scratch = self.textures.scratch;
         const turned = layer.quarterTurns != 0;
-        const png = try self.textures.assets.read(scratch, self.textures.io, domainOf(layer.base), path) orelse return null;
+        const domain = domainOf(layer.base);
+        const png = try self.textures.assets.read(scratch, self.textures.io, domain, path) orelse return null;
         var image = try decode(if (layer.half == null and !turned) self.arena else scratch, png) orelse return null;
+        self.textures.takeColours(domain, path, image.pixels);
         if (layer.half) |half| image = halfOf(if (turned) scratch else self.arena, image, half) orelse return null;
         // An overlay that can't be read is left out, as the game leaves out a missing texture.
         for (layer.overlays) |location| {
@@ -630,6 +635,39 @@ const Textures = struct {
     read: std.ArrayList(TextureColours) = .empty,
     /// Every texture file, listed the first time a location ends in `*`.
     files: ?[]const Assets.Name = null,
+    /// The block's colour and grain textures not yet in `read`, each with its colours once its
+    /// file is decoded for one of the block's images.
+    current: [2]?Current = .{ null, null },
+
+    const Current = struct {
+        location: []const u8,
+        path: []const u8,
+        colours: ?TextureColours = null,
+    };
+
+    /// Sets the textures whose colours `takeColours` keeps.
+    fn select(self: *Textures, named: BlockTypes.Textures) !void {
+        self.current = .{ try self.currentOf(named.colour), try self.currentOf(named.grain) };
+    }
+
+    fn currentOf(self: *Textures, location: ?[]const u8) !?Current {
+        const wanted = location orelse return null;
+        if (self.indexes.contains(wanted)) return null;
+        const files = try self.paths(wanted);
+        return if (files.len == 0) null else .{ .location = wanted, .path = files[0] };
+    }
+
+    /// Keeps the colours of `pixels`, a file just decoded, if it's a current texture.
+    fn takeColours(self: *Textures, domain: []const u8, path: []const u8, pixels: []const [4]u8) void {
+        var colours: ?TextureColours = null;
+        for (&self.current) |*current| {
+            const texture = if (current.*) |*texture| texture else continue;
+            if (texture.colours != null or !std.mem.eql(u8, texture.path, path)) continue;
+            if (!std.mem.eql(u8, domainOf(texture.location), domain)) continue;
+            colours = colours orelse TextureColours.of(pixels);
+            texture.colours = colours;
+        }
+    }
 
     /// Reads the texture the first time; null without a location or if it can't be read.
     fn index(self: *Textures, location: ?[]const u8) !?u32 {
@@ -645,6 +683,9 @@ const Textures = struct {
     }
 
     fn readColours(self: *Textures, location: []const u8) !?TextureColours {
+        for (self.current) |current| if (current) |texture| {
+            if (texture.colours != null and std.mem.eql(u8, texture.location, location)) return texture.colours;
+        };
         const png = try self.readPng(location) orelse return null;
         return TextureColours.ofPng(png);
     }
