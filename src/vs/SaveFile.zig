@@ -26,9 +26,8 @@ gameData: GameData,
 /// The chunk columns with a map chunk, in dimension 0: those that may have blocks, in the `Area`
 /// if there is one.
 chunkColumns: []world.ChunkColumn,
-/// How many chunk columns the save has, in or out of the `Area`: a tile is read whole, so reading
-/// goes past it.
-savedColumns: usize,
+/// The part of the world to draw: what's outside it reads as not there. Null for all of it.
+area: ?Area,
 /// The tiles that may have something to draw.
 tileList: []tiles.Tile,
 /// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else its code.
@@ -62,6 +61,18 @@ pub const Area = struct {
     x: i64,
     z: i64,
     radius: u32,
+
+    /// Whether any of `column`'s blocks are in the area, in a world of the size given. The game
+    /// shows positions shifted from the save's by half the world's size.
+    fn reaches(self: Area, column: world.ChunkColumn, worldWidth: u64, worldLength: u64) bool {
+        const x = self.x + @as(i64, @intCast(worldWidth / 2));
+        const z = self.z + @as(i64, @intCast(worldLength / 2));
+        const west = @as(i64, column.x) * world.Chunk.side;
+        const north = @as(i64, column.z) * world.Chunk.side;
+        const dx = @abs(x - std.math.clamp(x, west, west + world.Chunk.side - 1));
+        const dz = @abs(z - std.math.clamp(z, north, north + world.Chunk.side - 1));
+        return dx * dx + dz * dz <= @as(u64, self.radius) * self.radius;
+    }
 };
 
 /// Opens a save read-only, never writing next to it: it may be in the game's own Saves folder,
@@ -80,7 +91,6 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, area: ?A
     var columns = readChunkColumns(allocator, db) catch |err| return fail(problem, .notASave, err);
     errdefer allocator.free(columns);
     if (columns.len == 0) return fail(problem, .noChunks, null);
-    const savedColumns = columns.len;
 
     // Block IDs are per save; this maps them to block codes.
     const gameData = GameData.read(allocator, db) catch |err| return fail(problem, .unreadableBlockList, err);
@@ -104,7 +114,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, area: ?A
         .db = db,
         .gameData = gameData,
         .chunkColumns = columns,
-        .savedColumns = savedColumns,
+        .area = area,
         .tileList = list,
         .appearances = appearances,
         // 8 for the default height of 256.
@@ -446,18 +456,17 @@ fn readChunkColumns(allocator: std.mem.Allocator, db: DB) ![]world.ChunkColumn {
     return columns.toOwnedSlice(allocator);
 }
 
-/// Moves the columns any of whose blocks `area` reaches to the start of `columns`, and returns how
-/// many there are. The game shows positions shifted from the save's by half the world's size.
+/// Whether `column` is drawn: it's in the area, if there is one.
+fn isInArea(self: *const SaveFile, column: world.ChunkColumn) bool {
+    const area = self.area orelse return true;
+    return area.reaches(column, self.gameData.worldWidth, self.gameData.worldLength);
+}
+
+/// Moves the columns `area` reaches to the start of `columns`, and returns how many there are.
 fn keepColumns(columns: []world.ChunkColumn, area: Area, worldWidth: u64, worldLength: u64) usize {
-    const x = area.x + @as(i64, @intCast(worldWidth / 2));
-    const z = area.z + @as(i64, @intCast(worldLength / 2));
     var kept: usize = 0;
     for (columns) |column| {
-        const west = @as(i64, column.x) * world.Chunk.side;
-        const north = @as(i64, column.z) * world.Chunk.side;
-        const dx = @abs(x - std.math.clamp(x, west, west + world.Chunk.side - 1));
-        const dz = @abs(z - std.math.clamp(z, north, north + world.Chunk.side - 1));
-        if (dx * dx + dz * dz > @as(u64, area.radius) * area.radius) continue;
+        if (!area.reaches(column, worldWidth, worldLength)) continue;
         columns[kept] = column;
         kept += 1;
     }
@@ -582,7 +591,7 @@ pub const Reader = struct {
     /// Chunks read: those holding a surface block, in each tile and its ring.
     chunksRead: usize = 0,
     /// Whether each chunk column `readChunk` has looked up is fully generated, so its map chunk
-    /// is read once. Room for every column the save has (`savedColumns`).
+    /// is read once. Room for every column drawn.
     columnsDone: std.AutoHashMapUnmanaged(world.ChunkColumn, bool),
 
     /// `style` is one of the game's own, or null for another: it decides what's read beyond
@@ -619,7 +628,7 @@ pub const Reader = struct {
         const grainTint = try allocator.alloc(world.Rgb, if (style == .coloured) area else 0);
         errdefer allocator.free(grainTint);
         var columnsDone: std.AutoHashMapUnmanaged(world.ChunkColumn, bool) = .empty;
-        try columnsDone.ensureTotalCapacity(allocator, @intCast(save.savedColumns));
+        try columnsDone.ensureTotalCapacity(allocator, @intCast(save.chunkColumns.len));
         return .{
             .columnsDone = columnsDone,
             .style = style,
@@ -698,6 +707,7 @@ pub const Reader = struct {
 
     /// Whether a chunk column is fully generated. A column whose map chunk can't be read isn't.
     fn isDone(self: *Reader, column: world.ChunkColumn) bool {
+        if (!self.save.isInArea(column)) return false;
         if (self.columnsDone.get(column)) |done| return done;
         self.mapChunkRow.bind(1, (Chunk.Position{ .x = @intCast(column.x), .z = @intCast(column.z) }).position64());
         defer self.mapChunkRow.reset();
@@ -769,6 +779,7 @@ pub const Reader = struct {
     /// Records one chunk column's block columns that fall in the tile or its ring: from their
     /// stored heights, reading only the chunks those point into, else by scanning down.
     fn readColumn(self: *Reader, surface: world.Surface, cx: u64, cz: u64, x0: i64, z0: i64) !void {
+        if (!self.save.isInArea(.{ .x = @intCast(cx), .z = @intCast(cz) })) return;
         // Dimension 0: the world itself.
         const base: Chunk.Position = .{ .x = @intCast(cx), .z = @intCast(cz) };
         // Only fully generated chunk columns are drawn: partly generated ones lack trees and

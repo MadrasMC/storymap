@@ -20,7 +20,7 @@ pub const spec: args.Spec = .{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
         .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
         .{ .name = "isometric", .description = "Also draw the isometric view." },
-        .{ .name = "around", .value = "x,z", .description = "Draw only the tiles around this position, as the game shows it. Needs --radius." },
+        .{ .name = "around", .value = "x,z", .description = "Draw only the chunks around this position, as the game shows it. Needs --radius." },
         .{ .name = "radius", .value = "blocks", .description = "With --around, how far from it to draw." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
