@@ -51,7 +51,7 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 
 4. **Buffers sized at startup.** Nothing is allocated per tile, but a render's buffers are sized and allocated when it starts; once a process renders more than once (incremental rendering), they should be set up once.
 5. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`).
-15. **Profile a render.** A render of both views of an 80 MB save, preparing first, peaked at 571 MB of private memory, and what takes it hasn't been measured, nor how a render's memory and time divide between its stages. Measure both on `large.vcdbs` first: it decides what items 4 and 5 should go after.
+15. **Profile a render.** A render of both views of an 80 MB save, preparing first, peaked at 571 MB of private memory, and what takes it hasn't been measured, nor how a render's memory and time divide between its stages. Measure both on `large.vcdbs` first: it decides what items 4 and 5 should go after. Also try `--webp` and `--lossy-from` on it: drawing tall grass took its isometric PNG tiles from 3.83 to 5.04 GB, and if that can't be brought down, a render needs an option to leave out kinds of blocks.
 
 ## Isometric render
 
