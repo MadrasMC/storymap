@@ -62,15 +62,20 @@ pub const Area = struct {
     z: i64,
     radius: u32,
 
-    /// Whether any of `column`'s blocks are in the area, in a world of the size given. The game
-    /// shows positions shifted from the save's by half the world's size.
+    /// Whether any of `column`'s blocks are in the area, in a world of the size given.
     fn reaches(self: Area, column: world.ChunkColumn, worldWidth: u64, worldLength: u64) bool {
         const x = self.x + @as(i64, @intCast(worldWidth / 2));
         const z = self.z + @as(i64, @intCast(worldLength / 2));
         const west = @as(i64, column.x) * world.Chunk.side;
         const north = @as(i64, column.z) * world.Chunk.side;
-        const dx = @abs(x - std.math.clamp(x, west, west + world.Chunk.side - 1));
-        const dz = @abs(z - std.math.clamp(z, north, north + world.Chunk.side - 1));
+        return self.contains(std.math.clamp(x, west, west + world.Chunk.side - 1), std.math.clamp(z, north, north + world.Chunk.side - 1), worldWidth, worldLength);
+    }
+
+    /// Whether block column (x, z), a position in the save, is in the area. The game shows
+    /// positions shifted from the save's by half the world's size.
+    fn contains(self: Area, x: i64, z: i64, worldWidth: u64, worldLength: u64) bool {
+        const dx = @abs(self.x + @as(i64, @intCast(worldWidth / 2)) - x);
+        const dz = @abs(self.z + @as(i64, @intCast(worldLength / 2)) - z);
         return dx * dx + dz * dz <= @as(u64, self.radius) * self.radius;
     }
 };
@@ -462,6 +467,39 @@ fn isInArea(self: *const SaveFile, column: world.ChunkColumn) bool {
     return area.reaches(column, self.gameData.worldWidth, self.gameData.worldLength);
 }
 
+/// Empties the block columns of chunk (x, z) that are outside `area`.
+fn clipChunk(chunk: *world.Chunk, x: i64, z: i64, area: Area, worldWidth: u64, worldLength: u64) void {
+    const side = world.Chunk.side;
+    for (0..side) |lz| for (0..side) |lx| {
+        if (area.contains(x * side + @as(i64, @intCast(lx)), z * side + @as(i64, @intCast(lz)), worldWidth, worldLength)) continue;
+        for (0..side) |ly| {
+            const place = (ly * side + lz) * side + lx;
+            chunk.solid[place] = 0;
+            chunk.liquid[place] = 0;
+        }
+    };
+}
+
+test clipChunk {
+    const chunk = try std.testing.allocator.create(world.Chunk);
+    defer std.testing.allocator.destroy(chunk);
+    @memset(&chunk.solid, 7);
+    @memset(&chunk.liquid, 8);
+    // The game's 0, 0 is block (1024, 1024), the north-west corner of chunk (32, 32).
+    clipChunk(chunk, 32, 32, .{ .x = 0, .z = 0, .radius = 5 }, 2048, 2048);
+    const side = world.Chunk.side;
+    const at = struct {
+        fn place(y: usize, z: usize, x: usize) usize {
+            return (y * side + z) * side + x;
+        }
+    }.place;
+    try std.testing.expectEqual(7, chunk.solid[at(9, 0, 5)]);
+    try std.testing.expectEqual(8, chunk.liquid[at(31, 3, 4)]);
+    // Within 5 on each axis, but past it across the corner.
+    try std.testing.expectEqual(0, chunk.solid[at(9, 4, 4)]);
+    try std.testing.expectEqual(0, chunk.liquid[at(0, 0, 6)]);
+}
+
 /// Moves the columns `area` reaches to the start of `columns`, and returns how many there are.
 fn keepColumns(columns: []world.ChunkColumn, area: Area, worldWidth: u64, worldLength: u64) usize {
     var kept: usize = 0;
@@ -686,7 +724,22 @@ pub const Reader = struct {
             if (cx < 0 or cz < 0 or cx > Chunk.Position.maxXZ or cz > Chunk.Position.maxXZ) continue;
             try self.readColumn(surface.*, @intCast(cx), @intCast(cz), x0, z0);
         };
+        if (self.save.area) |area| self.clipSurface(surface.*, area, x0, z0);
         if (self.topTint.len > 0) try self.readTints(tile, surface.*);
+    }
+
+    /// Empties the block columns of `surface`, whose north-west corner is (x0, z0), that are
+    /// outside `area`.
+    fn clipSurface(self: *const Reader, surface: world.Surface, area: Area, x0: i64, z0: i64) void {
+        const gameData = &self.save.gameData;
+        for (0..world.Surface.side) |az| for (0..world.Surface.side) |ax| {
+            if (area.contains(x0 + @as(i64, @intCast(ax)), z0 + @as(i64, @intCast(az)), gameData.worldWidth, gameData.worldLength)) continue;
+            const i = az * world.Surface.side + ax;
+            surface.top[i] = null;
+            surface.topBlock[i] = 0;
+            surface.liquidTop[i] = null;
+            surface.liquidBlock[i] = 0;
+        };
     }
 
     /// Fills `out` with chunk (x, y, z). Returns false, leaving `out` as it was, where the
@@ -702,6 +755,8 @@ pub const Reader = struct {
         decodeOrWarn(&self.decoder, self.chunk, position, self.chunkRow.column([]const u8, 0)) catch return false;
         self.chunk.blocks.unpack(&out.solid);
         self.chunk.liquids.unpack(&out.liquid);
+        const gameData = &self.save.gameData;
+        if (self.save.area) |area| clipChunk(out, x, z, area, gameData.worldWidth, gameData.worldLength);
         return true;
     }
 
