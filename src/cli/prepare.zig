@@ -90,15 +90,18 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     var assets = openAssets(init, gamePath, paths.data);
     defer assets.close(io);
     const hash = hashAssets(io, &assets);
-    if (!force) if (hashOf(init, path)) |existing| if (existing == hash) {
+    const reason = reason: {
+        if (force) break :reason "`--prepare`";
+        const existing = hashOf(init, path) orelse break :reason "no readable file";
+        if (existing != hash) break :reason "the game, its mods or Storymap changed";
         var problem: Problem = .none;
-        if (open(init, path, &problem)) |found| {
-            const mods = assets.sources.items.len - 1;
-            console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier ({s})", .{ versionText(assets.version orelse ""), mods, modText(mods), path });
-            return found;
-        } else |_| {}
+        const found = open(init, path, &problem) catch break :reason "the file could not be opened";
+        const mods = assets.sources.items.len - 1;
+        console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier ({s})", .{ versionText(assets.version orelse ""), mods, modText(mods), path });
+        return found;
     };
 
+    console.log("blocks: preparing: {s} ({s})", .{ reason, path });
     prepareFile(init, &assets, path, hash);
     var problem: Problem = .none;
     return open(init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
