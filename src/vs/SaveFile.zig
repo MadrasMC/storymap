@@ -23,8 +23,12 @@ path: []const u8,
 unsaved: bool,
 db: DB,
 gameData: GameData,
-/// The chunk columns with a map chunk, in dimension 0: those that may have blocks.
+/// The chunk columns with a map chunk, in dimension 0: those that may have blocks, in the `Area`
+/// if there is one.
 chunkColumns: []world.ChunkColumn,
+/// How many chunk columns the save has, in or out of the `Area`: a tile is read whole, so reading
+/// goes past it.
+savedColumns: usize,
 /// The tiles that may have something to draw.
 tileList: []tiles.Tile,
 /// What each block ID is on the map: from the prepared blocks (`useBlocks`), or else its code.
@@ -46,14 +50,24 @@ pub const Problem = struct {
         /// Not an SQLite database, or one without a save's tables.
         notASave,
         noChunks,
+        noChunksInArea,
         /// The block list in `gamedata` can't be read.
         unreadableBlockList,
     };
 };
 
-/// Opens a save read-only, never writing next to it: it may be in the game's own Saves folder.
-/// If it isn't a readable save, returns error.InvalidSaveFile and `problem` says why.
-pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem: *Problem) !SaveFile {
+/// Part of a world: the chunk columns within `radius` blocks of (x, z), a position as the game
+/// shows it, from the world's centre.
+pub const Area = struct {
+    x: i64,
+    z: i64,
+    radius: u32,
+};
+
+/// Opens a save read-only, never writing next to it: it may be in the game's own Saves folder,
+/// with only the chunk columns in `area`, if given. If it isn't a readable save, returns
+/// error.InvalidSaveFile and `problem` says why.
+pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, area: ?Area, problem: *Problem) !SaveFile {
     // The immutable open ignores the -wal file (see `unsaved`).
     const walPath = try std.mem.concat(allocator, u8, &.{ path, "-wal" });
     defer allocator.free(walPath);
@@ -63,15 +77,20 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem:
     errdefer db.deinit();
 
     // SQLite opens any file lazily, so this first query is where a wrong file shows up.
-    const columns = readChunkColumns(allocator, db) catch |err| return fail(problem, .notASave, err);
+    var columns = readChunkColumns(allocator, db) catch |err| return fail(problem, .notASave, err);
     errdefer allocator.free(columns);
     if (columns.len == 0) return fail(problem, .noChunks, null);
-    const list = try tilesOf(allocator, columns);
-    errdefer allocator.free(list);
+    const savedColumns = columns.len;
 
     // Block IDs are per save; this maps them to block codes.
     const gameData = GameData.read(allocator, db) catch |err| return fail(problem, .unreadableBlockList, err);
     errdefer gameData.deinit();
+    if (area) |part| {
+        columns = try allocator.realloc(columns, keepColumns(columns, part, gameData.worldWidth, gameData.worldLength));
+        if (columns.len == 0) return fail(problem, .noChunksInArea, null);
+    }
+    const list = try tilesOf(allocator, columns);
+    errdefer allocator.free(list);
     const appearances = try appearancesByCode(allocator, gameData);
     errdefer allocator.free(appearances);
     const tints = try allocator.alloc(BlockTint, gameData.blockCodes.len);
@@ -85,6 +104,7 @@ pub fn open(allocator: std.mem.Allocator, io: std.Io, path: []const u8, problem:
         .db = db,
         .gameData = gameData,
         .chunkColumns = columns,
+        .savedColumns = savedColumns,
         .tileList = list,
         .appearances = appearances,
         // 8 for the default height of 256.
@@ -426,6 +446,46 @@ fn readChunkColumns(allocator: std.mem.Allocator, db: DB) ![]world.ChunkColumn {
     return columns.toOwnedSlice(allocator);
 }
 
+/// Moves the columns any of whose blocks `area` reaches to the start of `columns`, and returns how
+/// many there are. The game shows positions shifted from the save's by half the world's size.
+fn keepColumns(columns: []world.ChunkColumn, area: Area, worldWidth: u64, worldLength: u64) usize {
+    const x = area.x + @as(i64, @intCast(worldWidth / 2));
+    const z = area.z + @as(i64, @intCast(worldLength / 2));
+    var kept: usize = 0;
+    for (columns) |column| {
+        const west = @as(i64, column.x) * world.Chunk.side;
+        const north = @as(i64, column.z) * world.Chunk.side;
+        const dx = @abs(x - std.math.clamp(x, west, west + world.Chunk.side - 1));
+        const dz = @abs(z - std.math.clamp(z, north, north + world.Chunk.side - 1));
+        if (dx * dx + dz * dz > @as(u64, area.radius) * area.radius) continue;
+        columns[kept] = column;
+        kept += 1;
+    }
+    return kept;
+}
+
+test keepColumns {
+    // A world 2,048 blocks wide: the game's 0, 0 is block (1024, 1024), in column (32, 32).
+    var columns = [_]world.ChunkColumn{
+        .{ .x = 32, .z = 32 },
+        .{ .x = 33, .z = 32 },
+        .{ .x = 35, .z = 32 },
+        .{ .x = 32, .z = 31 },
+        .{ .x = 34, .z = 34 },
+    };
+    // The next column east starts 32 blocks away, and one 3 columns on 96.
+    const kept = keepColumns(&columns, .{ .x = 0, .z = 0, .radius = 32 }, 2048, 2048);
+    try std.testing.expectEqualSlices(world.ChunkColumn, &.{ .{ .x = 32, .z = 32 }, .{ .x = 33, .z = 32 }, .{ .x = 32, .z = 31 } }, columns[0..kept]);
+    // Not a square: this one's corner is 64 blocks east and south, more than 80 away.
+    var corner = [_]world.ChunkColumn{.{ .x = 34, .z = 34 }};
+    try std.testing.expectEqual(0, keepColumns(&corner, .{ .x = 0, .z = 0, .radius = 80 }, 2048, 2048));
+    try std.testing.expectEqual(1, keepColumns(&corner, .{ .x = 0, .z = 0, .radius = 91 }, 2048, 2048));
+    // Positions west of the centre are negative.
+    var west = [_]world.ChunkColumn{.{ .x = 30, .z = 32 }};
+    try std.testing.expectEqual(1, keepColumns(&west, .{ .x = -64, .z = 0, .radius = 0 }, 2048, 2048));
+    try std.testing.expectEqual(0, keepColumns(&west, .{ .x = 64, .z = 0, .radius = 0 }, 2048, 2048));
+}
+
 /// The top-down tiles holding `columns`. A tile of only partly generated columns comes out
 /// empty.
 fn tilesOf(allocator: std.mem.Allocator, columns: []const world.ChunkColumn) ![]tiles.Tile {
@@ -522,7 +582,7 @@ pub const Reader = struct {
     /// Chunks read: those holding a surface block, in each tile and its ring.
     chunksRead: usize = 0,
     /// Whether each chunk column `readChunk` has looked up is fully generated, so its map chunk
-    /// is read once. Room for every column the save has.
+    /// is read once. Room for every column the save has (`savedColumns`).
     columnsDone: std.AutoHashMapUnmanaged(world.ChunkColumn, bool),
 
     /// `style` is one of the game's own, or null for another: it decides what's read beyond
@@ -559,7 +619,7 @@ pub const Reader = struct {
         const grainTint = try allocator.alloc(world.Rgb, if (style == .coloured) area else 0);
         errdefer allocator.free(grainTint);
         var columnsDone: std.AutoHashMapUnmanaged(world.ChunkColumn, bool) = .empty;
-        try columnsDone.ensureTotalCapacity(allocator, @intCast(save.chunkColumns.len));
+        try columnsDone.ensureTotalCapacity(allocator, @intCast(save.savedColumns));
         return .{
             .columnsDone = columnsDone,
             .style = style,
