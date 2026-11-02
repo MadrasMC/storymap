@@ -159,7 +159,8 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
 
     var layersBuffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
     var sprites: Sprites.Sections = .init(io, partial.file, try storyblk.lastOffset(info, &layout), &layersBuffer);
-    contents.useSprites(try isometric.drawSprites(arena, drawables, plan, &sprites));
+    try isometric.drawSprites(arena, drawables, plan, .deg0, &sprites);
+    contents.useSprites(plan.blocks);
     try sprites.flush();
     console.log("sprites: {} drawn in {d:.1} s", .{ sprites.entries.items.len, secondsSince(io, start) });
 

@@ -119,6 +119,15 @@ The section is 8 + 16 × `count` bytes long.
 
 `sprites` and `sprite_layers` hold the isometric view facing north-west, rotation 0. Rotations 90, 180 and 270 move the viewer clockwise, to face north-east, south-east and south-west. Each has a section of the same layout for either: `sprites@90` and `sprite_layers@90`, `sprites@180` and `sprite_layers@180`, `sprites@270` and `sprite_layers@270`. Their Sprites are in the same order as those in `sprites`, so a Block's `first_sprite` and `cover_sprite` hold for every rotation.
 
+A rotation's sprites are drawn in the view's coordinates. §2's formulas for a block's square and a pixel's depth hold with x and z replaced by the view's, and a block's `draw_offset` turns the same way. A cube's side on the left of a sprite is the one towards the view's +z, and the one on the right towards its +x. Sides keep their textures the same way round, and a top's texture turns with the view. Faces are lit by where they are on the screen, so the left is always lit as the south is at rotation 0.
+
+| rotation | view's x | view's z | left | right |
+| --- | --- | --- | --- | --- |
+| 0 | x | z | south | east |
+| 90 | z | −1 − x | west | south |
+| 180 | −1 − x | −1 − z | north | west |
+| 270 | −1 − z | x | east | north |
+
 `section_table` lists all six from when the file is written. A rotation that hasn't been added has its two sections reserved: their `offset` and `length` are 0 (§4).
 
 ## 4. Types
@@ -186,7 +195,7 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 | `season_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
 | `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../blocks.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block |
 | `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../blocks.md#shapes)) |
-| `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its sprites has a tinted layer; bit 4: it's glass, water or ice that shows what's behind it ([See-through blocks](../blocks.md#cube-faces)) |
+| `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its textures has a tinted layer; bit 4: it's glass, water or ice that shows what's behind it ([See-through blocks](../blocks.md#cube-faces)) |
 | `first_sprite` | u32 | the index of its first Sprite in `sprites.entries` |
 | `variants` | u16 | 0 for a block without sprites |
 | `alternates` | u16 | at least 1 when `variants` isn't 0 |
