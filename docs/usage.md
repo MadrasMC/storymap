@@ -1,6 +1,60 @@
 # Usage
 
+```bash
+storymap <save-file> [folder] [options]
+storymap prepare [file] [options]
+```
+
+A render writes tiles and `index.html` to the folder, `out` by default.
 `storymap --help` lists every option.
+
+## Views
+
+Every render draws the top-down map.
+Add `--isometric` to draw the isometric view too.
+The page lets you switch between them.
+
+## Appearance
+
+| option | use |
+| --- | --- |
+| `--theme <theme>` | what draws the page around the map, and the map's style: `printed` (the default), `plain`, or a theme's folder ([Themes](themes.md)) |
+| `--style <style>` | how to draw the map, instead of the theme's style: `relief`, `game`, `game:shaded` or `game:coloured` ([Map style](themes.md#map-style)) |
+| `--season <season>` | tint grass and leaves for `spring`, `summer`, `fall` or `winter`, instead of the season on the save's date |
+| `--name <name>` | the world's name on the page, instead of the save's |
+
+## Tile formats
+
+Tiles are lossless PNG by default.
+
+| option | format |
+| --- | --- |
+| `--webp` | lossless WebP |
+| `--webp --lossy-from <level>` | WebP, lossy from this level up: level 0 is full detail, and level 2 is where blocks are 8 pixels wide |
+| `--jpegxl` | lossless JPEG XL, which not every browser shows |
+
+## Prepared blocks
+
+A render needs the game's and mods' assets, prepared once into a file, `prepared.storyblk` by default.
+The first render that needs it prepares it.
+
+| option | use |
+| --- | --- |
+| `--prepare` | prepare the blocks again before rendering |
+| `--blocks <file>` | the prepared blocks file to use |
+| `--game <folder>` | the game's install folder, if it isn't in the standard place |
+| `--data <folder>` | the game's data folder, if it isn't in the standard place |
+
+`storymap prepare [file]` prepares the file without rendering, and takes `--game` and `--data` too.
+
+## Measuring
+
+| option | use |
+| --- | --- |
+| `--no-write` | draw and encode the tiles without writing anything, to time the rest |
+| `--json` | print the render's times and counts on stdout as one line of JSON |
+
+[Performance](performance.md#measuring) has more.
 
 ## Clipping
 
