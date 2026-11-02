@@ -130,7 +130,7 @@ style game
 
 ## Isometric style
 
-`isometric/style.txt` says how the isometric view (`--isometric`) is drawn, in the same form as `topdown/style.txt`:
+`isometric/style.txt` says how the isometric view (`--views isometric`) is drawn, in the same form as `topdown/style.txt`:
 
 - **`style relief`** draws every block as a cube in its type's colour, darkening and paling with height as the relief map does, with its top, south and east faces lit differently. Colours the file leaves out are the theme's top-down colours, so the Printed theme's is just `style relief`.
 - **`style game`** draws blocks the game draws as plain cubes, such as soil, rock and sand, leaves, as the game draws them at a distance, and water and other liquids, in the game's own textures, and other blocks as cubes in their texture's average colour, with the same lighting of each face. Grass, leaves and water are tinted by the climate where they are and by the season, as in `game:coloured`, `--season` included. It's the Plain theme's style.

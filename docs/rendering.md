@@ -98,7 +98,7 @@ From the sample save (class counts in [`save-format/README.md` §5](save-format/
 
 ## Output: tiles and levels of detail
 
-Storymap renders a world as square tiles for a map viewer, never as one image, like a web map. Every view (the top-down map, the isometric view with `--isometric`, and later one isometric view per direction) is a pyramid of tiles:
+Storymap renders a world as square tiles for a map viewer, never as one image, like a web map. Every view (the top-down map, the isometric view with `--views isometric`, and later one isometric view per direction) is a pyramid of tiles:
 
 - **Tiles are 512 × 512 pixels** in every view and level. In the top-down view's full-detail level that's 512 × 512 blocks, 16 × 16 chunk columns, the same area as a map region (the save's `mapregion` table). In an isometric view a block takes many pixels and a region projects to a slanted diamond, so tiles are defined in pixels, not blocks.
 - **Levels of detail:** level 0 is full detail; each level above halves the resolution, so a level-n tile covers 2ⁿ × 2ⁿ level-0 tiles and a zoomed-out view loads a few tiles. The top level is a single tile covering the whole world, or up to 2 × 2 tiles where the world lies either side of tile position 0: a tile's parent is its position halved and rounded down, which keeps −1 at −1 and 0 at 0, so tiles −1 and 0 never meet. Levels stop where halving brings the tiles no closer: across and down, they're at one position, or at exactly −1 and 0.

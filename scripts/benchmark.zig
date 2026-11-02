@@ -228,7 +228,13 @@ fn measureBuild(arena: std.mem.Allocator, io: Io, storymap: []const u8, blocks: 
     if (std.mem.indexOf(u8, help, "--blocks <file>") != null) try argv.appendSlice(arena, &.{ "--blocks", blocks });
     try argv.appendSlice(arena, &styles);
     if (runs.write) try argv.append(arena, outFolder) else try argv.append(arena, "--no-write");
-    if (runs.isometric) try argv.append(arena, "--isometric");
+    if (runs.isometric) {
+        if (std.mem.indexOf(u8, help, "--views <views>") != null) {
+            try argv.appendSlice(arena, &.{ "--views", "topdown+isometric" });
+        } else {
+            try argv.append(arena, "--isometric");
+        }
+    }
     if (runs.format) |format| try argv.append(arena, format);
     if (runs.lossyFrom) |level| try argv.appendSlice(arena, &.{ "--lossy-from", level });
     try argv.append(arena, "--json");

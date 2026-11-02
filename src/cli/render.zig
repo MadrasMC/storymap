@@ -19,7 +19,7 @@ pub const spec: args.Spec = .{
     .options = &.{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
         .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
-        .{ .name = "isometric", .description = "Also draw the isometric view." },
+        .{ .name = "views", .value = "views", .description = "Which views to draw, joined by +: topdown (the default), isometric, or isometric@rotations, of 0, 90, 180 and 270 joined by commas." },
         .{ .name = "clip", .value = "shape", .description = "Draw only part of the world, around a position as the game shows it: circle:radius@x,z, square:side@x,z or rect:widthxheight@x,z, in blocks, or between two corners, rect:x,z..x,z." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
@@ -61,6 +61,13 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         parseClip(text) orelse console.fail("`--clip`: invalid clip {s}. expected: circle:radius@x,z, square:side@x,z, rect:widthxheight@x,z or rect:x,z..x,z", .{text})
     else
         null;
+    const chosen: Views = if (parsed.value("views")) |text|
+        parseViews(text) orelse console.fail("`--views`: invalid views {s}. expected: topdown, isometric or isometric@0,90,180,270, joined by +", .{text})
+    else
+        .{ .topdown = true };
+    for (chosen.rotations, 0..) |wanted, i| {
+        if (wanted and i != 0) console.fail("`--views`: only isometric@0 can be drawn yet", .{});
+    }
     const paths: prepare.Paths = .{
         .game = parsed.value("game"),
         .data = parsed.value("data"),
@@ -89,23 +96,27 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const opening: std.Io.Timestamp = .now(init.io, .awake);
     var save = try openSaveFile(allocator, init.io, savePath, area);
     defer save.close(allocator);
-    if (season) |chosen| save.seasonProgress = chosen.progress();
+    if (season) |drawn| save.seasonProgress = drawn.progress();
     if (prepared) |*blocks| {
         try warnUnknownBlocks(allocator, &blocks.prepared, &save);
         save.useBlocks(&blocks.prepared);
     }
     const openTime = opening.untilNow(init.io, .awake);
 
-    var topdownStats: topdown.Stats = .{};
-    const written = try topdown.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.topdown }, &topdownStats);
-    defer allocator.free(written);
-    logTopdown(&save, topdownStats);
     var views: std.ArrayList(viewer.View) = .empty;
     defer views.deinit(allocator);
-    try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .format = output.format, .written = written });
+
+    var topdownStats: ?topdown.Stats = null;
+    const writtenTopdown = if (chosen.topdown) list: {
+        topdownStats = .{};
+        break :list try topdown.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.topdown }, &topdownStats.?);
+    } else null;
+    defer if (writtenTopdown) |list| allocator.free(list);
+    if (topdownStats) |stats| logTopdown(&save, stats);
+    if (writtenTopdown) |list| try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .format = output.format, .written = list });
 
     var isometricStats: ?isometric.Stats = null;
-    const writtenIsometric = if (parsed.flag("isometric")) list: {
+    const writtenIsometric = if (chosen.rotations[0]) list: {
         isometricStats = .{};
         const sprites = if (prepared) |*blocks| &blocks.sprites else null;
         break :list try isometric.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.isometric, .sprites = sprites }, &isometricStats.?);
@@ -138,15 +149,15 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .format = @tagName(output.format),
         .chunks = try save.countChunks(),
         .seconds = .{ .blocks = seconds(blocksTime), .open = seconds(openTime), .total = seconds(total) },
-        .topdown = .{
+        .topdown = if (topdownStats) |stats| .{
             .style = try std.fmt.allocPrint(arena, "{f}", .{theme.topdown}),
-            .tiles = topdownStats.tiles,
-            .levels = topdownStats.levels,
-            .chunksRead = topdownStats.chunksRead,
-            .area = topdownStats.area,
-            .seconds = seconds(topdownStats.duration),
-            .workerSeconds = .of(topdownStats.pipeline),
-        },
+            .tiles = stats.tiles,
+            .levels = stats.levels,
+            .chunksRead = stats.chunksRead,
+            .area = stats.area,
+            .seconds = seconds(stats.duration),
+            .workerSeconds = .of(stats.pipeline),
+        } else null,
         .isometric = if (isometricStats) |stats| .{
             .style = try std.fmt.allocPrint(arena, "{f}", .{theme.isometric}),
             .tiles = stats.tiles,
@@ -182,7 +193,7 @@ const Report = struct {
         /// The whole render, from reading the options to writing the page.
         total: f64,
     },
-    topdown: View,
+    topdown: ?View = null,
     isometric: ?View = null,
 
     const View = struct {
@@ -288,6 +299,51 @@ const gameStyles = names: {
 };
 
 const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
+
+/// The views `--views` names.
+const Views = struct {
+    topdown: bool = false,
+    /// Which of the isometric view's rotations, by quarter turn from 0.
+    rotations: [4]bool = @splat(false),
+};
+
+/// The views `--views` names, or null if it isn't a list of them. One named twice is one view.
+fn parseViews(text: []const u8) ?Views {
+    var views: Views = .{};
+    var names = std.mem.splitScalar(u8, text, '+');
+    while (names.next()) |name| {
+        if (std.mem.eql(u8, name, "topdown")) {
+            views.topdown = true;
+        } else if (std.mem.eql(u8, name, "isometric")) {
+            views.rotations[0] = true;
+        } else if (std.mem.startsWith(u8, name, "isometric@")) {
+            var rotations = std.mem.splitScalar(u8, name["isometric@".len..], ',');
+            while (rotations.next()) |rotation| {
+                const degrees = std.fmt.parseInt(u16, rotation, 10) catch return null;
+                if (degrees % 90 != 0 or degrees >= 360) return null;
+                views.rotations[degrees / 90] = true;
+            }
+        } else return null;
+    }
+    return views;
+}
+
+test parseViews {
+    try std.testing.expectEqual(Views{ .topdown = true }, parseViews("topdown").?);
+    const front: Views = .{ .rotations = .{ true, false, false, false } };
+    try std.testing.expectEqual(front, parseViews("isometric").?);
+    try std.testing.expectEqual(front, parseViews("isometric@0").?);
+    try std.testing.expectEqual(Views{ .topdown = true, .rotations = .{ true, false, false, false } }, parseViews("topdown+isometric").?);
+    try std.testing.expectEqual(Views{ .rotations = .{ false, true, false, false } }, parseViews("isometric@90").?);
+    try std.testing.expectEqual(Views{ .rotations = .{ true, true, true, true } }, parseViews("isometric@0,90,180,270").?);
+    try std.testing.expectEqual(Views{ .rotations = .{ true, false, true, false } }, parseViews("isometric@0+isometric@180").?);
+    // Named twice, one view.
+    try std.testing.expectEqual(Views{ .topdown = true }, parseViews("topdown+topdown").?);
+    try std.testing.expectEqual(front, parseViews("isometric@0,0+isometric").?);
+    for ([_][]const u8{ "", "+", "topdown+", "side", "topdown@90", "isometric@", "isometric@45", "isometric@360", "isometric@-90", "isometric@90,", "Isometric" }) |text| {
+        try std.testing.expectEqual(null, parseViews(text));
+    }
+}
 
 /// The area `--clip` names, or null if it isn't one.
 fn parseClip(text: []const u8) ?SaveFile.Area {

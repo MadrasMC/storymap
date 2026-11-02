@@ -10,9 +10,14 @@ A render writes tiles and `index.html` to the folder, `out` by default.
 
 ## Views
 
-Every render draws the top-down map.
-Add `--isometric` to draw the isometric view too.
-The page lets you switch between them.
+`--views` chooses what to draw, `topdown` by default.
+Join views with `+`, and the page lets you switch between them.
+
+| form | views |
+| --- | --- |
+| `--views topdown` | the top-down map |
+| `--views isometric` | the isometric view, the same as `isometric@0` |
+| `--views topdown+isometric` | both |
 
 ## Appearance
 
@@ -66,4 +71,4 @@ Use `--clip` to draw a part of a world. 3 shapes are supported, as in the table 
 |Example| `--clip circle:100@196,-5964` | `--clip square:200@222,-5938` | `--clip rect:300x120@272,-5978` |
 |Render| ![A round cut of a hillside](usage/clip-circle.png) | ![A square cut of the same hillside](usage/clip-square.png) | ![A long cut of the same hillside](usage/clip-rect.png) |
 
-> Examples drawn with `--isometric --theme plain`.
+> Examples drawn with `--views isometric --theme plain`.
