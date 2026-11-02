@@ -452,7 +452,7 @@ const Images = struct {
         entry.value_ptr.* = null;
         const made = try self.make(layer, path) orelse return null;
         const image = try self.arena.create(Image);
-        image.* = .{ .width = made.width, .height = made.height, .pixels = try self.arena.dupe([4]u8, made.pixels) };
+        image.* = made;
         try self.made.append(arena, image);
         entry.value_ptr.* = self.made.items.len - 1;
         return entry.value_ptr.*;
@@ -470,17 +470,19 @@ const Images = struct {
         return entry.value_ptr.*;
     }
 
+    /// The layer's image in `arena`, whichever step's image is the last, so it's copied no further.
     fn make(self: *Images, layer: BlockTypes.Layer, path: []const u8) !?Image {
         const scratch = self.textures.scratch;
+        const turned = layer.quarterTurns != 0;
         const png = try self.textures.assets.read(scratch, self.textures.io, domainOf(layer.base), path) orelse return null;
-        var image = try decode(scratch, png) orelse return null;
-        if (layer.half) |half| image = halfOf(scratch, image, half) orelse return null;
+        var image = try decode(if (layer.half == null and !turned) self.arena else scratch, png) orelse return null;
+        if (layer.half) |half| image = halfOf(if (turned) scratch else self.arena, image, half) orelse return null;
         // An overlay that can't be read is left out, as the game leaves out a missing texture.
         for (layer.overlays) |location| {
             const overlay = try self.readOverlay(location) orelse continue;
             drawOver(@constCast(image.pixels), image.width, image.height, overlay);
         }
-        return try rotate(scratch, image, layer.quarterTurns);
+        return try rotate(self.arena, image, layer.quarterTurns);
     }
 };
 
