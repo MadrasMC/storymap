@@ -27,7 +27,7 @@
 	zig build run -Doptimize=ReleaseFast -- path/to/save.vcdbs out
 	```
 
-	Saves are in the game's data folder, under `Saves/` (`%APPDATA%\VintagestoryData\Saves` on Windows). Add `--theme plain` for a simpler page, with the map drawn as the game draws its own, or [make your own](docs/themes.md). To draw only part of a world, add `--around 409,-304 --radius 500`, with a position as the game shows it: Storymap draws the chunks that reach that far.
+	Saves are in the game's data folder, under `Saves/` (`%APPDATA%\VintagestoryData\Saves` on Windows). Add `--theme plain` for a simpler page, with the map drawn as the game draws its own, or [make your own](docs/themes.md). To draw only part of a world, add `--clip circle:500@409,-304`, a radius around a position as the game shows it, or `--clip rect:800x400@409,-304`, or `rect:800` for a square.
 3. Open `out/index.html` in your browser.
 
 Tested with saves from Vintage Story 1.19 and 1.22.7.

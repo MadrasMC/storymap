@@ -55,14 +55,23 @@ pub const Problem = struct {
     };
 };
 
-/// Part of a world: the chunk columns within `radius` blocks of (x, z), a position as the game
-/// shows it, from the world's centre.
+/// Part of a world: a shape around (x, z), a position as the game shows it, from the world's
+/// centre.
 pub const Area = struct {
     x: i64,
     z: i64,
-    radius: u32,
+    shape: Shape,
 
-    /// Whether any of `column`'s blocks are in the area, in a world of the size given.
+    pub const Shape = union(enum) {
+        /// Its radius, in blocks.
+        circle: u32,
+        /// Its size in blocks along x and z, at least 1. An even one reaches a block further
+        /// west and north of the centre than east and south.
+        rect: struct { width: u32, height: u32 },
+    };
+
+    /// Whether any of `column`'s blocks are in the area, in a world of the size given: if any
+    /// are, so is the one nearest the centre.
     fn reaches(self: Area, column: world.ChunkColumn, worldWidth: u64, worldLength: u64) bool {
         const x = self.x + @as(i64, @intCast(worldWidth / 2));
         const z = self.z + @as(i64, @intCast(worldLength / 2));
@@ -74,9 +83,18 @@ pub const Area = struct {
     /// Whether block column (x, z), a position in the save, is in the area. The game shows
     /// positions shifted from the save's by half the world's size.
     fn contains(self: Area, x: i64, z: i64, worldWidth: u64, worldLength: u64) bool {
-        const dx = @abs(self.x + @as(i64, @intCast(worldWidth / 2)) - x);
-        const dz = @abs(self.z + @as(i64, @intCast(worldLength / 2)) - z);
-        return dx * dx + dz * dz <= @as(u64, self.radius) * self.radius;
+        const eastward = x - (self.x + @as(i64, @intCast(worldWidth / 2)));
+        const southward = z - (self.z + @as(i64, @intCast(worldLength / 2)));
+        return switch (self.shape) {
+            .circle => |radius| @abs(eastward) * @abs(eastward) + @abs(southward) * @abs(southward) <= @as(u64, radius) * radius,
+            .rect => |size| isWithin(eastward, size.width) and isWithin(southward, size.height),
+        };
+    }
+
+    /// Whether `offset` from the centre of a span `size` blocks long is on it.
+    fn isWithin(offset: i64, size: u32) bool {
+        const first = -@as(i64, size / 2);
+        return offset >= first and offset < first + size;
     }
 };
 
@@ -486,7 +504,7 @@ test clipChunk {
     @memset(&chunk.solid, 7);
     @memset(&chunk.liquid, 8);
     // The game's 0, 0 is block (1024, 1024), the north-west corner of chunk (32, 32).
-    clipChunk(chunk, 32, 32, .{ .x = 0, .z = 0, .radius = 5 }, 2048, 2048);
+    clipChunk(chunk, 32, 32, .{ .x = 0, .z = 0, .shape = .{ .circle = 5 } }, 2048, 2048);
     const side = world.Chunk.side;
     const at = struct {
         fn place(y: usize, z: usize, x: usize) usize {
@@ -521,16 +539,29 @@ test keepColumns {
         .{ .x = 34, .z = 34 },
     };
     // The next column east starts 32 blocks away, and one 3 columns on 96.
-    const kept = keepColumns(&columns, .{ .x = 0, .z = 0, .radius = 32 }, 2048, 2048);
+    const kept = keepColumns(&columns, .{ .x = 0, .z = 0, .shape = .{ .circle = 32 } }, 2048, 2048);
     try std.testing.expectEqualSlices(world.ChunkColumn, &.{ .{ .x = 32, .z = 32 }, .{ .x = 33, .z = 32 }, .{ .x = 32, .z = 31 } }, columns[0..kept]);
     // Not a square: this one's corner is 64 blocks east and south, more than 80 away.
     var corner = [_]world.ChunkColumn{.{ .x = 34, .z = 34 }};
-    try std.testing.expectEqual(0, keepColumns(&corner, .{ .x = 0, .z = 0, .radius = 80 }, 2048, 2048));
-    try std.testing.expectEqual(1, keepColumns(&corner, .{ .x = 0, .z = 0, .radius = 91 }, 2048, 2048));
+    try std.testing.expectEqual(0, keepColumns(&corner, .{ .x = 0, .z = 0, .shape = .{ .circle = 80 } }, 2048, 2048));
+    try std.testing.expectEqual(1, keepColumns(&corner, .{ .x = 0, .z = 0, .shape = .{ .circle = 91 } }, 2048, 2048));
+    // A rectangle takes it in where a circle of its width doesn't.
+    try std.testing.expectEqual(1, keepColumns(&corner, .{ .x = 0, .z = 0, .shape = .{ .rect = .{ .width = 130, .height = 130 } } }, 2048, 2048));
     // Positions west of the centre are negative.
     var west = [_]world.ChunkColumn{.{ .x = 30, .z = 32 }};
-    try std.testing.expectEqual(1, keepColumns(&west, .{ .x = -64, .z = 0, .radius = 0 }, 2048, 2048));
-    try std.testing.expectEqual(0, keepColumns(&west, .{ .x = 64, .z = 0, .radius = 0 }, 2048, 2048));
+    try std.testing.expectEqual(1, keepColumns(&west, .{ .x = -64, .z = 0, .shape = .{ .circle = 0 } }, 2048, 2048));
+    try std.testing.expectEqual(0, keepColumns(&west, .{ .x = 64, .z = 0, .shape = .{ .circle = 0 } }, 2048, 2048));
+}
+
+test "Area.contains a rectangle" {
+    const area: Area = .{ .x = 0, .z = 0, .shape = .{ .rect = .{ .width = 4, .height = 3 } } };
+    // Even: 2 blocks west of the centre and 1 east. Odd: 1 each way.
+    try std.testing.expect(area.contains(1022, 1023, 2048, 2048));
+    try std.testing.expect(area.contains(1025, 1025, 2048, 2048));
+    try std.testing.expect(!area.contains(1021, 1024, 2048, 2048));
+    try std.testing.expect(!area.contains(1026, 1024, 2048, 2048));
+    try std.testing.expect(!area.contains(1024, 1022, 2048, 2048));
+    try std.testing.expect(!area.contains(1024, 1026, 2048, 2048));
 }
 
 /// The top-down tiles holding `columns`. A tile of only partly generated columns comes out

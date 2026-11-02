@@ -20,8 +20,7 @@ pub const spec: args.Spec = .{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
         .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
         .{ .name = "isometric", .description = "Also draw the isometric view." },
-        .{ .name = "around", .value = "x,z", .description = "Draw only the chunks around this position, as the game shows it. Needs --radius." },
-        .{ .name = "radius", .value = "blocks", .description = "With --around, how far from it to draw." },
+        .{ .name = "clip", .value = "shape", .description = "Draw only part of the world, around a position as the game shows it: circle:radius@x,z, rect:width@x,z or rect:widthxheight@x,z, in blocks." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
         .{ .name = "jpegxl", .description = "Encode the tiles as lossless JPEG XL instead of PNG, which not every browser shows." },
@@ -58,7 +57,10 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         std.meta.stringToEnum(SaveFile.Season, name) orelse console.fail("`--season`: unknown season {s}. expected: spring, summer, fall, winter", .{name})
     else
         null;
-    const area = parseArea(parsed.value("around"), parsed.value("radius"));
+    const area: ?SaveFile.Area = if (parsed.value("clip")) |text|
+        parseClip(text) orelse console.fail("`--clip`: invalid clip {s}. expected: circle:radius@x,z or rect:width[xheight]@x,z", .{text})
+    else
+        null;
     const paths: prepare.Paths = .{
         .game = parsed.value("game"),
         .data = parsed.value("data"),
@@ -287,17 +289,36 @@ const gameStyles = names: {
 
 const styleNames = Style.storymapNames ++ ", game, " ++ gameStyles;
 
-/// The area `--around` and `--radius` name; null with neither. Stops the program if they're wrong.
-fn parseArea(around: ?[]const u8, radius: ?[]const u8) ?SaveFile.Area {
-    if (around == null and radius == null) return null;
-    if (around == null or radius == null) console.fail("`--around` and `--radius`: give both", .{});
-    const invalid = "`--around`: invalid position {s}. expected: x,z";
-    const comma = std.mem.indexOfScalar(u8, around.?, ',') orelse console.fail(invalid, .{around.?});
+/// The area `--clip` names, or null if it isn't one.
+fn parseClip(text: []const u8) ?SaveFile.Area {
+    const colon = std.mem.indexOfScalar(u8, text, ':') orelse return null;
+    const at = std.mem.indexOfScalarPos(u8, text, colon, '@') orelse return null;
+    const size = text[colon + 1 .. at];
+    const position = text[at + 1 ..];
+    const comma = std.mem.indexOfScalar(u8, position, ',') orelse return null;
+    const shape: SaveFile.Area.Shape = if (std.mem.eql(u8, text[0..colon], "circle"))
+        .{ .circle = std.fmt.parseInt(u32, size, 10) catch return null }
+    else if (std.mem.eql(u8, text[0..colon], "rect")) rect: {
+        const by = std.mem.indexOfScalar(u8, size, 'x');
+        const width = std.fmt.parseInt(u32, size[0 .. by orelse size.len], 10) catch return null;
+        const height = if (by) |i| std.fmt.parseInt(u32, size[i + 1 ..], 10) catch return null else width;
+        if (width == 0 or height == 0) return null;
+        break :rect .{ .rect = .{ .width = width, .height = height } };
+    } else return null;
     return .{
-        .x = std.fmt.parseInt(i64, around.?[0..comma], 10) catch console.fail(invalid, .{around.?}),
-        .z = std.fmt.parseInt(i64, around.?[comma + 1 ..], 10) catch console.fail(invalid, .{around.?}),
-        .radius = std.fmt.parseInt(u32, radius.?, 10) catch console.fail("`--radius`: invalid radius {s}. expected: blocks", .{radius.?}),
+        .x = std.fmt.parseInt(i64, position[0..comma], 10) catch return null,
+        .z = std.fmt.parseInt(i64, position[comma + 1 ..], 10) catch return null,
+        .shape = shape,
     };
+}
+
+test parseClip {
+    try std.testing.expectEqual(SaveFile.Area{ .x = 220, .z = -5997, .shape = .{ .circle = 100 } }, parseClip("circle:100@220,-5997").?);
+    try std.testing.expectEqual(SaveFile.Area{ .x = -1, .z = 2, .shape = .{ .rect = .{ .width = 300, .height = 100 } } }, parseClip("rect:300x100@-1,2").?);
+    try std.testing.expectEqual(SaveFile.Area{ .x = 0, .z = 0, .shape = .{ .rect = .{ .width = 200, .height = 200 } } }, parseClip("rect:200@0,0").?);
+    for ([_][]const u8{ "", "abc", "circle:100", "circle:100@1", "circle:x@1,2", "circle:-1@1,2", "circle:1x2@1,2", "oval:1@1,2", "rect:0@1,2", "rect:1x0@1,2", "rect:1x@1,2", "rect:2@1,z" }) |text| {
+        try std.testing.expectEqual(null, parseClip(text));
+    }
 }
 
 /// A save that can't be read stops the program with a message saying why.
@@ -308,7 +329,7 @@ fn openSaveFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, area
             .unopenable => console.fail("{s}: could not open ({s})", .{ path, @errorName(problem.cause.?) }),
             .notASave => console.fail("{s}: not a Vintage Story save ({s})", .{ path, @errorName(problem.cause.?) }),
             .noChunks => console.fail("{s}: no chunks to draw", .{path}),
-            .noChunksInArea => console.fail("{s}: no chunks within {} blocks of {},{}", .{ path, area.?.radius, area.?.x, area.?.z }),
+            .noChunksInArea => console.fail("{s}: no chunks to draw in `--clip`", .{path}),
             .unreadableBlockList => console.fail("{s}: could not read the block list ({s})", .{ path, @errorName(problem.cause.?) }),
         },
         else => return err,
