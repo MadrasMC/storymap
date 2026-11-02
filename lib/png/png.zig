@@ -2,6 +2,7 @@
 //! up its buffers once, for the largest image it will take.
 const std = @import("std");
 const flate = std.compress.flate;
+const Writer = std.Io.Writer;
 const PixelDeflate = @import("PixelDeflate.zig");
 
 pub const Options = struct {
@@ -110,14 +111,7 @@ pub const Encoder = struct {
     pub fn compress(self: *Encoder) ![]const u8 {
         const width = self.filteredWidth;
         const height = self.filteredHeight;
-        const signature = "\x89PNG\r\n\x1a\n";
-        @memcpy(self.out[0..8], signature);
-        var header: [13]u8 = undefined;
-        std.mem.writeInt(u32, header[0..4], width, .big);
-        std.mem.writeInt(u32, header[4..8], height, .big);
-        // 8 bits per channel, RGBA, deflate, adaptive filtering, no interlacing.
-        header[8..13].* = .{ 8, 6, 0, 0, 0 };
-        var end = 8 + writeChunk(self.out[8..], "IHDR", &header);
+        var end = writeHeader(self.out[0..headerBytes], width, height);
 
         // The image data's length and type are filled in once it's compressed.
         const data = end + 8;
@@ -140,7 +134,138 @@ pub const Encoder = struct {
         end += writeChunk(self.out[end..], "IEND", "");
         return self.out[0..end];
     }
+};
 
+/// Encodes a PNG into a writer a row at a time, so an image of any height takes no more memory
+/// than two of its rows, deflate's history and one chunk of image data. It allocates nothing
+/// while encoding, and can encode one image after another. Filtering and `Options.level` are as
+/// `Encoder`'s; `Compressor.pixels` takes a whole image, so it isn't offered.
+pub const RowEncoder = struct {
+    width: u32,
+    level: flate.Compress.Options,
+    /// The row being filtered and the one above it, as `Encoder.padded`, taking turns in
+    /// `paddedRows`.
+    padded: [2][]u8,
+    paddedRows: []u8,
+    /// The row last filtered, with its filter type first.
+    filtered: []u8,
+    /// Deflate's history.
+    window: []u8,
+    deflate: *flate.Compress,
+    chunks: Chunks,
+    rowWidth: u32 = 0,
+    rowsLeft: u32 = 0,
+
+    /// How much image data goes in a chunk.
+    const chunkBytes = 1 << 16;
+
+    /// A writer that sends what's written to `out` as `IDAT` chunks, one each time it fills.
+    const Chunks = struct {
+        out: *Writer,
+        writer: Writer,
+
+        const vtable: Writer.VTable = .{ .drain = drain };
+
+        fn writeChunkOut(self: *Chunks) Writer.Error!void {
+            const data = self.writer.buffered();
+            if (data.len == 0) return;
+            var prefix: [8]u8 = undefined;
+            std.mem.writeInt(u32, prefix[0..4], @intCast(data.len), .big);
+            @memcpy(prefix[4..8], "IDAT");
+            var crc: std.hash.Crc32 = .init();
+            crc.update(prefix[4..8]);
+            crc.update(data);
+            try self.out.writeAll(&prefix);
+            try self.out.writeAll(data);
+            try self.out.writeInt(u32, crc.final(), .big);
+            self.writer.end = 0;
+        }
+
+        /// Sends what's buffered as a chunk, and takes the first of `data` into the buffer.
+        fn drain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+            const self: *Chunks = @fieldParentPtr("writer", w);
+            try self.writeChunkOut();
+            for (data[0 .. data.len - 1]) |bytes| {
+                if (bytes.len > 0) return w.write(bytes);
+            }
+            const pattern = data[data.len - 1];
+            return if (splat == 0 or pattern.len == 0) 0 else w.write(pattern);
+        }
+    };
+
+    /// An encoder for images of up to `width` pixels wide, of any height. It must stay where it
+    /// is while encoding.
+    pub fn init(allocator: std.mem.Allocator, width: u32, level: flate.Compress.Options) !RowEncoder {
+        const paddedBytes = 4 + @as(usize, width) * 4;
+        const padded = try allocator.alloc(u8, 2 * paddedBytes);
+        errdefer allocator.free(padded);
+        const filtered = try allocator.alloc(u8, 1 + @as(usize, width) * 4);
+        errdefer allocator.free(filtered);
+        const window = try allocator.alloc(u8, flate.max_window_len);
+        errdefer allocator.free(window);
+        const deflate = try allocator.create(flate.Compress);
+        errdefer allocator.destroy(deflate);
+        const chunk = try allocator.alloc(u8, chunkBytes);
+        return .{
+            .width = width,
+            .level = level,
+            .padded = .{ padded[0..paddedBytes], padded[paddedBytes..] },
+            .paddedRows = padded,
+            .filtered = filtered,
+            .window = window,
+            .deflate = deflate,
+            .chunks = .{ .out = undefined, .writer = .{ .vtable = &Chunks.vtable, .buffer = chunk } },
+        };
+    }
+
+    pub fn deinit(self: RowEncoder, allocator: std.mem.Allocator) void {
+        allocator.free(self.chunks.writer.buffer);
+        allocator.destroy(self.deflate);
+        allocator.free(self.window);
+        allocator.free(self.filtered);
+        allocator.free(self.paddedRows);
+    }
+
+    /// Starts an image of `width` × `height` pixels in `out`, which `writeRow` and `finish` go on
+    /// writing to.
+    pub fn begin(self: *RowEncoder, out: *Writer, width: u32, height: u32) Writer.Error!void {
+        std.debug.assert(width <= self.width);
+        self.rowWidth = width;
+        self.rowsLeft = height;
+        // The row above the first is all zero, and so is the pixel left of every row.
+        @memset(self.padded[0][0..4], 0);
+        @memset(self.padded[1][0 .. 4 + @as(usize, width) * 4], 0);
+        var header: [headerBytes]u8 = undefined;
+        try out.writeAll(header[0..writeHeader(&header, width, height)]);
+        self.chunks.out = out;
+        self.chunks.writer.end = 0;
+        self.deflate.* = try .init(&self.chunks.writer, self.window, .zlib, self.level);
+    }
+
+    /// Adds the next row, `width` pixels of red, green, blue and alpha bytes.
+    pub fn writeRow(self: *RowEncoder, row: []const u8) Writer.Error!void {
+        const rowBytes = @as(usize, self.rowWidth) * 4;
+        std.debug.assert(row.len == rowBytes and self.rowsLeft > 0);
+        const current = self.padded[0][0 .. 4 + rowBytes];
+        const above = self.padded[1][0 .. 4 + rowBytes];
+        @memcpy(current[4..], row);
+        const filtered = self.filtered[0 .. 1 + rowBytes];
+        filterRow(current, above, filtered);
+        try self.deflate.writer.writeAll(filtered);
+        std.mem.swap([]u8, &self.padded[0], &self.padded[1]);
+        @memset(self.padded[0][0..4], 0);
+        self.rowsLeft -= 1;
+    }
+
+    /// Ends the image, all of whose rows have been added. Flushing `out` is left to the caller.
+    pub fn finish(self: *RowEncoder) Writer.Error!void {
+        std.debug.assert(self.rowsLeft == 0);
+        try self.deflate.finish();
+        try self.chunks.writer.flush();
+        var end: [12]u8 = undefined;
+        _ = writeChunk(&end, "IEND", "");
+        try self.chunks.out.writeAll(&end);
+    }
 };
 
 /// Bytes a filter works on at once.
@@ -244,6 +369,20 @@ fn paeth(a: u8, b: u8, c: u8) u8 {
     return if (pb <= pc) b else c;
 }
 
+/// The bytes of a PNG's signature and `IHDR` chunk.
+const headerBytes = 8 + 12 + 13;
+
+/// Writes a PNG's signature and `IHDR` chunk at the start of `out`, and returns their length.
+fn writeHeader(out: *[headerBytes]u8, width: u32, height: u32) usize {
+    @memcpy(out[0..8], "\x89PNG\r\n\x1a\n");
+    var header: [13]u8 = undefined;
+    std.mem.writeInt(u32, header[0..4], width, .big);
+    std.mem.writeInt(u32, header[4..8], height, .big);
+    // 8 bits per channel, RGBA, deflate, adaptive filtering, no interlacing.
+    header[8..13].* = .{ 8, 6, 0, 0, 0 };
+    return 8 + writeChunk(out[8..], "IHDR", &header);
+}
+
 /// Writes a chunk of `kind` holding `data` at the start of `out`, and returns its length.
 fn writeChunk(out: []u8, comptime kind: *const [4]u8, data: []const u8) usize {
     std.mem.writeInt(u32, out[0..4], @intCast(data.len), .big);
@@ -272,18 +411,43 @@ fn expectPng(compressor: Compressor) !void {
     try std.testing.expectEqualStrings("IHDR", png[12..16]);
     try std.testing.expectEqualStrings("IEND", png[png.len - 8 .. png.len - 4]);
 
-    // The image data decompresses to the filtered rows, which unfilter to the pixels.
-    const length = std.mem.readInt(u32, png[33..37], .big);
-    var input: std.Io.Reader = .fixed(png[41..][0..length]);
+    try expectPixels(png, &pixels, 4, 3);
+}
+
+/// Checks that `png`'s chunks are whole, and that its image data, in as many chunks as it has,
+/// decompresses to filtered rows that unfilter to `pixels`.
+fn expectPixels(png: []const u8, pixels: []const u8, width: usize, height: usize) !void {
+    const allocator = std.testing.allocator;
+    var data: std.ArrayList(u8) = .empty;
+    defer data.deinit(allocator);
+    var at: usize = 8;
+    var ended = false;
+    while (at < png.len) {
+        const length = std.mem.readInt(u32, png[at..][0..4], .big);
+        const kind = png[at + 4 ..][0..4];
+        const crc = std.mem.readInt(u32, png[at + 8 + length ..][0..4], .big);
+        try std.testing.expectEqual(std.hash.Crc32.hash(png[at + 4 .. at + 8 + length]), crc);
+        if (std.mem.eql(u8, kind, "IDAT")) try data.appendSlice(allocator, png[at + 8 ..][0..length]);
+        ended = std.mem.eql(u8, kind, "IEND");
+        at += 12 + length;
+    }
+    try std.testing.expect(ended);
+
+    var input: std.Io.Reader = .fixed(data.items);
     var buffer: [flate.max_window_len]u8 = undefined;
     var decompress: flate.Decompress = .init(&input, .zlib, &buffer);
-    var rows: [3 * (1 + 4 * 4)]u8 = undefined;
-    try decompress.reader.readSliceAll(&rows);
-    var previous: [16]u8 = @splat(0);
-    for (0..3) |y| {
-        const row = rows[y * 17 ..][0..17];
-        var line: [16]u8 = undefined;
-        for (0..16) |i| {
+    const rowBytes = width * 4;
+    const rows = try allocator.alloc(u8, height * (1 + rowBytes));
+    defer allocator.free(rows);
+    try decompress.reader.readSliceAll(rows);
+    const line = try allocator.alloc(u8, rowBytes);
+    defer allocator.free(line);
+    const previous = try allocator.alloc(u8, rowBytes);
+    defer allocator.free(previous);
+    @memset(previous, 0);
+    for (0..height) |y| {
+        const row = rows[y * (1 + rowBytes) ..][0 .. 1 + rowBytes];
+        for (0..rowBytes) |i| {
             const a: u8 = if (i >= 4) line[i - 4] else 0;
             const b = previous[i];
             const c: u8 = if (i >= 4) previous[i - 4] else 0;
@@ -296,9 +460,50 @@ fn expectPng(compressor: Compressor) !void {
             };
             line[i] = row[1 + i] +% predicted;
         }
-        try std.testing.expectEqualSlices(u8, pixels[y * 16 ..][0..16], &line);
-        previous = line;
+        try std.testing.expectEqualSlices(u8, pixels[y * rowBytes ..][0..rowBytes], line);
+        @memcpy(previous, line);
     }
+}
+
+test RowEncoder {
+    const allocator = std.testing.allocator;
+    var encoder: RowEncoder = try .init(allocator, 300, .level_4);
+    defer encoder.deinit(allocator);
+    var prng: std.Random.DefaultPrng = .init(1);
+    const random = prng.random();
+
+    // Noise doesn't compress, so this takes many chunks; then a narrower image from the same
+    // encoder, which starts afresh.
+    for ([_][2]u32{ .{ 300, 200 }, .{ 7, 5 }, .{ 300, 1 } }) |size| {
+        const width = size[0];
+        const height = size[1];
+        const pixels = try allocator.alloc(u8, @as(usize, width) * height * 4);
+        defer allocator.free(pixels);
+        random.bytes(pixels);
+        var out: Writer.Allocating = .init(allocator);
+        defer out.deinit();
+        try encoder.begin(&out.writer, width, height);
+        for (0..height) |y| try encoder.writeRow(pixels[y * width * 4 ..][0 .. width * 4]);
+        try encoder.finish();
+        const png = out.written();
+        try std.testing.expectEqualStrings("\x89PNG\r\n\x1a\n", png[0..8]);
+        try expectPixels(png, pixels, width, height);
+        if (height == 200) try std.testing.expect(std.mem.count(u8, png, "IDAT") >= 3);
+    }
+
+    // The same pixels as `Encoder` gives, whatever the rows are split into.
+    const width = 16;
+    const height = 9;
+    var pixels: [width * height * 4]u8 = undefined;
+    for (&pixels, 0..) |*byte, i| byte.* = @intCast(i * 3 % 251);
+    var whole: Encoder = try .init(allocator, width, height, .{ .level = .level_4 });
+    defer whole.deinit(allocator);
+    var out: Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try encoder.begin(&out.writer, width, height);
+    for (0..height) |y| try encoder.writeRow(pixels[y * width * 4 ..][0 .. width * 4]);
+    try encoder.finish();
+    try std.testing.expectEqualSlices(u8, try whole.encode(&pixels, width, height), out.written());
 }
 
 test filterRow {
