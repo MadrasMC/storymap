@@ -1,10 +1,11 @@
 # Memory of `storymap prepare`
 
-How the peak memory of `storymap prepare` changed when the prepared blocks moved from a folder of files to one `.storyblk` file, and the changes that brought it from 2,385 MB to 92 MB.
+How the peak memory of `storymap prepare` changed when the prepared blocks moved from a folder of files to one `.storyblk` file, the changes that brought it from 2,385 MB to 92 MB, and what drawing every rotation added to it.
 
 ## Measurements
 
 All figures are for preparing Vintage Story 1.22.7 with one mod, Primitive Survival 5.1.4: 14,781 blocks and 55,096 sprites, in a 196 MB file, on Windows in a ReleaseFast build.
+From 4a5c21c on, it's 55,559 sprites in each rotation.
 
 | term | meaning |
 | --- | --- |
@@ -33,8 +34,10 @@ Arena figures come from `queryCapacity` and counting allocators in throwaway bui
 | d089f5f | sprites drawn into a mapped partial file | 117 MB | 126 MB |
 | 5f343d6 | per-file arena capped, entries grown outside an arena | 92 MB | 126 MB |
 | d97fc40 | sprites written from a 1 MiB buffer instead of a mapped window | 92 MB | 73 MB |
+| 4a5c21c | a cube's north and west faces kept | 99 MB | 77 MB |
+| fe4cb32 | every rotation drawn, identical pixels shared | 116 MB | 84 MB |
 
-Reading stayed at about 2 s throughout, and drawing at about 5 s, perhaps 0.2 s slower with the mapped file.
+Up to 4a5c21c, reading stayed at about 2 s, and drawing at about 5 s, perhaps 0.2 s slower with the mapped file.
 From 83bfd70 on, each step's file was compared byte for byte with the last commit's and matched, apart from colour maps changing format in dd06565, and 8490221, which was compared between `storymap prepare` and a render instead.
 The switch itself changed 9,527 of the 55,096 sprites a little, and 57 in size, as the text format rounded boxes and texture coordinates to 1/100,000 and the file keeps them exact: with that rounding put back, every sprite matched byte for byte.
 
@@ -177,6 +180,24 @@ Nothing above `FileBuffer` changed, and the file stayed byte-identical.
 
 A full disk is now an ordinary write error on every system.
 
+### Every rotation
+
+The file now holds the isometric view in 4 rotations, 222,236 sprites, of which 83,384 are unique.
+Each sprite is hashed as it's drawn, in the buffer, and one seen before is taken back out of it, so pixels still go to the file as they're drawn.
+The entries and the table of hashes are sized once, from the plan.
+
+| over 3 alternating runs | one rotation | every rotation |
+| --- | --- | --- |
+| private | 99 MB | 116 MB |
+| working set | 77 MB | 84 MB |
+| drawing | 5.2 s | 21.2 s |
+| file | 198.7 MB | 337.6 MB |
+
+Reading didn't change, so the 17 MB is after it, but it hasn't been broken down.
+Without sharing, the pixels alone would be 784 MB, not 333 MB.
+
+These two runs used the system's peak counters after the process exited, with both binaries in one folder.
+
 ## Estimates and measurements
 
 Several estimates made along the way were wrong, and measuring settled each one.
@@ -203,6 +224,7 @@ Several estimates made along the way were wrong, and measuring settled each one.
 
 ## Remaining
 
-At 92 MB, the peak is in reading, and drawing needs 64 MB.
+At 116 MB, the peak is past reading, as drawing every rotation raised it.
+Drawing still takes about 4 times as long, as every sprite is drawn before it can be compared: skipping turned plants, which are mostly other turns of themselves, would save about 30% of the sprites.
 
 Only Windows has run this: Linux and macOS have only been compiled, and only one mod has been tried (`TODO.md`, items 13 and 14).
