@@ -16,7 +16,7 @@ comptime {
 }
 
 /// How the sprites are drawn: raise it when that changes, so files drawn before are drawn again.
-pub const generatorVersion: u16 = 4;
+pub const generatorVersion: u16 = 5;
 /// The layout of both sections (spec §7).
 pub const layoutVersion: u8 = 1;
 

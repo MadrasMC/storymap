@@ -42,7 +42,7 @@ pub const Block = struct {
     randomizeRotations: bool = false,
     /// How many eighths of a block of snow the game draws under it, by its drawtype.
     snowLayer: u8 = 0,
-    /// Water or ice the game draws see-through (`renderpass`).
+    /// Glass, or water or ice the game draws see-through (`renderpass`).
     seeThrough: bool = false,
 };
 
@@ -346,9 +346,11 @@ fn describe(arena: std.mem.Allocator, json: Json.Value, variant: Variant, shapes
     };
 }
 
-/// Whether a block of `material` is water or ice in a see-through render pass. Packed ice is
-/// drawn opaque, and lava, drawn in the pass of water, is no material here.
+/// Whether a block of `material` is glass, or water or ice in a see-through render pass. Packed
+/// ice is drawn opaque, and lava, drawn in the pass of water, is no material here. Glass panes
+/// name no pass: their textures say how opaque they are.
 fn isSeeThrough(arena: std.mem.Allocator, json: Json.Value, variant: Variant, material: []const u8) !bool {
+    if (std.mem.eql(u8, material, "Glass")) return true;
     if (!std.mem.eql(u8, material, "Water") and !std.mem.eql(u8, material, "Ice")) return false;
     const value = try property(arena, json, "renderpass", variant) orelse return false;
     const pass = value.asString() orelse return false;
@@ -1694,8 +1696,9 @@ test "the cube a block is drawn as" {
         try std.testing.expectEqualStrings("game:b", cross.shapes[0].textures[1].plain.?.base);
     }
 
-    // Water and ice in a see-through render pass, and nothing else.
+    // Glass, water and ice in a see-through render pass, and nothing else.
     const seeThrough = [_]struct { json: []const u8, material: []const u8, expected: bool }{
+        .{ .json = "{ }", .material = "Glass", .expected = true },
         .{ .json = "{ renderpass: 'liquid' }", .material = "Water", .expected = true },
         .{ .json = "{ renderpass: 'transparent' }", .material = "Ice", .expected = true },
         .{ .json = "{ renderpass: 'Opaque' }", .material = "Ice", .expected = false },

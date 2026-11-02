@@ -24,6 +24,10 @@ pub const Target = struct {
     depths: []f32,
     /// 0 where nothing is drawn.
     tags: []u8,
+    /// Whether how opaque a texture is counts: what covers a pixel is layered with what's there,
+    /// as glass needs. Otherwise a texel is drawn or left out, by whether it's at least half
+    /// opaque.
+    keepsOpacity: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, width: usize, height: usize) !Target {
         const colours = try allocator.alloc([4]u8, width * height);
@@ -50,7 +54,8 @@ pub const Target = struct {
 };
 
 /// Draws the triangle in `texture`, lit by `light` 256ths, on each pixel whose middle it covers
-/// where its texel there is at least half opaque and it's nearer than what the pixel shows.
+/// where its texel there is at least half opaque and it's nearer than what the pixel shows, or
+/// with `Target.keepsOpacity`, layered with what's there.
 pub fn triangle(target: *Target, corners: [3]Corner, texture: *const world.Image, light: u16, tag: u8) void {
     const a = corners[0];
     const b = corners[1];
@@ -73,14 +78,46 @@ pub fn triangle(target: *Target, corners: [3]Corner, texture: *const world.Image
         if (wa < 0 or wb < 0 or wc < 0) continue;
         const p = row * target.width + column;
         const depth = wa * a.depth + wb * b.depth + wc * c.depth;
-        if (depth <= target.depths[p]) continue;
+        if (!target.keepsOpacity and depth <= target.depths[p]) continue;
         const texel = texelAt(texture, wa * a.u + wb * b.u + wc * c.u, wa * a.v + wb * b.v + wc * c.v);
-        if (texel[3] < 128) continue;
+        if (texel[3] < (if (target.keepsOpacity) @as(u8, 1) else 128)) continue;
+        var colour: [4]u8 = .{ 0, 0, 0, if (target.keepsOpacity) texel[3] else 255 };
+        for (0..3) |i| colour[i] = @intCast(@min(255, @as(u32, texel[i]) * light / 256));
+        if (target.keepsOpacity and target.tags[p] != 0) {
+            const nearer = depth > target.depths[p];
+            colour = if (nearer) over(colour, target.colours[p]) else over(target.colours[p], colour);
+            if (!nearer) {
+                target.colours[p] = colour;
+                continue;
+            }
+        }
         target.depths[p] = depth;
         target.tags[p] = tag;
-        for (0..3) |i| target.colours[p][i] = @intCast(@min(255, @as(u32, texel[i]) * light / 256));
-        target.colours[p][3] = 255;
+        target.colours[p] = colour;
     };
+}
+
+/// `front` over `back`, each as opaque as its alpha says.
+fn over(front: [4]u8, back: [4]u8) [4]u8 {
+    const frontWeight = @as(u32, front[3]) * 255;
+    const backWeight = @as(u32, back[3]) * (255 - @as(u32, front[3]));
+    const total = frontWeight + backWeight;
+    if (total == 0) return @splat(0);
+    var out: [4]u8 = undefined;
+    for (0..3) |i| out[i] = @intCast((front[i] * frontWeight + back[i] * backWeight) / total);
+    out[3] = @intCast(total / 255);
+    return out;
+}
+
+test over {
+    const glass: [4]u8 = .{ 100, 200, 100, 51 };
+    const frame: [4]u8 = .{ 10, 20, 30, 255 };
+    // An opaque front hides what's behind it.
+    try std.testing.expectEqual(frame, over(frame, glass));
+    // Over something opaque, the result is opaque.
+    try std.testing.expectEqual([4]u8{ 28, 56, 44, 255 }, over(glass, frame));
+    // Two layers of glass are more opaque than one, and keep their colour.
+    try std.testing.expectEqual([4]u8{ 100, 200, 100, 91 }, over(glass, glass));
 }
 
 /// The texel at (u, v), each from 0 to 1.
@@ -116,4 +153,28 @@ test triangle {
     triangle(&target, nearer, &texture, 256, 2);
     try std.testing.expectEqual([4]u8{ 200, 0, 0, 255 }, target.colours[0]);
     try std.testing.expectEqual(2, target.tags[0]);
+
+    // Keeping opacity: glass drawn after what's in front of it goes under it, and glass drawn
+    // over something stays in front.
+    const glassy = [_][4]u8{.{ 100, 100, 200, 51 }};
+    const glass: world.Image = .{ .width = 1, .height = 1, .pixels = &glassy };
+    const opaque_ = [_][4]u8{.{ 200, 0, 0, 255 }};
+    const frame: world.Image = .{ .width = 1, .height = 1, .pixels = &opaque_ };
+    var order: [2]Target = .{ try .init(std.testing.allocator, 4, 4), try .init(std.testing.allocator, 4, 4) };
+    defer for (order) |one| one.deinit(std.testing.allocator);
+    for (&order) |*one| one.keepsOpacity = true;
+    triangle(&order[0], corners, &frame, 256, 1);
+    triangle(&order[0], nearer, &glass, 256, 1);
+    triangle(&order[1], nearer, &glass, 256, 1);
+    triangle(&order[1], corners, &frame, 256, 1);
+    try std.testing.expectEqual(order[0].colours[0], order[1].colours[0]);
+    try std.testing.expectEqual(255, order[0].colours[0][3]);
+    try std.testing.expectEqual(2, order[0].depths[0]);
+    try std.testing.expectEqual(2, order[1].depths[0]);
+    // Alone, glass keeps how opaque it is.
+    var alone: Target = try .init(std.testing.allocator, 4, 4);
+    defer alone.deinit(std.testing.allocator);
+    alone.keepsOpacity = true;
+    triangle(&alone, corners, &glass, 256, 1);
+    try std.testing.expectEqual(51, alone.colours[0][3]);
 }

@@ -144,6 +144,7 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
         .shapes = entry.block.shapes,
         .colour = SaveFile.colourOf(&entry.block),
         .turned = entry.block.randomizeRotations,
+        .seeThrough = entry.block.seeThrough,
     };
     const plan = try isometric.planSprites(arena, drawables);
 

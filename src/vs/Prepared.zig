@@ -57,7 +57,7 @@ pub const Block = struct {
     /// How many eighths of a block of snow are drawn under it (`BlockTypes.Block.snowLayer`). Only
     /// while preparing: the file keeps the sprite instead.
     snowLayer: u8 = 0,
-    /// Water or ice that shows what's behind it (`BlockTypes.Block.seeThrough`).
+    /// Glass, water or ice that shows what's behind it (`BlockTypes.Block.seeThrough`).
     seeThrough: bool = false,
     /// Its sprites, drawn from its `cube` or `shapes` (`Contents.useSprites`).
     sprites: world.BlockSprites = .{},
@@ -67,7 +67,7 @@ const Image = world.Image;
 
 /// How the six sections' contents are read from the game's assets: raise it when that changes,
 /// so files prepared before are prepared again.
-pub const generatorVersion: u16 = 26;
+pub const generatorVersion: u16 = 27;
 /// The layout of the `colour_maps` section, and of each of the other five (spec §7).
 const blocksLayoutVersion: u8 = 3;
 const colourMapsLayoutVersion: u8 = 2;

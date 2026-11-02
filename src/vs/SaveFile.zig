@@ -252,7 +252,7 @@ pub const Appearance = struct {
     lake: bool = false,
     /// Water or lava. Lake ice is on the map as a lake, but isn't.
     liquid: bool = false,
-    /// Water or ice that shows what's behind it.
+    /// Glass, water or ice that shows what's behind it.
     seeThrough: bool = false,
     /// A thin layer, such as snow, that the shaded map looks under to show the block beneath.
     cover: bool = false,

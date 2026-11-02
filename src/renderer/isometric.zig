@@ -700,14 +700,17 @@ fn shapeSprite(sections: *Sprites.Sections, allocator: std.mem.Allocator, shape:
     var anyTinted = false;
     for (0..shapeSide) |row| for (0..shapeSide) |column| {
         var covered: usize = 0;
+        var opaque_: usize = 0;
         for (0..samples) |sy| for (0..samples) |sx| {
-            const tag = target.tags[(row * samples + sy) * target.width + column * samples + sx];
+            const at = (row * samples + sy) * target.width + column * samples + sx;
+            const tag = target.tags[at];
             covered += @intFromBool(tag != 0);
+            opaque_ += @intFromBool(tag != 0 and target.colours[at][3] == 255);
             anyTinted = anyTinted or tag == 2;
         };
         shown[row][column] = covered * 2 >= samples * samples;
         const inSquare = row >= reach and row < reach + blockWidth and column >= reach and column < reach + blockWidth;
-        if (inSquare and faces[row - reach][column - reach] != .none and !shown[row][column]) fills = false;
+        if (inSquare and faces[row - reach][column - reach] != .none and (!shown[row][column] or opaque_ < covered)) fills = false;
         if (!shown[row][column]) continue;
         first = .{ @min(first[0], row), @min(first[1], column) };
         last = .{ @max(last[0], row), @max(last[1], column) };
@@ -735,19 +738,21 @@ fn shapeSprite(sections: *Sprites.Sections, allocator: std.mem.Allocator, shape:
         depths[p] = 0;
         if (!shown[row][column]) continue;
         var sums: [3][4]u32 = @splat(@splat(0));
+        var opacity: u32 = 0;
         var nearest: f32 = -std.math.inf(f32);
         for (0..samples) |sy| for (0..samples) |sx| {
             const at = (row * samples + sy) * target.width + column * samples + sx;
             const tag = target.tags[at];
             for (0..3) |c| sums[tag][c] += target.colours[at][c];
             sums[tag][3] += 1;
+            opacity += target.colours[at][3];
             if (tag != 0) nearest = @max(nearest, target.depths[at]);
         };
         const covered = sums[1][3] + sums[2][3];
         // The tinted layer covers the plain one as much as it covers the pixel; a pixel all
         // tinted takes its plain layer from it, unseen under it.
         const under = if (sums[1][3] > 0) sums[1] else sums[2];
-        plain[p] = tiles.rgba(@intCast(under[0] / under[3]), @intCast(under[1] / under[3]), @intCast(under[2] / under[3]), 255);
+        plain[p] = tiles.rgba(@intCast(under[0] / under[3]), @intCast(under[1] / under[3]), @intCast(under[2] / under[3]), @intCast(opacity / covered));
         if (sums[2][3] > 0) {
             const t = sums[2];
             tinted.?[p] = tiles.rgba(@intCast(t[0] / t[3]), @intCast(t[1] / t[3]), @intCast(t[2] / t[3]), @intCast(t[3] * 255 / covered));
@@ -758,13 +763,15 @@ fn shapeSprite(sections: *Sprites.Sections, allocator: std.mem.Allocator, shape:
 }
 
 /// What a game's reader has for drawing one of its blocks in sprites: a cube's faces, or the
-/// shapes it picks one of by where it is, the colour that fills a cube's texture's holes, and
-/// whether a shape is turned by where it is, which draws it in each of its `turns`.
+/// shapes it picks one of by where it is, the colour that fills a cube's texture's holes, whether
+/// a shape is turned by where it is, which draws it in each of its `turns`, and whether a shape
+/// keeps how opaque its textures are (`rasterizer.Target.keepsOpacity`), as glass does.
 pub const Drawable = struct {
     cube: ?*const world.CubeFaces = null,
     shapes: []const world.Shape = &.{},
     colour: world.Rgb = @splat(0),
     turned: bool = false,
+    seeThrough: bool = false,
 };
 
 /// Which sprites every block has, before any is drawn, so `sprite_layers` has its place in the
@@ -794,7 +801,7 @@ pub fn planSprites(arena: std.mem.Allocator, drawables: []const Drawable) !Sprit
             }
             block.* = found.value_ptr.*;
         } else if (drawable.shapes.len > 0) {
-            const found = try byShape.getOrPut(arena, .{ .shapes = drawable.shapes, .turned = drawable.turned });
+            const found = try byShape.getOrPut(arena, .{ .shapes = drawable.shapes, .turned = drawable.turned, .seeThrough = drawable.seeThrough });
             if (!found.found_existing) {
                 var variants: usize = 1;
                 for (drawable.shapes) |*shape| variants = @max(variants, shapeVariants(shape));
@@ -826,6 +833,7 @@ pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: 
             for (0..block.variants) |variant| try cubeSprite(sections, arena, cube, variant, drawable.colour);
             tinted[block.first] = sections.entries.items[block.first].flags.tinted;
         } else {
+            target.keepsOpacity = drawable.seeThrough;
             for (0..block.turns) |turn| for (drawable.shapes) |*shape| for (0..block.variants) |variant| {
                 const sprite, _ = try shapeSprite(sections, arena, shape, variant, if (drawable.turned) turn else null, &target);
                 if (sprite.flags.tinted) tinted[block.first] = true;
@@ -852,14 +860,16 @@ const FacesContext = struct {
     }
 };
 
-const ShapeKey = struct { shapes: []const world.Shape, turned: bool };
+const ShapeKey = struct { shapes: []const world.Shape, turned: bool, seeThrough: bool };
 
 /// A block's shapes by their boxes' slices and their textures' variants' slices, which a game's
-/// reader shares between blocks with the same shapes and textures, and whether they're turned.
+/// reader shares between blocks with the same shapes and textures, and whether they're turned and
+/// see-through.
 const ShapeContext = struct {
     pub fn hash(_: ShapeContext, key: ShapeKey) u64 {
         var hasher: std.hash.Wyhash = .init(0);
         std.hash.autoHash(&hasher, key.turned);
+        std.hash.autoHash(&hasher, key.seeThrough);
         for (key.shapes) |shape| {
             std.hash.autoHashStrat(&hasher, shape.boxes, .Shallow);
             for (shape.textures) |texture| std.hash.autoHashStrat(&hasher, texture, .Shallow);
@@ -868,7 +878,7 @@ const ShapeContext = struct {
     }
 
     pub fn eql(_: ShapeContext, a: ShapeKey, b: ShapeKey) bool {
-        if (a.turned != b.turned or a.shapes.len != b.shapes.len) return false;
+        if (a.turned != b.turned or a.seeThrough != b.seeThrough or a.shapes.len != b.shapes.len) return false;
         for (a.shapes, b.shapes) |x, y| {
             if (x.boxes.ptr != y.boxes.ptr or x.boxes.len != y.boxes.len or x.textures.len != y.textures.len) return false;
             for (x.textures, y.textures) |p, q| if (!std.meta.eql(p, q)) return false;
@@ -1204,8 +1214,7 @@ fn View(comptime Source: type) type {
                             const tinted = isTinted and own.tinted;
                             const placed = source.isPlacedByPosition(id);
                             anyPlaced = anyPlaced or placed;
-                            // Painted by the faces of its cube, so a block in a shape can't be.
-                            const seeThrough = source.isSeeThrough(id) and !own.shape;
+                            const seeThrough = source.isSeeThrough(id);
                             if (tinted or placed or own.cover != null or seeThrough) {
                                 var ownLook = spriteLook;
                                 ownLook.tinted = tinted;
@@ -1280,10 +1289,10 @@ fn View(comptime Source: type) type {
             /// The depth of what each pixel shows: x + y + z of its point, in `depthSteps`ths of
             /// a block, larger nearer.
             depth: *[tiles.size * tiles.size]i64,
-            /// The tile's see-through cubes with a face to show, painted once its other blocks are
-            /// drawn (`paintCubes`), the first `cubeCount` of them.
-            cubes: *[maxSeeThroughCubes]SeeThroughCube,
-            cubeCount: usize = 0,
+            /// The tile's see-through blocks with something to show, painted once its other blocks
+            /// are drawn (`paintSeeThrough`), the first `seeThroughCount` of them.
+            seeThrough: *[maxSeeThroughBlocks]SeeThroughBlock,
+            seeThroughCount: usize = 0,
             /// The chunk last asked for, as neighbouring blocks are mostly in the same one.
             recent: ?struct { position: ChunkCache.Position, slot: ?*const ChunkCache.Slot } = null,
 
@@ -1298,12 +1307,12 @@ fn View(comptime Source: type) type {
                 errdefer cache.deinit(allocator);
                 const depth = try allocator.create([tiles.size * tiles.size]i64);
                 errdefer allocator.destroy(depth);
-                const cubes = try allocator.create([maxSeeThroughCubes]SeeThroughCube);
-                return .{ .view = view, .reader = reader, .chunk = chunk, .slot = slot, .cache = cache, .depth = depth, .cubes = cubes };
+                const seeThrough = try allocator.create([maxSeeThroughBlocks]SeeThroughBlock);
+                return .{ .view = view, .reader = reader, .chunk = chunk, .slot = slot, .cache = cache, .depth = depth, .seeThrough = seeThrough };
             }
 
             pub fn deinit(self: *Worker, allocator: std.mem.Allocator) void {
-                allocator.destroy(self.cubes);
+                allocator.destroy(self.seeThrough);
                 allocator.destroy(self.depth);
                 self.cache.deinit(allocator);
                 allocator.destroy(self.slot);
@@ -1316,7 +1325,7 @@ fn View(comptime Source: type) type {
             pub fn draw(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) !bool {
                 @memset(pixels, tiles.transparent);
                 @memset(self.depth, std.math.minInt(i64));
-                self.cubeCount = 0;
+                self.seeThroughCount = 0;
                 const x0 = @as(i64, tile.x) * tiles.size;
                 const y0 = @as(i64, tile.y) * tiles.size;
                 var any = false;
@@ -1347,39 +1356,42 @@ fn View(comptime Source: type) type {
                         }
                     }
                 }
-                if (self.paintCubes(pixels)) any = true;
+                if (self.paintSeeThrough(pixels)) any = true;
                 return any;
             }
 
-            /// Paints the listed cubes from far to near, so each mixes over all that's behind it.
-            /// x + y + z goes up by 1 from each cube a line of sight crosses to the next, so it
+            /// Paints the listed blocks from far to near, so each mixes over all that's behind it.
+            /// x + y + z goes up by 1 from each block a line of sight crosses to the next, so it
             /// orders them on every pixel. Returns whether any pixel was painted.
-            fn paintCubes(self: *Worker, pixels: *tiles.Pixels) bool {
-                const cubes = self.cubes[0..self.cubeCount];
-                std.mem.sortUnstable(SeeThroughCube, cubes, {}, SeeThroughCube.isFarther);
+            fn paintSeeThrough(self: *Worker, pixels: *tiles.Pixels) bool {
+                const blocks = self.seeThrough[0..self.seeThroughCount];
+                std.mem.sortUnstable(SeeThroughBlock, blocks, {}, SeeThroughBlock.isFarther);
                 var any = false;
-                for (cubes) |*cube| {
-                    if (paintCube(cube, self.view.sprites.?.layersOf(cube.sprite), pixels, self.depth)) any = true;
+                for (blocks) |*block| {
+                    const sprites = self.view.sprites.?;
+                    if (paintBlock(block, sprites.entries[block.sprite], sprites.layersOf(block.sprite), pixels, self.depth)) any = true;
                 }
                 return any;
             }
 
-            /// Lists see-through `block`, on `line`, to paint, unless all its faces touch its own
-            /// material, so a stack of it is one thick surface.
-            fn listCube(self: *Worker, line: Line, look: Look.SpriteLook, block: Block, x0: i64, y0: i64) !void {
-                const exposed = try self.exposedFaces(block, look.sprites.first);
-                if (exposed.count() == 0 or self.cubeCount == self.cubes.len) return;
+            /// Lists see-through `block`, on `line`, to paint, unless it's a cube all of whose
+            /// faces touch its own material, so a stack of it is one thick surface.
+            fn listSeeThrough(self: *Worker, line: Line, look: Look.SpriteLook, block: Block, x0: i64, y0: i64) !void {
+                const inShape = look.sprites.shape;
+                const exposed: std.EnumSet(Face) = if (inShape) .{} else try self.exposedFaces(block, look.sprites.first);
+                if ((!inShape and exposed.count() == 0) or self.seeThroughCount == self.seeThrough.len) return;
                 const picked = try self.pickSprite(look, block);
                 const square = line.square();
-                self.cubes[self.cubeCount] = .{
+                self.seeThrough[self.seeThroughCount] = .{
                     .sprite = picked.index,
                     .left = @intCast(square.left - x0),
                     .top = @intCast(square.top - y0),
                     .depth = @intCast(block.x + block.y + block.z),
                     .tint = picked.tint,
+                    .inShape = inShape,
                     .exposed = exposed,
                 };
-                self.cubeCount += 1;
+                self.seeThroughCount += 1;
             }
 
             /// The faces of `block` the view sees that don't touch `material`.
@@ -1447,7 +1459,7 @@ fn View(comptime Source: type) type {
                     },
                     .sprite => |look| sprite: {
                         if (look.seeThrough) {
-                            try self.listCube(line, look, block, x0, y0);
+                            try self.listSeeThrough(line, look, block, x0, y0);
                             return .{ .any = false, .fills = false };
                         }
                         placedBy = look.block;
@@ -1642,42 +1654,51 @@ fn View(comptime Source: type) type {
 }
 
 /// A see-through block to paint over the tile: its sprite, where its square's top left is in the
-/// tile, x + y + z of the block, the tint of its tinted layer, and the faces that show.
-const SeeThroughCube = struct {
+/// tile, x + y + z of the block, the tint of its tinted layer, whether it's in a shape, whose
+/// pixels say how opaque they are, and for a cube, the faces that show.
+const SeeThroughBlock = struct {
     sprite: u32,
     left: i16,
     top: i16,
     depth: i32,
     tint: world.Rgb,
+    inShape: bool = false,
     exposed: std.EnumSet(Face),
 
-    fn isFarther(_: void, a: SeeThroughCube, b: SeeThroughCube) bool {
+    fn isFarther(_: void, a: SeeThroughBlock, b: SeeThroughBlock) bool {
         return a.depth < b.depth;
     }
 };
 
 /// The test saves' fullest tile has 4,034. Past it, a tile shows without the rest.
-const maxSeeThroughCubes = 16384;
+const maxSeeThroughBlocks = 16384;
 
-/// Mixes `cube`'s exposed faces, of its sprite's `layers`, over `pixels`, each pixel by how far
-/// behind it what it covers is, or takes it as it is where nothing is. A pixel behind what's there
-/// is left out. `depths` then holds its depth, for what's painted over it next. Returns whether
-/// any pixel was painted.
-fn paintCube(cube: *const SeeThroughCube, layers: SpriteLayers, pixels: *tiles.Pixels, depths: *[tiles.size * tiles.size]i64) bool {
+/// Mixes `block`'s `sprite` over `pixels`: a cube's exposed faces, each pixel by how far behind it
+/// what it covers is, or a shape's pixels by how opaque they are. Where nothing is behind, it's
+/// taken as it is, and a pixel behind what's there is left out. `depths` then holds its depth, for
+/// what's painted over it next. Returns whether any pixel was painted.
+fn paintBlock(block: *const SeeThroughBlock, sprite: Sprite, layers: SpriteLayers, pixels: *tiles.Pixels, depths: *[tiles.size * tiles.size]i64) bool {
     var any = false;
-    for (0..blockWidth) |row| {
-        const py = @as(i64, cube.top) + @as(i64, @intCast(row));
+    for (0..sprite.height) |row| {
+        const py = @as(i64, block.top) + sprite.top + @as(i64, @intCast(row));
         if (py < 0 or py >= tiles.size) continue;
-        for (0..blockWidth) |column| {
-            const px = @as(i64, cube.left) + @as(i64, @intCast(column));
+        for (0..sprite.width) |column| {
+            const px = @as(i64, block.left) + sprite.left + @as(i64, @intCast(column));
             if (px < 0 or px >= tiles.size) continue;
-            if (!cube.exposed.contains(faces[row][column])) continue;
-            const at = row * blockWidth + column;
+            const at = row * sprite.width + column;
+            if (block.inShape) {
+                if (!layers.shows(at)) continue;
+            } else if (!block.exposed.contains(faces[row][column])) continue;
             const p: usize = @intCast(py * tiles.size + px);
-            const pointDepth = @as(i64, cube.depth) * depthSteps + layers.depths[at];
+            const pointDepth = @as(i64, block.depth) * depthSteps + layers.depths[at];
             if (pointDepth <= depths[p]) continue;
-            const colour = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], cube.tint) else layers.plain[at];
-            pixels[p] = if (depths[p] == std.math.minInt(i64)) colour else mix(pixels[p], colour, surfaceOpacity(pointDepth - depths[p]));
+            const colour = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], block.tint) else layers.plain[at];
+            if (depths[p] == std.math.minInt(i64)) {
+                pixels[p] = colour;
+            } else {
+                const opacity: u8 = if (block.inShape) @truncate(layers.plain[at] >> 24) else surfaceOpacity(pointDepth - depths[p]);
+                pixels[p] = mix(pixels[p], colour, opacity);
+            }
             depths[p] = pointDepth;
             any = true;
         }
@@ -1685,7 +1706,7 @@ fn paintCube(cube: *const SeeThroughCube, layers: SpriteLayers, pixels: *tiles.P
     return any;
 }
 
-test paintCube {
+test paintBlock {
     const gpa = std.testing.allocator;
     const pixels = try gpa.create(tiles.Pixels);
     defer gpa.destroy(pixels);
@@ -1700,14 +1721,15 @@ test paintCube {
     const waterLayers: SpriteLayers = .{ .plain = &water, .tinted = null, .depths = opaqueDepths };
     const iceLayers: SpriteLayers = .{ .plain = &ice, .tinted = null, .depths = opaqueDepths };
     const all: std.EnumSet(Face) = .initMany(&.{ .top, .south, .east });
+    const square: Sprite = .{ .left = 0, .top = 0, .width = blockWidth, .height = blockWidth, .flags = .{} };
     const w = blockWidth;
     const top = (w / 4) * tiles.size + w / 2;
     const south = (w * 5 / 8) * tiles.size + w / 4;
     const topDepth = opaqueDepths[(w / 4) * w + w / 2];
 
     // Nothing behind it: as it is, and it says where it is.
-    var cube: SeeThroughCube = .{ .sprite = 0, .left = 0, .top = 0, .depth = 10, .tint = @splat(255), .exposed = .initMany(&.{.south}) };
-    try std.testing.expect(paintCube(&cube, waterLayers, pixels, depths));
+    var cube: SeeThroughBlock = .{ .sprite = 0, .left = 0, .top = 0, .depth = 10, .tint = @splat(255), .exposed = .initMany(&.{.south}) };
+    try std.testing.expect(paintBlock(&cube, square, waterLayers, pixels, depths));
     try std.testing.expectEqual(tiles.rgba(0, 0, 200, 255), pixels[south]);
     // Only the faces it shows.
     try std.testing.expectEqual(tiles.transparent, pixels[top]);
@@ -1718,39 +1740,56 @@ test paintCube {
     pixels[top] = sand;
     depths[top] = sandDepth;
     cube.exposed = all;
-    try std.testing.expect(paintCube(&cube, waterLayers, pixels, depths));
+    try std.testing.expect(paintBlock(&cube, square, waterLayers, pixels, depths));
     const waterDepth = 10 * depthSteps + @as(i64, topDepth);
     const overSand = mix(sand, water[0], surfaceOpacity(waterDepth - sandDepth));
     try std.testing.expectEqual(overSand, pixels[top]);
     try std.testing.expectEqual(waterDepth, depths[top]);
     cube.depth = 11;
-    try std.testing.expect(paintCube(&cube, iceLayers, pixels, depths));
+    try std.testing.expect(paintBlock(&cube, square, iceLayers, pixels, depths));
     const iceDepth = 11 * depthSteps + @as(i64, topDepth);
     const overWater = mix(overSand, ice[0], surfaceOpacity(iceDepth - waterDepth));
     try std.testing.expectEqual(overWater, pixels[top]);
     cube.depth = 12;
-    try std.testing.expect(paintCube(&cube, waterLayers, pixels, depths));
+    try std.testing.expect(paintBlock(&cube, square, waterLayers, pixels, depths));
     try std.testing.expectEqual(mix(overWater, water[0], surfaceOpacity(depthSteps)), pixels[top]);
 
     // Behind what's there: a solid block in front of it stays as it is.
     const before = pixels[top];
     depths[top] = std.math.maxInt(i64);
     cube.depth = 13;
-    _ = paintCube(&cube, iceLayers, pixels, depths);
+    _ = paintBlock(&cube, square, iceLayers, pixels, depths);
     try std.testing.expectEqual(before, pixels[top]);
+
+    // A shape's pixels say how opaque they are, however far behind it what they cover is, and
+    // where it leaves one out, nothing is painted.
+    const pane: [4]u32 = .{ tiles.rgba(90, 90, 90, 51), tiles.rgba(0, 0, 0, 255), tiles.transparent, tiles.rgba(90, 90, 90, 51) };
+    const paneDepths: [4]i16 = .{ 0, 0, 0, 0 };
+    const paneLayers: SpriteLayers = .{ .plain = &pane, .tinted = null, .depths = &paneDepths };
+    const paneSprite: Sprite = .{ .left = 3, .top = 2, .width = 2, .height = 2, .flags = .{} };
+    const glassy: SeeThroughBlock = .{ .sprite = 0, .left = 10, .top = 20, .depth = 40, .tint = @splat(255), .inShape = true, .exposed = .{} };
+    const glassAt = 22 * tiles.size + 13;
+    for ([_]usize{ glassAt, glassAt + 1, glassAt + tiles.size }) |p| {
+        pixels[p] = sand;
+        depths[p] = sandDepth;
+    }
+    try std.testing.expect(paintBlock(&glassy, paneSprite, paneLayers, pixels, depths));
+    try std.testing.expectEqual(mix(sand, pane[0], 51), pixels[glassAt]);
+    try std.testing.expectEqual(tiles.rgba(0, 0, 0, 255), pixels[glassAt + 1]);
+    try std.testing.expectEqual(sand, pixels[glassAt + tiles.size]);
 }
 
-test SeeThroughCube {
-    var cubes = [_]SeeThroughCube{
+test SeeThroughBlock {
+    var cubes = [_]SeeThroughBlock{
         .{ .sprite = 0, .left = 0, .top = 0, .depth = 9, .tint = @splat(255), .exposed = .{} },
         .{ .sprite = 1, .left = 0, .top = 0, .depth = 3, .tint = @splat(255), .exposed = .{} },
         .{ .sprite = 2, .left = 0, .top = 0, .depth = 6, .tint = @splat(255), .exposed = .{} },
     };
-    std.mem.sortUnstable(SeeThroughCube, &cubes, {}, SeeThroughCube.isFarther);
+    std.mem.sortUnstable(SeeThroughBlock, &cubes, {}, SeeThroughBlock.isFarther);
     try std.testing.expectEqual(1, cubes[0].sprite);
     try std.testing.expectEqual(0, cubes[2].sprite);
-    // Sized at startup, 16 bytes each.
-    try std.testing.expectEqual(16, @sizeOf(SeeThroughCube));
+    // Sized at startup, 20 bytes each.
+    try std.testing.expectEqual(20, @sizeOf(SeeThroughBlock));
 }
 
 /// How opaque a see-through surface is, of 255, with what shows through it `depth` behind it, in

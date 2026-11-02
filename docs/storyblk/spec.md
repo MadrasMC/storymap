@@ -178,7 +178,7 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 | `season_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
 | `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../blocks.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block |
 | `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../blocks.md#shapes)) |
-| `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its sprites has a tinted layer; bit 4: it's water or ice that shows what's behind it ([Liquids](../blocks.md#cube-faces)) |
+| `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its sprites has a tinted layer; bit 4: it's glass, water or ice that shows what's behind it ([See-through blocks](../blocks.md#cube-faces)) |
 | `first_sprite` | u32 | the index of its first Sprite in `sprites.entries` |
 | `variants` | u16 | 0 for a block without sprites |
 | `alternates` | u16 | at least 1 when `variants` isn't 0 |
@@ -206,7 +206,7 @@ A sprite of a shape that reaches out of its block extends past the square, so `l
 
 | Field | Type | Contents |
 | --- | --- | --- |
-| `plain` | [width × height][4]u8 | red, green, blue and alpha, row by row; opaque where the block is |
+| `plain` | [width × height][4]u8 | red, green, blue and alpha, row by row; opaque where the block is, except in the shapes of a block with bit 4 of its `flags`, where alpha is how opaque the pixel is |
 | `tinted` | [width × height][4]u8 | only with Sprite bit 0: lit but not yet tinted, its alpha how much of the pixel it covers |
 | `depths` | [width × height]i16 | x + y + z of each pixel's point, the block being from 0 to 1, in 256ths (§2) |
 | `padding` | [0 or 2]u8 | 0, to a multiple of 4 |
