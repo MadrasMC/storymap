@@ -88,17 +88,29 @@ pub const SpriteLayers = struct {
 
 /// The two sections as they're made, a sprite at a time: each sprite is drawn in place in a small
 /// buffer of `sprite_layers`, which goes to the file whenever it's full, so memory holds only
-/// the sprites drawn since. `entries` is left to the allocator given to `add`.
+/// the sprites drawn since. Each sprite's record goes straight in its place in the `sprites`
+/// section, which is sized once, from the sprites planned.
 pub const Sections = struct {
-    entries: std.ArrayList(Sprite) = .empty,
+    /// The sprites' records in the `sprites` section; `count` of them are written.
+    entries: []Sprite,
+    count: usize = 0,
     layers: FileBuffer,
 
     /// How long a buffer to give `init`: enough for many sprites, the largest about 92 KB.
     pub const bufferLength = 1 << 20;
 
-    /// With `sprite_layers` at `start` in `file`, which must be open for writing.
-    pub fn init(io: std.Io, file: std.Io.File, start: u64, buffer: *align(4) [bufferLength]u8) Sections {
-        return .{ .layers = .init(io, file, start, std.math.maxInt(u32), buffer) };
+    /// The bytes of a `sprites` section of `count` sprites.
+    pub fn entriesLength(count: usize) usize {
+        return @sizeOf(Header) + count * @sizeOf(Sprite);
+    }
+
+    /// With `sprite_layers` at `start` in `file`, which must be open for writing, and the `sprites`
+    /// section in `entries`, `entriesLength` long.
+    pub fn init(io: std.Io, file: std.Io.File, start: u64, buffer: *align(4) [bufferLength]u8, entries: []align(4) u8, blockWidth: u16) Sections {
+        const records: []Sprite = @alignCast(std.mem.bytesAsSlice(Sprite, entries[@sizeOf(Header)..]));
+        const header: *Header = @ptrCast(entries.ptr);
+        header.* = .{ .count = @intCast(records.len), .blockWidth = blockWidth };
+        return .{ .entries = records, .layers = .init(io, file, start, std.math.maxInt(u32), buffer) };
     }
 
     /// `sprite_layers` is done, and all of it in the file.
@@ -123,16 +135,15 @@ pub const Sections = struct {
     };
 
     /// Adds `sprite`, its offset set to where its layers go, and returns them.
-    pub fn add(self: *Sections, allocator: std.mem.Allocator, sprite: Sprite) !Room {
-        if (self.entries.items.len == std.math.maxInt(u32)) return error.TooManySprites;
+    pub fn add(self: *Sections, sprite: Sprite) !Room {
         const offset = self.layers.length;
         const bytes = self.layers.reserve(sprite.layersLength()) catch |err| return switch (err) {
             error.BufferFull => error.SpriteLayersTooLong,
             else => |e| e,
         };
-        var stored = sprite;
-        stored.offset = @intCast(offset);
-        try self.entries.append(allocator, stored);
+        self.entries[self.count] = sprite;
+        self.entries[self.count].offset = @intCast(offset);
+        self.count += 1;
         const pixels = sprite.pixelCount();
         const aligned: []align(4) u8 = @alignCast(bytes);
         const depthsAt = pixels * (if (sprite.flags.tinted) @as(usize, 8) else 4);
@@ -141,21 +152,6 @@ pub const Sections = struct {
             .tinted = if (sprite.flags.tinted) @alignCast(std.mem.bytesAsSlice(u32, aligned[pixels * 4 .. depthsAt])) else null,
             .depths = @alignCast(std.mem.bytesAsSlice(i16, aligned[depthsAt..][0 .. pixels * 2])),
         };
-    }
-
-    /// The bytes of a `sprites` section of `count` sprites.
-    pub fn entriesLength(count: usize) usize {
-        return @sizeOf(Header) + count * @sizeOf(Sprite);
-    }
-
-    /// The `sprites` section's bytes.
-    pub fn entryBytes(self: *const Sections, allocator: std.mem.Allocator, blockWidth: u16) ![]align(4) u8 {
-        const records = std.mem.sliceAsBytes(self.entries.items);
-        const bytes = try allocator.alignedAlloc(u8, .@"4", @sizeOf(Header) + records.len);
-        const header: Header = .{ .count = @intCast(self.entries.items.len), .blockWidth = blockWidth };
-        @memcpy(bytes[0..@sizeOf(Header)], std.mem.asBytes(&header));
-        @memcpy(bytes[@sizeOf(Header)..], records);
-        return bytes;
     }
 };
 
@@ -209,18 +205,17 @@ test "add and parse" {
         .{ .plain = &.{ 5, 6, 7 }, .tinted = &.{ 8, 9, 10 }, .depths = &.{ -1, 0, 1 } },
     };
     var buffer: [Sections.bufferLength]u8 align(4) = undefined;
-    var sections: Sections = .init(io, file, 8, &buffer);
-    defer sections.entries.deinit(allocator);
+    var section: [Sections.entriesLength(2)]u8 align(4) = undefined;
+    const entries: []align(4) u8 = &section;
+    var sections: Sections = .init(io, file, 8, &buffer, entries, 32);
     for (sprites, layers) |sprite, each| {
-        const room = try sections.add(allocator, sprite);
+        const room = try sections.add(sprite);
         @memcpy(room.plain, each.plain);
         if (room.tinted) |tinted| @memcpy(tinted, each.tinted.?);
         @memcpy(room.depths, each.depths);
     }
     try sections.flush();
-    const entries = try sections.entryBytes(allocator, 32);
-    defer allocator.free(entries);
-    try std.testing.expectEqual(Sections.entriesLength(2), entries.len);
+    try std.testing.expectEqual(8 + 2 * 16, entries.len);
     const pixels = try sections.readLayers(allocator);
     defer allocator.free(pixels);
 
