@@ -82,12 +82,14 @@ pub const Image = struct {
     pixels: []const [4]u8,
 };
 
-/// The top, south and east faces of a block drawn as a cube, each as the game's textures show
-/// them, looking at the face from outside with the sky up (the top with north up).
+/// The top and side faces of a block drawn as a cube, each as the game's textures show them,
+/// looking at the face from outside with the sky up (the top with north up).
 pub const CubeFaces = struct {
     up: Face,
     south: Face,
     east: Face,
+    north: Face,
+    west: Face,
 
     /// What's never tinted, and what the block's tint colours, drawn over it: each a texture's
     /// variants, of which a block shows the one its position picks (the game reader's

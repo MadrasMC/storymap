@@ -48,11 +48,13 @@ pub const Block = struct {
 
 pub const Axes = enum { xyz, xz };
 
-/// A cube's top, south and east faces: those seen looking north-west from above.
+/// A cube's top and side faces.
 pub const Cube = struct {
     up: Face,
     south: Face,
     east: Face,
+    north: Face,
+    west: Face,
 };
 
 /// A block's shape as the game draws it: its boxes, and its textures for them.
@@ -470,10 +472,12 @@ pub const Shapes = struct {
 
     /// A shape's element filling the whole block.
     pub const CubeElement = struct {
-        /// The textures its top, south and east faces name, without their `#`.
+        /// The textures its top and side faces name, without their `#`.
         up: []const u8,
         south: []const u8,
         east: []const u8,
+        north: []const u8,
+        west: []const u8,
         /// The colour maps that tint it, where the element names them, as some leaves' do.
         climateColorMap: ?[]const u8 = null,
         seasonColorMap: ?[]const u8 = null,
@@ -492,6 +496,8 @@ pub const Shapes = struct {
             .up = try self.arena.dupe(u8, cube.up),
             .south = try self.arena.dupe(u8, cube.south),
             .east = try self.arena.dupe(u8, cube.east),
+            .north = try self.arena.dupe(u8, cube.north),
+            .west = try self.arena.dupe(u8, cube.west),
             .climateColorMap = try self.lasting(cube.climateColorMap),
             .seasonColorMap = try self.lasting(cube.seasonColorMap),
         };
@@ -953,17 +959,22 @@ fn rotation(degrees: [3]f32) Matrix {
 }
 
 /// A shape's first element filling the whole block, from 0 to 16 on every axis, unturned; null
-/// without one, or if a face it shows is missing.
+/// without one, or if its top, south or east face is missing. A missing north or west face is
+/// the opposite one's.
 fn fullCube(shape: Json.Value) ?Shapes.CubeElement {
     const elements = shape.get("elements") orelse return null;
     if (elements != .array) return null;
     for (elements.array) |element| {
         if (!isFullBlock(element)) continue;
         const faces = element.get("faces") orelse return null;
+        const south = faceTexture(faces, "south") orelse return null;
+        const east = faceTexture(faces, "east") orelse return null;
         return .{
             .up = faceTexture(faces, "up") orelse return null,
-            .south = faceTexture(faces, "south") orelse return null,
-            .east = faceTexture(faces, "east") orelse return null,
+            .south = south,
+            .east = east,
+            .north = faceTexture(faces, "north") orelse south,
+            .west = faceTexture(faces, "west") orelse east,
             .climateColorMap = if (element.get("climateColorMap")) |map| map.asString() else null,
             .seasonColorMap = if (element.get("seasonColorMap")) |map| map.asString() else null,
         };
@@ -1106,23 +1117,28 @@ fn isPlainCube(arena: std.mem.Allocator, composite: Json.Value, base: ?Json.Valu
 /// A cube's faces from its block's textures, or null if it isn't drawn as one or a face has
 /// no texture. A face takes the texture named for it, else its group's, else `all`. A block with
 /// colour maps has every face tinted, except grassy soil, which tints only its grass, the
-/// right half of its `specialSecondTexture` on top and the left half on the sides.
+/// right half of its `specialSecondTexture` on top and the left half on the sides. A north or
+/// west face without a texture takes the opposite face's.
 fn cubeOf(arena: std.mem.Allocator, textures: []const Json.Field, drawing: Drawing, tinted: bool, domain: []const u8) !?Cube {
     if (drawing == .other or drawing == .shaped) return null;
     // A shape's cube names each face's texture itself.
-    const names: [3][]const []const u8 = switch (drawing) {
-        .distantCube => |shape| .{ &.{shape.up}, &.{shape.south}, &.{shape.east} },
-        else => .{ &.{ "up", "verticals", "all" }, &.{ "south", "horizontals", "all" }, &.{ "east", "horizontals", "all" } },
+    const names: [5][]const []const u8 = switch (drawing) {
+        .distantCube => |shape| .{ &.{shape.up}, &.{shape.south}, &.{shape.east}, &.{shape.north}, &.{shape.west} },
+        else => .{ &.{ "up", "verticals", "all" }, &.{ "south", "horizontals", "all" }, &.{ "east", "horizontals", "all" }, &.{ "north", "horizontals", "all" }, &.{ "west", "horizontals", "all" } },
     };
     const up = try layerOf(arena, findTexture(textures, names[0]), domain) orelse return null;
     const south = try layerOf(arena, findTexture(textures, names[1]), domain) orelse return null;
     const east = try layerOf(arena, findTexture(textures, names[2]), domain) orelse return null;
+    const north = try layerOf(arena, findTexture(textures, names[3]), domain) orelse south;
+    const west = try layerOf(arena, findTexture(textures, names[4]), domain) orelse east;
     if (drawing == .topSoil) {
         const grass = try textureLocation(arena, findTexture(textures, &.{"specialSecondTexture"}) orelse return null, domain) orelse return null;
         return .{
             .up = .{ .plain = up, .tinted = .{ .base = grass, .half = .right } },
             .south = .{ .plain = south, .tinted = .{ .base = grass, .half = .left } },
             .east = .{ .plain = east, .tinted = .{ .base = grass, .half = .left } },
+            .north = .{ .plain = north, .tinted = .{ .base = grass, .half = .left } },
+            .west = .{ .plain = west, .tinted = .{ .base = grass, .half = .left } },
         };
     }
     const face = struct {
@@ -1130,7 +1146,7 @@ fn cubeOf(arena: std.mem.Allocator, textures: []const Json.Field, drawing: Drawi
             return if (isTinted) .{ .tinted = layer } else .{ .plain = layer };
         }
     }.of;
-    return .{ .up = face(up, tinted), .south = face(south, tinted), .east = face(east, tinted) };
+    return .{ .up = face(up, tinted), .south = face(south, tinted), .east = face(east, tinted), .north = face(north, tinted), .west = face(west, tinted) };
 }
 
 /// Case-sensitive, as in the game.
@@ -1732,6 +1748,11 @@ test "the cube a block is drawn as" {
     try std.testing.expectEqualStrings("game:v", log.up.plain.?.base);
     try std.testing.expectEqualStrings("game:s", log.south.plain.?.base);
     try std.testing.expectEqualStrings("game:a", log.east.plain.?.base);
+    try std.testing.expectEqualStrings("game:a", log.north.plain.?.base);
+    // A side without a texture of its own takes the opposite one's.
+    const lopsided = (try describe(a, try Json.parse(a, "{ textures: { up: { base: 'u' }, south: { base: 's' }, east: { base: 'e' } } }"), rock, &shapes)).cube.?;
+    try std.testing.expectEqualStrings("game:s", lopsided.north.plain.?.base);
+    try std.testing.expectEqualStrings("game:e", lopsided.west.plain.?.base);
 
     // Colour maps tint the whole face.
     const tinted = (try describe(a, try Json.parse(a, "{ drawtype: 'Cube', climateColorMap: 'climatePlantTint', textures: { all: { base: 'x' } } }"), rock, &shapes)).cube.?;
@@ -1754,8 +1775,8 @@ test "the cube a block is drawn as" {
 
     // Leaves: crossed planes up close, and at a distance a cube in their small leaves, here
     // its shape read before. Branchy leaves name their colour maps on the shape's cube.
-    try shapes.cubes.put(a, "game:block/plant/leaves/normal-lod0", .{ .up = "smallleaves", .south = "smallleaves", .east = "smallleaves" });
-    try shapes.cubes.put(a, "game:block/plant/leaves/branchy-lod0", .{ .up = "smallleaves", .south = "smallleaves", .east = "smallleaves", .seasonColorMap = "seasonalBirch" });
+    try shapes.cubes.put(a, "game:block/plant/leaves/normal-lod0", .{ .up = "smallleaves", .south = "smallleaves", .east = "smallleaves", .north = "smallleaves", .west = "smallleaves" });
+    try shapes.cubes.put(a, "game:block/plant/leaves/branchy-lod0", .{ .up = "smallleaves", .south = "smallleaves", .east = "smallleaves", .north = "smallleaves", .west = "smallleaves", .seasonColorMap = "seasonalBirch" });
     const leaves = (try describe(a, try Json.parse(a,
         \\{ shape: { base: 'block/plant/leaves/normal' }, lod0Shape: { base: 'block/plant/leaves/normal-lod0' }, climateColorMap: 'climatePlantTint',
         \\  textures: { largeleaves: { base: 'large' }, smallleavesByType: { '*': { base: 'small/{rock}' } } } }

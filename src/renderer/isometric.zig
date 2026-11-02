@@ -504,7 +504,7 @@ const samples = 2;
 /// How many sprites `cube` has: as many as the most variants any of its layers has.
 fn variantCount(cube: *const world.CubeFaces) usize {
     var count: usize = 1;
-    for ([_]world.CubeFaces.Face{ cube.up, cube.south, cube.east }) |face| count = @max(count, face.plain.len, face.tinted.len);
+    for ([_]world.CubeFaces.Face{ cube.up, cube.south, cube.east, cube.north, cube.west }) |face| count = @max(count, face.plain.len, face.tinted.len);
     return count;
 }
 
@@ -928,7 +928,7 @@ test cubeLayers {
     const soil: world.Image = .{ .width = 2, .height = 2, .pixels = &red };
     const fringe: world.Image = .{ .width = 2, .height = 2, .pixels = &grass };
     const grassy: world.CubeFaces.Face = .{ .plain = &.{&soil}, .tinted = &.{&fringe} };
-    const layers: CubeLayers = .of(&.{ .up = .{ .plain = &.{&soil} }, .south = grassy, .east = grassy }, 0, .{ 1, 2, 3 });
+    const layers: CubeLayers = .of(&.{ .up = .{ .plain = &.{&soil} }, .south = grassy, .east = grassy, .north = grassy, .west = grassy }, 0, .{ 1, 2, 3 });
     const w = blockWidth;
     const white: world.Rgb = @splat(255);
     try std.testing.expectEqual(tiles.transparent, layers.plain[0]);
@@ -942,13 +942,13 @@ test cubeLayers {
     try std.testing.expectEqual(faceColours(.{ 200, 0, 0 })[2], blend(layers.plain[bare], layers.tinted.?[bare], .{ 0, 0, 0 }));
     // Without a tinted layer, there's none to blend.
     const plain: world.CubeFaces.Face = .{ .plain = &.{&soil} };
-    try std.testing.expectEqual(null, CubeLayers.of(&.{ .up = plain, .south = plain, .east = plain }, 0, .{ 1, 2, 3 }).tinted);
+    try std.testing.expectEqual(null, CubeLayers.of(&.{ .up = plain, .south = plain, .east = plain, .north = plain, .west = plain }, 0, .{ 1, 2, 3 }).tinted);
 
     // A top with two variants: the second sprite has the second, and the sides, with one,
     // their only one.
     const blue: [4][4]u8 = @splat(.{ 0, 0, 200, 255 });
     const water: world.Image = .{ .width = 2, .height = 2, .pixels = &blue };
-    const varied: world.CubeFaces = .{ .up = .{ .plain = &.{ &soil, &water } }, .south = plain, .east = plain };
+    const varied: world.CubeFaces = .{ .up = .{ .plain = &.{ &soil, &water } }, .south = plain, .east = plain, .north = plain, .west = plain };
     try std.testing.expectEqual(2, variantCount(&varied));
     const second: CubeLayers = .of(&varied, 1, .{ 1, 2, 3 });
     try std.testing.expectEqual(faceColours(.{ 0, 0, 200 })[0], second.plain[top]);
@@ -956,7 +956,7 @@ test cubeLayers {
 
     // Leaves, all tinted: the holes in the bottom half take the fallback, and are tinted too.
     const leafy: world.CubeFaces.Face = .{ .tinted = &.{&fringe} };
-    const leaves: CubeLayers = .of(&.{ .up = leafy, .south = leafy, .east = leafy }, 0, .{ 100, 100, 100 });
+    const leaves: CubeLayers = .of(&.{ .up = leafy, .south = leafy, .east = leafy, .north = leafy, .west = leafy }, 0, .{ 100, 100, 100 });
     // Grey 100 lit as an east face is 68, then tinted by 127 of 255, 33.
     try std.testing.expectEqual(tiles.rgba(0, 33, 0, 255), blend(leaves.plain[bare], leaves.tinted.?[bare], .{ 0, 127, 0 }));
 }
@@ -1080,7 +1080,7 @@ test drawSprites {
     const blue: [1][4]u8 = .{.{ 0, 0, 200, 255 }};
     const other: world.Image = .{ .width = 1, .height = 1, .pixels = &blue };
     const plain: world.CubeFaces.Face = .{ .plain = &.{ &image, &other } };
-    const cube: world.CubeFaces = .{ .up = plain, .south = plain, .east = plain };
+    const cube: world.CubeFaces = .{ .up = plain, .south = plain, .east = plain, .north = plain, .west = plain };
     const textures = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
     const boxes = [_]world.Shape.Box{testBox(.{ 1, 0.5, 1 })};
     const slab: world.Shape = .{ .boxes = &boxes, .textures = &textures };

@@ -67,7 +67,7 @@ const Image = world.Image;
 
 /// How the six sections' contents are read from the game's assets: raise it when that changes,
 /// so files prepared before are prepared again.
-pub const generatorVersion: u16 = 27;
+pub const generatorVersion: u16 = 28;
 /// The layout of the `colour_maps` section, and of each of the other five (spec §7).
 const blocksLayoutVersion: u8 = 3;
 const colourMapsLayoutVersion: u8 = 2;
@@ -344,16 +344,28 @@ pub fn prepare(gpa: std.mem.Allocator, arena: std.mem.Allocator, io: Io, assets:
 }
 
 /// A block's cube faces, each layer the images of its variants; null without a cube, or for one
-/// with a face that can't be read, which is drawn in its colour instead.
+/// with a top, south or east face that can't be read, which is drawn in its colour instead. A
+/// north or west face that can't be read is the opposite one's.
 fn cubeOf(images: *Images, cube: ?BlockTypes.Cube) !?world.CubeFaces {
     const faces = cube orelse return null;
-    var out: [3]world.CubeFaces.Face = undefined;
-    for (&out, [_]BlockTypes.Face{ faces.up, faces.south, faces.east }) |*face, from| {
-        face.* = .{ .plain = try images.list(from.plain), .tinted = try images.list(from.tinted) };
-        if ((from.plain != null and face.plain.len == 0) or (from.tinted != null and face.tinted.len == 0)) return null;
-        if (face.plain.len == 0 and face.tinted.len == 0) return null;
-    }
-    return .{ .up = out[0], .south = out[1], .east = out[2] };
+    const up = try faceOf(images, faces.up) orelse return null;
+    const south = try faceOf(images, faces.south) orelse return null;
+    const east = try faceOf(images, faces.east) orelse return null;
+    return .{
+        .up = up,
+        .south = south,
+        .east = east,
+        .north = try faceOf(images, faces.north) orelse south,
+        .west = try faceOf(images, faces.west) orelse east,
+    };
+}
+
+/// A cube face's layers' images; null for one that can't be read.
+fn faceOf(images: *Images, from: BlockTypes.Face) !?world.CubeFaces.Face {
+    const face: world.CubeFaces.Face = .{ .plain = try images.list(from.plain), .tinted = try images.list(from.tinted) };
+    if ((from.plain != null and face.plain.len == 0) or (from.tinted != null and face.tinted.len == 0)) return null;
+    if (face.plain.len == 0 and face.tinted.len == 0) return null;
+    return face;
 }
 
 /// A block's shapes, each its geometry's boxes, one slice for each geometry, and its textures'
