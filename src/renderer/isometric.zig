@@ -974,19 +974,29 @@ pub fn planSprites(arena: std.mem.Allocator, drawables: []const Drawable) !Sprit
     return .{ .blocks = blocks, .count = count };
 }
 
-/// Draws the sprites `plan` lists into `sections`, as `rotation` shows them, one at a time, each
-/// run by the first block that has it.
-pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: SpritePlan, rotation: Rotation, sections: *Sprites.Sections) !void {
+/// Draws the sprites `plan` lists into `sections`, in every rotation, one rotation after another
+/// and one sprite at a time, each run by the first block that has it. Sprites that come out the
+/// same share their layers, as most of a rotation's are another's: a turned plant's every eighth
+/// of a circle, for one.
+pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: SpritePlan, sections: *Sprites.Sections) !void {
     var target = try shapeTarget(arena);
-    for (plan.blocks, drawables) |block, drawable| {
-        if (block.variants == 0 or block.first != sections.entries.items.len) continue;
-        if (drawable.cube) |cube| {
-            for (0..block.variants) |variant| try cubeSprite(sections, arena, cube, variant, drawable.colour, rotation);
-        } else {
-            target.keepsOpacity = drawable.seeThrough;
-            for (0..block.turns) |turn| for (drawable.shapes) |*shape| for (0..block.variants) |variant| {
-                _ = try shapeSprite(sections, arena, shape, variant, if (drawable.turned) turn else null, rotation, &target);
-            };
+    try sections.ensureCapacity(arena, plan.count * Sprites.rotationCount);
+    for (std.enums.values(Rotation), 0..) |rotation, quarter| {
+        const earlier = quarter * plan.count;
+        for (plan.blocks, drawables) |block, drawable| {
+            if (block.variants == 0 or block.first + earlier != sections.entries.items.len) continue;
+            if (drawable.cube) |cube| {
+                for (0..block.variants) |variant| {
+                    try cubeSprite(sections, arena, cube, variant, drawable.colour, rotation);
+                    try sections.shareLast(arena);
+                }
+            } else {
+                target.keepsOpacity = drawable.seeThrough;
+                for (0..block.turns) |turn| for (drawable.shapes) |*shape| for (0..block.variants) |variant| {
+                    _ = try shapeSprite(sections, arena, shape, variant, if (drawable.turned) turn else null, rotation, &target);
+                    try sections.shareLast(arena);
+                };
+            }
         }
     }
 }
@@ -1290,13 +1300,18 @@ test drawSprites {
     var sections: Sprites.Sections = .init(io, file, 0, &buffer);
     const plan = try planSprites(allocator, &drawables);
     try std.testing.expectEqual(3 + turns + 6, plan.count);
-    try drawSprites(allocator, &drawables, plan, .deg0, &sections);
+    try drawSprites(allocator, &drawables, plan, &sections);
     try sections.flush();
     const blocks = plan.blocks;
 
     const sprites = try Sprites.parse(try sections.entryBytes(allocator, blockWidth), try sections.readLayers(allocator));
-    try std.testing.expectEqual(plan.count, sprites.entries.len);
+    try std.testing.expectEqual(plan.count, sprites.count);
+    try std.testing.expectEqual(plan.count * Sprites.rotationCount, sprites.entries.len);
     try std.testing.expectEqual(blockWidth, sprites.blockWidth);
+    // A cube of one colour is the same from every side, in the same layers.
+    for (1..Sprites.rotationCount) |quarter| {
+        try std.testing.expectEqual(sprites.entries[0].offset, sprites.entries[quarter * plan.count].offset);
+    }
     try std.testing.expectEqual(world.BlockSprites{ .first = 3, .variants = 1, .turns = turns, .shape = true, .tinted = true }, blocks[4]);
     // Each of its shapes in as many variants as the most any has, the slab's one counting
     // round again.
