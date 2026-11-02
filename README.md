@@ -19,21 +19,30 @@
 <h2 align="center">Getting started</h2>
 
 1. Install [Zig 0.17.0](https://ziglang.org/download/).
-2. Render a save:
+2. Build Storymap:
 
 	```bash
 	git clone https://github.com/MadrasMC/storymap
 	cd storymap
-	zig build run -Doptimize=ReleaseFast -- path/to/save.vcdbs out
+	zig build -Doptimize=ReleaseFast
 	```
 
-	Saves are in the game's data folder, under `Saves/` (`%APPDATA%\VintagestoryData\Saves` on Windows). Add `--theme plain` for a simpler page, with the map drawn as the game draws its own, or [make your own](docs/themes.md). To draw only part of a world, add `--clip circle:500@409,-304`, a radius around a position as the game shows it, or `--clip rect:800x400@409,-304`, `rect:800@409,-304` for a square, or `rect:0,-500..800,-100` between two corners.
-3. Open `out/index.html` in your browser.
+3. Render a save:
+
+	```bash
+	zig-out/bin/storymap path/to/save.vcdbs out
+	```
+
+	Saves are in the game's data folder, under `Saves/` (`%APPDATA%\VintagestoryData\Saves` on Windows).
+4. Open `out/index.html` in your browser.
+
+Add `--theme plain` for a simpler page, with the map drawn as the game draws its own, or [make your own](docs/themes.md).
 
 Tested with saves from Vintage Story 1.19 and 1.22.7.
 
 <h2 align="center">Documentation</h2>
 
+- **[Usage](docs/usage.md):** drawing only part of a world.
 - **[Save format](docs/save-format/README.md):** the `.vcdbs` format as far as Storymap has worked it out, from the SQLite schema to block palettes and block entities. Every claim is marked with its source: verified against a real save, read in the game's open-source code, from the wiki, or unverified.
 - **[Rendering](docs/rendering.md):** how the map is drawn, how it's split into tiles for the viewer, and where the time goes.
 - **[Blocks](docs/blocks.md):** how a block is read from the game's assets and drawn: its codes, its colours, its textures and tint, its cube faces and shapes, and the prepared blocks file a render reads.
