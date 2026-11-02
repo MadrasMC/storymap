@@ -8,7 +8,7 @@ Storymap keeps one file, `prepared.storyblk` in the current folder, or the one g
 
 A writer writes a new file beside the old one, under the name `<file name>.<process id>.partial`, and renames it over the old file once it's complete, so an interrupted write leaves the old file whole. It removes the partial file if writing or renaming fails. It never replaces a file that doesn't start with the magic `STORYBLK`.
 
-A writer adds a rotation to a file in place, without changing its other sections. It writes the rotation's sections past the end of the file, flushes them to disk, and only then fills in their entries in `section_table`, so an interrupted write leaves the file as it was, with unused bytes at its end.
+A writer adds a rotation to a file the same way, leaving its other sections as they are. It copies the file to the partial name, writes the rotation's sections past the end of the copy, fills in their entries in `section_table`, and renames the copy over the file.
 
 ## 2. Conventions
 
@@ -24,7 +24,7 @@ A cube's square is the square a cube's sprite is drawn in, `sprites.block_width`
 
 ## 3. Layout
 
-`header`, `info` and `section_table` come first, in that order, from the start of the file. `header` is 24 bytes, so `header.hash` can be read without reading the rest. Each section starts on a multiple of 8 bytes from the start of the file, after `section_table`, and lies wholly within the file. A section's length doesn't count the bytes after it up to the next multiple of 8, which are 0. Bytes in no section and its padding are unused, and a reader ignores them. A file has each of the sections below once, and a reader skips sections whose names it doesn't know. They can be in any order; Storymap writes them in the order below, so the pixel data in `sprite_layers` comes last, and lists the [rotated sections](#rotated-sections) before it in `section_table`.
+`header`, `info` and `section_table` come first, in that order, from the start of the file. `header` is 24 bytes, so `header.hash` can be read without reading the rest. Each section starts on a multiple of 8 bytes from the start of the file, after `section_table`, and lies wholly within the file. A section's length doesn't count the bytes after it up to the next multiple of 8, which are 0. A file has each of the sections below once, and a reader skips sections whose names it doesn't know. They can be in any order; Storymap writes them in the order below, so the pixel data in `sprite_layers` comes last, and lists the [rotated sections](#rotated-sections) before it in `section_table`.
 
 `sprites` and `sprite_layers` are read where the file is mapped: every integer in them lies at a multiple of its own size, and every Sprite and SpriteLayers at a multiple of 4. The other sections are read a field at a time: strings of any length put the integers after them anywhere.
 
@@ -119,7 +119,7 @@ The section is 8 + 16 × `count` bytes long.
 
 `sprites` and `sprite_layers` hold the isometric view facing north-west, rotation 0. Rotations 90, 180 and 270 move the viewer clockwise, to face north-east, south-east and south-west. Each has a section of the same layout for either: `sprites@90` and `sprite_layers@90`, `sprites@180` and `sprite_layers@180`, `sprites@270` and `sprite_layers@270`. Their Sprites are in the same order as those in `sprites`, so a Block's `first_sprite` and `cover_sprite` hold for every rotation.
 
-`section_table` lists all six from when the file is written. A rotation that hasn't been added has its two sections reserved: their `offset` and `length` are 0 (§4). A rotation is there when neither of its two sections is reserved.
+`section_table` lists all six from when the file is written. A rotation that hasn't been added has its two sections reserved: their `offset` and `length` are 0 (§4).
 
 ## 4. Types
 
