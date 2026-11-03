@@ -28,6 +28,10 @@ z: i32,
 /// game doesn't show it.
 full: bool,
 sections: nbt.List,
+/// The section at the bottom of the world, in sections.
+bottom: i32 = 0,
+/// Each column's `WORLD_SURFACE` height, packed as `Section`'s indexes are.
+surface: ?nbt.Array(i64) = null,
 
 pub fn parse(bytes: []const u8) Error!Chunk {
     const root = try nbt.parse(bytes);
@@ -51,6 +55,14 @@ pub fn parse(bytes: []const u8) Error!Chunk {
             if (field.value != .list) return error.InvalidChunk;
             chunk.sections = field.value.list;
             found |= 8;
+        } else if (std.mem.eql(u8, field.name, "yPos")) {
+            if (field.value != .int) return error.InvalidChunk;
+            chunk.bottom = field.value.int;
+        } else if (std.mem.eql(u8, field.name, "Heightmaps")) {
+            if (field.value != .compound) return error.InvalidChunk;
+            const surface = try field.value.compound.get("WORLD_SURFACE") orelse continue;
+            if (surface != .longArray) return error.InvalidChunk;
+            chunk.surface = surface.longArray;
         }
     }
     if (found != 0xF) return error.InvalidChunk;
@@ -128,6 +140,13 @@ pub const Block = struct {
         return .{ .id = id.string, .properties = if (properties) |value| value.compound else null };
     }
 };
+
+/// Each column's height from `surface`, at `z * side + x`: the block above its highest, counted
+/// from the world's bottom, for a world `height` blocks high; 0 for a column with no blocks.
+pub fn unpackSurface(self: Chunk, out: *[side * side]u16, height: usize) Error!void {
+    const longs = self.surface orelse return error.InvalidChunk;
+    try unpack(out, height + 1, 1, longs);
+}
 
 /// Indexes into a palette of `count` entries: without `data`, all 0, the palette's one entry.
 /// Otherwise each takes as many bits as the largest does, at least `minBits`, as many as fit in

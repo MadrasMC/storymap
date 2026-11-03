@@ -264,6 +264,8 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nbt", .module = nbt_mod },
             .{ .name = "lz4", .module = lz4_mod },
+            .{ .name = "world", .module = world_mod },
+            .{ .name = "tiles", .module = tiles_mod },
         },
     });
 
