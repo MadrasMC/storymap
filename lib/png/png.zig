@@ -5,6 +5,9 @@ const flate = std.compress.flate;
 const Writer = std.Io.Writer;
 const PixelDeflate = @import("PixelDeflate.zig");
 
+/// The most pixels across or down a PNG can have.
+pub const maxSide = (1 << 31) - 1;
+
 pub const Options = struct {
     compressor: Compressor = .flate,
     /// For `flate`, deflate's trade between speed and size.

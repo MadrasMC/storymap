@@ -47,6 +47,19 @@ pub fn print(io: std.Io, comptime format: []const u8, values: anytype) std.Io.Wr
     try stdout.interface.flush();
 }
 
+/// Asks a question on stderr and reads the answer, yes only for "y" or "yes"; null when there's
+/// no one to ask, as stdin isn't a terminal.
+pub fn confirm(io: std.Io, comptime question: []const u8, values: anytype) ?bool {
+    const stdin = std.Io.File.stdin();
+    if (!(stdin.isTty(io) catch false)) return null;
+    std.debug.print("storymap: " ++ question ++ " [y/N] ", values);
+    var buffer: [64]u8 = undefined;
+    var reader = stdin.readerStreaming(io, &buffer);
+    const line = (reader.interface.takeDelimiter('\n') catch return false) orelse return false;
+    const answer = std.mem.trim(u8, line, " \t\r");
+    return std.ascii.eqlIgnoreCase(answer, "y") or std.ascii.eqlIgnoreCase(answer, "yes");
+}
+
 /// What the program did, such as the tiles it drew.
 pub fn log(comptime format: []const u8, values: anytype) void {
     std.log.info(format, values);

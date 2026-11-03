@@ -20,6 +20,7 @@ try dir.writeFile(io, .{ .sub_path = "tile.jxl", .data = file });
 
 | name | contents |
 | --- | --- |
+| `maxSide` | the most pixels across or down a JPEG XL image can have at the format's highest level, 2³⁰ |
 | `Encoder.init(allocator, width, height, options)` | an encoder for images up to `width` × `height`: 8 bytes per pixel for its output |
 | `Encoder.encode(pixels, width, height)` | the JPEG XL file, valid until the next `encode`; `error.EncodingFailed` if libjxl can't encode it |
 | `Encoder.deinit(allocator)` | frees the buffer |

@@ -20,6 +20,7 @@ try dir.writeFile(io, .{ .sub_path = "tile.webp", .data = file });
 
 | name | contents |
 | --- | --- |
+| `maxSide` | the most pixels across or down a WebP can have, 16,383 |
 | `Encoder.init(allocator, width, height, options)` | an encoder for images up to `width` × `height`: 12 bytes per pixel for its pixels and output, and its working memory |
 | `Encoder.encode(pixels, width, height)` | the lossless WebP file, valid until the next `encode` or `encodeLossy`; `error.EncodingFailed` if libwebp can't encode it |
 | `Encoder.encodeLossy(pixels, width, height, quality)` | the same as a lossy WebP file, at `quality` from 0 to 100, its alpha channel still lossless |

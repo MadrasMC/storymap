@@ -33,8 +33,7 @@ A rotation moves the viewer clockwise around the world:
 ## Images
 
 `--mode` chooses what to write, `map` by default: the tiles and the page.
-`image` writes one PNG of each view instead, and `map+image` writes both.
-An image is written as it's drawn, so its memory follows its width, not its height.
+`image` writes one image of each view instead, and `map+image` writes both.
 
 ```
 image[:<width>x<height>][@[<x>,<z>,]<scale>]
@@ -64,7 +63,17 @@ It's transparent where the map has nothing.
 Between levels, an image takes the nearest pixel of the level with at least as many, and above `1:1` it repeats full detail's.
 The position and scale in the page's address can be pasted here.
 In the isometric view, a position is taken at sea level, as on the page.
-`--webp` and `--jpegxl` apply to tiles only: images are always PNG.
+
+Images are in the tiles' format ([Tile formats](#tile-formats)).
+
+| format | memory | largest |
+| --- | --- | --- |
+| PNG | written as it's drawn: about 2 KB per pixel of width, at any height | 2,147,483,647 a side |
+| JPEG XL | held whole: about 12 bytes per pixel | 1,073,741,824 a side |
+| WebP | held whole: about 64 bytes per pixel | 16,383 a side |
+
+Before drawing, a render asks about images that need more than 2 GB of memory, and stops without a terminal to ask on.
+`--yes`, or `-y`, writes them without asking.
 
 ## Appearance
 

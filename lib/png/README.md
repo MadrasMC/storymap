@@ -32,6 +32,7 @@ try file.interface.flush();
 
 | name | contents |
 | --- | --- |
+| `maxSide` | the most pixels across or down a PNG can have, 2³¹ − 1 |
 | `Encoder.init(allocator, width, height, options)` | an encoder for images up to `width` × `height`: about 8 bytes per pixel, plus 64 KB for deflate's window and the compressor's 224 KB |
 | `Encoder.encode(pixels, width, height)` | the PNG, valid until the next `encode` or `compress`: `filter`, then `compress` |
 | `Encoder.filter(pixels, width, height)` | filters the image's rows, the first half of `encode`; with `compress`, the two halves can be timed apart |

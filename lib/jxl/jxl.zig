@@ -4,6 +4,9 @@
 //! encodes.
 const std = @import("std");
 
+/// The most pixels across or down a JPEG XL image can have, at the format's highest level.
+pub const maxSide = 1 << 30;
+
 pub const Options = struct {
     /// How hard the encoder looks, from 1. From 2 up, it keeps a palette for an image with few
     /// colours, and more effort samples more of the image for better codes.

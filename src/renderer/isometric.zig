@@ -232,6 +232,16 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
     return result;
 }
 
+/// Works out where `images` fall on the map, into `placements` (`tiles.place`).
+pub fn placeImages(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, images: []const tiles.Image, options: Options, placements: []tiles.Placement) !void {
+    const rotated = if (options.sprites) |sprites| sprites.ofRotation(@backingInt(options.rotation)) else null;
+    var view: View(Source) = try .init(allocator, source, options.style, if (rotated) |*sprites| sprites else null, options.rotation);
+    defer view.deinit(allocator);
+    const list = try tileList(allocator, source.chunkColumns, source.heights().world, options.rotation);
+    defer allocator.free(list);
+    try tiles.place(View(Source), allocator, io, &view, list, images, placements);
+}
+
 /// Where the blocks from (x0, y0, z0) to (x1, y1, z1), each included, in the view's coordinates,
 /// are drawn, in level-0 pixels: from `left` and `top` up to but not including `right` and
 /// `bottom`.

@@ -56,14 +56,11 @@ pub const Output = struct {
     /// Whether to write the map's tiles.
     map: bool = true,
     /// Images to write besides, or instead of, the tiles.
-    images: []const Image = &.{},
+    images: []const ImageFile = &.{},
 };
 
-/// An image of a view's map at one of its levels, written to one PNG file, however large,
-/// without ever holding all of it (`writeImage`).
+/// What an image shows of a view's map; `place` works out where that falls on it.
 pub const Image = struct {
-    /// Its path in `Output.folder`.
-    path: []const u8,
     /// Its size in pixels; null for all of the map, which needs a `Scale.ratio`.
     frame: ?Frame = null,
     /// The level-0 pixel at its centre; null for the map's centre. Only with a `frame`.
@@ -84,6 +81,14 @@ pub const Image = struct {
     }
 };
 
+/// An image to write, in its output's format. A PNG is written a row at a time, however large,
+/// without ever holding all of it; WebP and JPEG XL are encoded whole.
+pub const ImageFile = struct {
+    /// Its path in `Output.folder`.
+    path: []const u8,
+    placement: Placement,
+};
+
 pub const Format = enum {
     png,
     /// Lossless JPEG XL (`lib/jxl`).
@@ -97,6 +102,23 @@ pub const Format = enum {
             .png => "png",
             .jpegxl => "jxl",
             .webp => "webp",
+        };
+    }
+
+    pub fn name(self: Format) []const u8 {
+        return switch (self) {
+            .png => "PNG",
+            .jpegxl => "JPEG XL",
+            .webp => "WebP",
+        };
+    }
+
+    /// The most pixels across or down an image can have.
+    pub fn maxSide(self: Format) u32 {
+        return switch (self) {
+            .png => png.maxSide,
+            .jpegxl => jxl.maxSide,
+            .webp => webp.maxSide,
         };
     }
 };
@@ -166,21 +188,23 @@ pub const transparent = rgba(0, 0, 0, 0);
 pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, list: []const Tile, output: Output, written: *std.ArrayList(Written)) !Stats {
     var stats: Stats = if (output.map) try renderMap(View, allocator, io, view, list, output, written) else .{};
     if (output.images.len == 0 or list.len == 0) return stats;
-
-    var needsBounds = false;
-    for (output.images) |image| needsBounds = needsBounds or image.needsBounds();
-    const bounds: Bounds = if (needsBounds) try findBounds(View, allocator, io, view, list, &stats) else .{};
-    const placements = try allocator.alloc(Placement, output.images.len);
-    defer allocator.free(placements);
     var levels: usize = 1;
-    for (placements, output.images) |*placement, image| {
-        placement.* = try .of(image, bounds);
-        levels = @max(levels, @as(usize, placement.level) + 1);
-    }
+    for (output.images) |file| levels = @max(levels, @as(usize, file.placement.level) + 1);
     var pyramid: Pyramid = try .init(allocator, list, levels);
     defer pyramid.deinit(allocator);
-    for (placements, output.images) |placement, image| try writeImage(View, allocator, io, view, &pyramid, image.path, placement, output, &stats);
+    for (output.images) |file| try writeImage(View, allocator, io, view, &pyramid, file, output, &stats);
     return stats;
+}
+
+/// Works out where each of `images` falls on the map in `list`, into `placements`, so the
+/// images' sizes are known before anything is drawn. Finding what the map covers draws a few of
+/// its tiles. error.ImageTooLarge for all of a map at a scale too large to count its pixels.
+pub fn place(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *const View, list: []const Tile, images: []const Image, placements: []Placement) !void {
+    var needsBounds = false;
+    for (images) |image| needsBounds = needsBounds or image.needsBounds();
+    var stats: Stats = .{};
+    const bounds: Bounds = if (needsBounds and list.len > 0) try findBounds(View, allocator, io, view, list, &stats) else .{};
+    for (placements, images) |*placement, image| placement.* = try .of(image, bounds);
 }
 
 /// Draws the tiles in `list`, builds every level above them and writes them all.
@@ -265,23 +289,67 @@ fn runAll(comptime Worker: type, jobs: []Worker, threads: []?std.Thread, comptim
     for (jobs) |*job| if (job.err) |err| return err;
 }
 
-/// Writes an image to `path`, or encodes it and drops it without a folder.
-fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, path: []const u8, placement: Placement, output: Output, stats: *Stats) !void {
-    var encoder: png.RowEncoder = try .init(allocator, placement.width, .level_4);
+/// Writes an image to its file, or encodes it and drops it without a folder. Everything it takes
+/// is set aside before any of it is drawn, so running out of memory comes first.
+fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, image: ImageFile, output: Output, stats: *Stats) !void {
+    const placement = image.placement;
+    if (output.format == .png) {
+        var encoder: png.RowEncoder = try .init(allocator, placement.width, .level_4);
+        defer encoder.deinit(allocator);
+
+        var buffer: [1 << 16]u8 = undefined;
+        var discarding: Io.Writer.Discarding = .init(&buffer);
+        const file = if (output.folder) |folder| try folder.createFile(io, image.path, .{}) else null;
+        defer if (file) |opened| opened.close(io);
+        var fileWriter = if (file) |opened| opened.writer(io, &buffer) else undefined;
+        const out = if (file != null) &fileWriter.interface else &discarding.writer;
+
+        try encoder.begin(out, placement.width, placement.height);
+        try drawRows(View, allocator, io, view, pyramid, placement, &encoder, !output.map, stats);
+        try encoder.finish();
+        try out.flush();
+        return;
+    }
+
+    const pixels = try allocator.alloc(u32, @as(usize, placement.width) * placement.height);
+    defer allocator.free(pixels);
+    var encoder: Encoder = switch (output.format) {
+        .png => unreachable,
+        .jpegxl => .{ .jpegxl = try .init(allocator, placement.width, placement.height, .{}) },
+        .webp => .{ .webp = try .init(allocator, placement.width, placement.height, .{}) },
+    };
     defer encoder.deinit(allocator);
+    var rows: RowSink = .{ .pixels = pixels, .width = placement.width };
+    try drawRows(View, allocator, io, view, pyramid, placement, &rows, !output.map, stats);
 
-    var buffer: [1 << 16]u8 = undefined;
-    var discarding: Io.Writer.Discarding = .init(&buffer);
-    const file = if (output.folder) |folder| try folder.createFile(io, path, .{}) else null;
-    defer if (file) |opened| opened.close(io);
-    var fileWriter = if (file) |opened| opened.writer(io, &buffer) else undefined;
-    const out = if (file != null) &fileWriter.interface else &discarding.writer;
-
-    try encoder.begin(out, placement.width, placement.height);
-    try drawRows(View, allocator, io, view, pyramid, placement, &encoder, !output.map, stats);
-    try encoder.finish();
-    try out.flush();
+    const compressing: Io.Timestamp = .now(io, .awake);
+    const bytes = std.mem.sliceAsBytes(pixels);
+    const data = try switch (encoder) {
+        .png => unreachable,
+        .jpegxl => |*jpegxl| jpegxl.encode(bytes, placement.width, placement.height),
+        .webp => |*encoding| if (output.lossyFrom != null and placement.level >= output.lossyFrom.?)
+            encoding.encodeLossy(bytes, placement.width, placement.height, 90)
+        else
+            encoding.encode(bytes, placement.width, placement.height),
+    };
+    timeSince(io, &stats.compress, compressing);
+    const folder = output.folder orelse return;
+    const writing: Io.Timestamp = .now(io, .awake);
+    defer timeSince(io, &stats.write, writing);
+    try folder.writeFile(io, .{ .sub_path = image.path, .data = data });
 }
+
+/// Keeps the rows it's given, in order, in one image.
+const RowSink = struct {
+    pixels: []u32,
+    width: usize,
+    rows: usize = 0,
+
+    fn writeRow(self: *RowSink, row: []const u8) !void {
+        @memcpy(std.mem.sliceAsBytes(self.pixels[self.rows * self.width ..][0..self.width]), row);
+        self.rows += 1;
+    }
+};
 
 /// The level-0 pixels a map covers: from `left` and `top` up to but not including `right` and
 /// `bottom`.
@@ -456,7 +524,7 @@ fn BoundsJob(comptime View: type) type {
 /// Where an image's pixels fall on the level it's taken from: each is the pixel of that level
 /// nearest its middle, so a level with more or fewer pixels than the image is resampled with
 /// nearest neighbour.
-const Placement = struct {
+pub const Placement = struct {
     level: u6,
     width: u32,
     height: u32,
@@ -521,6 +589,26 @@ const Placement = struct {
         return @intFromFloat(@max(length, 1));
     }
 
+    /// About how many bytes writing the image takes, besides what the workers keep for drawing
+    /// any tile: a row of the level's tiles, and PNG's row encoder, or the whole image and its
+    /// encoder (`lib/png`, `lib/jxl` and `lib/webp` READMEs).
+    pub fn memory(self: Placement, format: Format) u64 {
+        const width: u64 = self.width;
+        const pixels = width * self.height;
+        const band = @as(u64, self.tileColumns()[1]) * @sizeOf(Pixels) + width * (@sizeOf(u32) + @sizeOf(usize));
+        return band + switch (format) {
+            .png => 12 * width + (352 << 10),
+            .jpegxl => pixels * (4 + 8),
+            .webp => pixels * (4 + 12 + 48) + (4 << 20),
+        };
+    }
+
+    /// The first column of the level's tiles under the image, and how many there are.
+    fn tileColumns(self: Placement) struct { i64, usize } {
+        const first = @divFloor(self.sourceX(0), size);
+        return .{ first, @intCast(@divFloor(self.sourceX(self.width - 1), size) - first + 1) };
+    }
+
     fn sourceX(self: Placement, x: usize) i64 {
         return @intFromFloat(@floor(self.left + (@as(f64, @floatFromInt(x)) + 0.5) * self.step));
     }
@@ -533,29 +621,29 @@ const Placement = struct {
 test Placement {
     const bounds: Bounds = .{ .left = -512, .top = 1024, .right = 1024, .bottom = 2048 };
     // All of the map, by whole pixels of level 2, past the map's edges where they fall between.
-    const whole: Placement = try .of(.{ .path = "", .scale = .{ .ratio = 0.25 } }, .{ .left = -5, .top = 8, .right = 5, .bottom = 9 });
+    const whole: Placement = try .of(.{ .scale = .{ .ratio = 0.25 } }, .{ .left = -5, .top = 8, .right = 5, .bottom = 9 });
     try std.testing.expectEqual(Placement{ .level = 2, .width = 4, .height = 1, .left = -2, .top = 2, .step = 1 }, whole);
     // All of the map at 2:1, taken from level 0, whose pixels are 2 of the image's.
-    const large: Placement = try .of(.{ .path = "", .scale = .{ .ratio = 2 } }, .{ .left = -5, .top = 8, .right = 5, .bottom = 9 });
+    const large: Placement = try .of(.{ .scale = .{ .ratio = 2 } }, .{ .left = -5, .top = 8, .right = 5, .bottom = 9 });
     try std.testing.expectEqual(Placement{ .level = 0, .width = 20, .height = 2, .left = -5, .top = 8, .step = 0.5 }, large);
     // All of the map at 1:3, taken from level 1, each image pixel 1.5 of its pixels across.
-    const small: Placement = try .of(.{ .path = "", .scale = .{ .ratio = 1.0 / 3.0 } }, .{ .left = 0, .top = 0, .right = 1000, .bottom = 300 });
+    const small: Placement = try .of(.{ .scale = .{ .ratio = 1.0 / 3.0 } }, .{ .left = 0, .top = 0, .right = 1000, .bottom = 300 });
     try std.testing.expectEqual(1, small.level);
     try std.testing.expectEqual(333, small.width);
     try std.testing.expectApproxEqAbs(@as(f64, 1.5), small.step, 1e-9);
     try std.testing.expectEqual(498, small.sourceX(332));
-    try std.testing.expectError(error.ImageTooLarge, Placement.of(.{ .path = "", .scale = .{ .ratio = 1 << 24 } }, .{ .right = 1 << 10, .bottom = 1 }));
+    try std.testing.expectError(error.ImageTooLarge, Placement.of(.{ .scale = .{ .ratio = 1 << 24 } }, .{ .right = 1 << 10, .bottom = 1 }));
 
     const frame: Image.Frame = .{ .width = 100, .height = 50 };
     // In the middle of the map.
     try std.testing.expectEqual(
         Placement{ .level = 0, .width = 100, .height = 50, .left = 206, .top = 1511, .step = 1 },
-        try Placement.of(.{ .path = "", .frame = frame, .scale = .{ .ratio = 1 } }, bounds),
+        try Placement.of(.{ .frame = frame, .scale = .{ .ratio = 1 } }, bounds),
     );
     // A centre is in level-0 pixels, and level 2's are 4 of them.
     try std.testing.expectEqual(
         Placement{ .level = 2, .width = 100, .height = 50, .left = 200, .top = -25, .step = 1 },
-        try Placement.of(.{ .path = "", .frame = frame, .centre = .{ 1000, 0 }, .scale = .{ .ratio = 0.25 } }, bounds),
+        try Placement.of(.{ .frame = frame, .centre = .{ 1000, 0 }, .scale = .{ .ratio = 0.25 } }, bounds),
     );
 }
 
@@ -564,16 +652,25 @@ test "fit touches the frame on its tighter side" {
     const frame: Image.Frame = .{ .width = 300, .height = 300 };
     // 0.3 image pixels per map pixel, between levels 1 and 2: taken from level 1, every
     // 1000 / 2 / 300 of its pixels.
-    const fit: Placement = try .of(.{ .path = "", .frame = frame, .scale = .fit }, bounds);
+    const fit: Placement = try .of(.{ .frame = frame, .scale = .fit }, bounds);
     try std.testing.expectEqual(1, fit.level);
     try std.testing.expectApproxEqAbs(@as(f64, 500) / 300, fit.step, 1e-9);
     try std.testing.expectEqual(0, fit.sourceX(0));
     try std.testing.expectEqual(499, fit.sourceX(299));
     // A frame larger than the map draws level 0's pixels larger.
-    const large: Placement = try .of(.{ .path = "", .frame = .{ .width = 2000, .height = 1000 }, .scale = .fit }, bounds);
+    const large: Placement = try .of(.{ .frame = .{ .width = 2000, .height = 1000 }, .scale = .fit }, bounds);
     try std.testing.expectEqual(0, large.level);
     try std.testing.expectEqual(0.5, large.step);
     try std.testing.expectEqual(999, large.sourceX(1999));
+}
+
+test "Placement.memory" {
+    const placement: Placement = .{ .level = 0, .width = 1000, .height = 1000, .left = 0, .top = 0, .step = 1 };
+    // Two tiles across, and the row's pixels and where each comes from.
+    const band = 2 * @sizeOf(Pixels) + 1000 * (4 + @sizeOf(usize));
+    try std.testing.expectEqual(band + 12 * 1000 + (352 << 10), placement.memory(.png));
+    try std.testing.expectEqual(band + 12 * 1000 * 1000, placement.memory(.jpegxl));
+    try std.testing.expectEqual(band + 64 * 1000 * 1000 + (4 << 20), placement.memory(.webp));
 }
 
 test "Placement.levelOf" {
@@ -590,8 +687,7 @@ test "Placement.levelOf" {
 /// memory follows the image's width, not its height. Tiles have no order of their own to be drawn
 /// in, as each is drawn from the world alone.
 fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, placement: Placement, sink: anytype, collect: bool, stats: *Stats) !void {
-    const firstColumn = @divFloor(placement.sourceX(0), size);
-    const columns: usize = @intCast(@divFloor(placement.sourceX(placement.width - 1), size) - firstColumn + 1);
+    const firstColumn, const columns = placement.tileColumns();
     var band: Band = .{
         .tiles = try allocator.alloc(Pixels, columns),
         .firstColumn = @intCast(firstColumn),
@@ -727,7 +823,7 @@ fn ImageJob(comptime View: type) type {
                 } else if (try self.build(itemLevel, tile, &self.pixels[itemLevel])) {
                     const side = size / span;
                     const start: Io.Timestamp = .now(self.io, .awake);
-                    shrink(&self.pixels[itemLevel], band.steps, into[(down * size + across % span) * side..], size);
+                    shrink(&self.pixels[itemLevel], band.steps, into[(down * size + across % span) * side ..], size);
                     timeSince(self.io, &self.stats.shrink, start);
                 }
             }
@@ -1146,18 +1242,6 @@ const SolidView = struct {
             return true;
         }
     };
-};
-
-/// Keeps the rows it's given, in order.
-const RowSink = struct {
-    pixels: []u32,
-    width: usize,
-    rows: usize = 0,
-
-    fn writeRow(self: *RowSink, row: []const u8) !void {
-        @memcpy(std.mem.sliceAsBytes(self.pixels[self.rows * self.width..][0..self.width]), row);
-        self.rows += 1;
-    }
 };
 
 fn expectRows(list: []const Tile, placement: Placement, expected: fn (x: usize, y: usize) u32, drawnTiles: usize) !void {

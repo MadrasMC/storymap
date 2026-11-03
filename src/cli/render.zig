@@ -20,13 +20,14 @@ pub const spec: args.Spec = .{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
         .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
         .{ .name = "views", .value = "views", .description = "Which views to draw, joined by +: topdown (the default), isometric, or isometric@rotations, of 0, 90, 180 and 270 joined by commas." },
-        .{ .name = "mode", .value = "mode", .description = "What to write, joined by +: map (the default), or image[:widthxheight][@[x,z,]scale], a PNG of each view, 4096x4096 by default, around a position as the game shows it; scale is fit (the default), 1:n or n:1, n any decimal, of all of the map without a size or a position." },
+        .{ .name = "mode", .value = "mode", .description = "What to write, joined by +: map (the default), or image[:widthxheight][@[x,z,]scale], an image of each view, 4096x4096 by default, around a position as the game shows it; scale is fit (the default), 1:n or n:1, n any decimal, of all of the map without a size or a position." },
         .{ .name = "clip", .value = "shape", .description = "Draw only part of the world, around a position as the game shows it: circle:radius@x,z, square:side@x,z or rect:widthxheight@x,z, in blocks, or between two corners, rect:x,z..x,z." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
-        .{ .name = "jpegxl", .description = "Encode the tiles as lossless JPEG XL instead of PNG, which not every browser shows." },
-        .{ .name = "webp", .description = "Encode the tiles as lossless WebP instead of PNG." },
-        .{ .name = "lossy-from", .value = "level", .description = "With --webp, encode the tiles from this level up as lossy WebP: level 0 is full detail, 2 where blocks are 8 pixels wide." },
+        .{ .name = "jpegxl", .description = "Encode the tiles and images as lossless JPEG XL instead of PNG, which not every browser shows." },
+        .{ .name = "webp", .description = "Encode the tiles and images as lossless WebP instead of PNG." },
+        .{ .name = "lossy-from", .value = "level", .description = "With --webp, encode the tiles from this level up, and images taken from it, as lossy WebP: level 0 is full detail, 2 where blocks are 8 pixels wide." },
+        .{ .name = "yes", .short = 'y', .description = "Write images that need more than " ++ memoryToAskText ++ " of memory without asking." },
         .{ .name = "no-write", .description = "Draw and encode the tiles without writing anything, to time the rest." },
         .{ .name = "json", .description = "Print the render's times and counts on stdout as one line of JSON, for scripts." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
@@ -89,7 +90,6 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         if (format != .webp) console.fail("`--lossy-from`: only with `--webp`", .{});
         break :level std.fmt.parseInt(u8, text, 10) catch console.fail("`--lossy-from`: invalid level {s}. expected: a level from 0", .{text});
     } else null;
-    if (format != .png and mode.images.len > 0) console.warn("images are written as PNG, not {s}", .{if (format == .webp) "WebP" else "JPEG XL"});
     const output: tiles.Output = .{ .folder = out, .format = format, .lossyFrom = lossyFrom, .map = mode.map };
 
     const loading: std.Io.Timestamp = .now(init.io, .awake);
@@ -112,13 +112,35 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     var description = save.describe();
     if (parsed.value("name")) |name| description.name = name;
     const place: Place = .{ .origin = .{ description.origin.x, description.origin.z }, .seaLevel = description.seaLevel };
+    const sprites = if (prepared) |*blocks| &blocks.sprites else null;
+    const topdownOptions: topdown.Options = .{ .style = theme.topdown };
+
+    // Every view's images are placed before any view is drawn, so their sizes are checked, and
+    // asked about, first.
+    var topdownImages: []const tiles.ImageFile = &.{};
+    var isometricImages: [isometric.Sprites.rotationCount][]const tiles.ImageFile = @splat(&.{});
+    if (mode.images.len > 0) {
+        if (chosen.topdown) {
+            const placements = try arena.alloc(tiles.Placement, mode.images.len);
+            topdown.placeImages(SaveFile, allocator, init.io, &save, try requestsOf(arena, mode.images, place, .topdown), topdownOptions, placements) catch |err| return failPlacing(err);
+            topdownImages = try filesOf(arena, topdown.folder, format, placements);
+        }
+        for (chosen.rotations, std.enums.values(isometric.Rotation), &isometricImages) |wanted, rotation, *files| {
+            if (!wanted) continue;
+            const placements = try arena.alloc(tiles.Placement, mode.images.len);
+            const options: isometric.Options = .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation };
+            isometric.placeImages(SaveFile, allocator, init.io, &save, try requestsOf(arena, mode.images, place, .{ .isometric = rotation }), options, placements) catch |err| return failPlacing(err);
+            files.* = try filesOf(arena, rotation.folder(), format, placements);
+        }
+        checkImages(init.io, &([_][]const tiles.ImageFile{topdownImages} ++ isometricImages), format, parsed.flag("yes"));
+    }
 
     var topdownStats: ?topdown.Stats = null;
     const writtenTopdown = if (chosen.topdown) list: {
         topdownStats = .{};
         var viewOutput = output;
-        viewOutput.images = try imagesOf(arena, mode.images, topdown.folder, place, .topdown);
-        const list = try topdown.render(SaveFile, allocator, init.io, &save, viewOutput, .{ .style = theme.topdown }, &topdownStats.?);
+        viewOutput.images = topdownImages;
+        const list = try topdown.render(SaveFile, allocator, init.io, &save, viewOutput, topdownOptions, &topdownStats.?);
         logImages(viewOutput.images);
         break :list list;
     } else null;
@@ -129,12 +151,11 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     var isometricStats: [isometric.Sprites.rotationCount]?isometric.Stats = @splat(null);
     var writtenIsometric: [isometric.Sprites.rotationCount]?[]tiles.Written = @splat(null);
     defer for (writtenIsometric) |written| if (written) |list| allocator.free(list);
-    for (chosen.rotations, std.enums.values(isometric.Rotation), &isometricStats, &writtenIsometric) |wanted, rotation, *rotationStats, *written| {
+    for (chosen.rotations, std.enums.values(isometric.Rotation), &isometricStats, &writtenIsometric, isometricImages) |wanted, rotation, *rotationStats, *written, files| {
         if (!wanted) continue;
         var stats: isometric.Stats = .{};
-        const sprites = if (prepared) |*blocks| &blocks.sprites else null;
         var viewOutput = output;
-        viewOutput.images = try imagesOf(arena, mode.images, rotation.folder(), place, .{ .isometric = rotation });
+        viewOutput.images = files;
         const list = try isometric.render(SaveFile, allocator, init.io, &save, viewOutput, .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation }, &stats);
         written.* = list;
         rotationStats.* = stats;
@@ -520,12 +541,11 @@ const Projection = union(enum) {
     isometric: isometric.Rotation,
 };
 
-/// The images a view writes for `modes`, in files named after it.
-fn imagesOf(arena: std.mem.Allocator, modes: []const ImageMode, name: []const u8, place: Place, projection: Projection) ![]const tiles.Image {
+/// What a view's images show of it, for `modes`.
+fn requestsOf(arena: std.mem.Allocator, modes: []const ImageMode, place: Place, projection: Projection) ![]const tiles.Image {
     const images = try arena.alloc(tiles.Image, modes.len);
-    for (images, modes, 1..) |*image, mode, number| {
+    for (images, modes) |*image, mode| {
         image.* = .{
-            .path = if (modes.len == 1) try std.fmt.allocPrint(arena, "{s}.png", .{name}) else try std.fmt.allocPrint(arena, "{s}-{}.png", .{ name, number }),
             .frame = mode.frame,
             .centre = if (mode.position) |position| place.pixelOf(projection, position) else null,
             .scale = mode.scale,
@@ -534,7 +554,55 @@ fn imagesOf(arena: std.mem.Allocator, modes: []const ImageMode, name: []const u8
     return images;
 }
 
-fn logImages(images: []const tiles.Image) void {
+/// A view's images, in files named after it.
+fn filesOf(arena: std.mem.Allocator, name: []const u8, format: tiles.Format, placements: []const tiles.Placement) ![]const tiles.ImageFile {
+    const files = try arena.alloc(tiles.ImageFile, placements.len);
+    for (files, placements, 1..) |*file, placement, number| {
+        file.* = .{
+            .path = if (placements.len == 1)
+                try std.fmt.allocPrint(arena, "{s}.{s}", .{ name, format.extension() })
+            else
+                try std.fmt.allocPrint(arena, "{s}-{}.{s}", .{ name, number, format.extension() }),
+            .placement = placement,
+        };
+    }
+    return files;
+}
+
+/// How much memory an image may need before a render asks about it.
+const memoryToAsk = 2_000_000_000;
+const memoryToAskText = "2 GB";
+
+/// Stops at an image larger than its format allows, and asks about images that need more than
+/// `memoryToAsk`, unless `yes`; without a terminal to ask on, it stops.
+fn checkImages(io: std.Io, views: []const []const tiles.ImageFile, format: tiles.Format, yes: bool) void {
+    // Images are drawn one after another, so the largest is what a render may use.
+    var largest: u64 = 0;
+    for (views) |files| for (files) |file| {
+        const width = file.placement.width;
+        const height = file.placement.height;
+        if (@max(width, height) > format.maxSide()) console.fail("{s}: {} × {} pixels, cannot exceed {s}'s {} × {} limit", .{ file.path, width, height, format.name(), format.maxSide(), format.maxSide() });
+        const bytes = file.placement.memory(format);
+        if (bytes <= memoryToAsk) continue;
+        console.warn("{s}: {} × {} pixels, may use up to about {d:.1} GB", .{ file.path, width, height, gigabytes(bytes) });
+        largest = @max(largest, bytes);
+    };
+    if (largest == 0 or yes) return;
+    const answer = console.confirm(io, "are you sure?", .{}) orelse console.fail("images may use up to {d:.1} GB of memory: pass `--yes` to continue", .{gigabytes(largest)});
+    if (!answer) console.exit(1);
+}
+
+fn gigabytes(bytes: u64) f64 {
+    return @as(f64, @floatFromInt(bytes)) / 1e9;
+}
+
+/// Stops with a message for an image too large to place.
+fn failPlacing(err: anyerror) anyerror {
+    if (err == error.ImageTooLarge) console.fail("`--mode`: all of the map at that scale is more than 4,294,967,295 pixels a side", .{});
+    return err;
+}
+
+fn logImages(images: []const tiles.ImageFile) void {
     for (images) |image| console.log("image: {s}", .{image.path});
 }
 

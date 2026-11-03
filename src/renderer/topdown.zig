@@ -56,6 +56,13 @@ pub const Options = struct {
     style: Style,
 };
 
+/// Works out where `images` fall on the map, into `placements` (`tiles.place`).
+pub fn placeImages(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, images: []const tiles.Image, options: Options, placements: []tiles.Placement) !void {
+    var view: View(Source) = try .init(allocator, source, options.style);
+    defer view.deinit(allocator);
+    try tiles.place(View(Source), allocator, io, &view, source.tileList, images, placements);
+}
+
 /// Renders `source` into `output` and returns the tiles written, at every level, owned by the
 /// caller. A game style the game doesn't have is error.UnknownStyle.
 pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options, stats: *Stats) ![]tiles.Written {

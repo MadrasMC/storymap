@@ -4,6 +4,9 @@
 const std = @import("std");
 const c = @import("encode");
 
+/// The most pixels across or down a WebP can have.
+pub const maxSide = 16383;
+
 pub const Options = struct {
     /// libwebp's trade between speed and size, from 0, the fastest, to 6.
     method: u8 = 0,
