@@ -4,6 +4,7 @@
 const Region = @This();
 
 const std = @import("std");
+const lz4 = @import("lz4");
 const Io = std.Io;
 const flate = std.compress.flate;
 
@@ -19,8 +20,7 @@ bytes: []const u8,
 pub const Error = error{
     /// A chunk that lies outside the file, or whose length doesn't fit its sectors.
     InvalidRegion,
-    /// LZ4 or a custom compression, which a world can be set to, or a chunk too large for the
-    /// region, kept in a file of its own.
+    /// A custom compression, or a chunk too large for the region, kept in a file of its own.
     UnsupportedCompression,
     /// A chunk that doesn't decompress. `std` doesn't compare its checksum, so a damaged chunk
     /// may decompress, and show up as invalid NBT instead.
@@ -29,7 +29,9 @@ pub const Error = error{
     ChunkTooLarge,
 };
 
-const Compression = enum(u8) { gzip = 1, zlib = 2, none = 3 };
+/// Which one a world uses is `region-file-compression` in its server's settings, and chunks saved
+/// before that changed keep theirs.
+const Compression = enum(u8) { gzip = 1, zlib = 2, none = 3, lz4 = 4 };
 
 /// The chunk at (`x`, `z`) in the region, from 0 to `side`, decompressed into `buffer`; null
 /// where the region has none.
@@ -55,6 +57,13 @@ fn decompress(buffer: []u8, compressed: []const u8, compression: Compression) Er
             if (compressed.len > buffer.len) return error.ChunkTooLarge;
             @memcpy(buffer[0..compressed.len], compressed);
             return buffer[0..compressed.len];
+        },
+        .lz4 => {
+            const length = lz4.decompressStream(buffer, compressed) catch |err| return switch (err) {
+                error.InvalidData => error.InvalidChunk,
+                error.OutputTooLong => error.ChunkTooLarge,
+            };
+            return buffer[0..length];
         },
         .gzip => .gzip,
         .zlib => .zlib,
@@ -108,7 +117,17 @@ test chunk {
     testRegion(&file, 0, 0, &zlib, 2);
     try std.testing.expectError(error.InvalidChunk, region.chunk(&buffer, 0, 0));
 
-    testRegion(&file, 0, 0, "x", 4);
+    // LZ4, in one block of 5 literals, then the block that ends the stream.
+    const header = "LZ4Block".* ++ [_]u8{0x20} ++ [_]u8{ 6, 0, 0, 0 } ++ [_]u8{ 5, 0, 0, 0 } ++ [_]u8{ 0, 0, 0, 0 };
+    const zeros: [12]u8 = @splat(0);
+    const end = "LZ4Block".* ++ [_]u8{0x10} ++ zeros;
+    testRegion(&file, 0, 0, &(header ++ [_]u8{0x50} ++ "fast!".* ++ end), 4);
+    try std.testing.expectEqualStrings("fast!", (try region.chunk(&buffer, 0, 0)).?);
+    try std.testing.expectError(error.ChunkTooLarge, region.chunk(&tiny, 0, 0));
+    testRegion(&file, 0, 0, "not a stream", 4);
+    try std.testing.expectError(error.InvalidChunk, region.chunk(&buffer, 0, 0));
+
+    testRegion(&file, 0, 0, "x", 127);
     try std.testing.expectError(error.UnsupportedCompression, region.chunk(&buffer, 0, 0));
     testRegion(&file, 0, 0, "x", 0x82);
     try std.testing.expectError(error.UnsupportedCompression, region.chunk(&buffer, 0, 0));

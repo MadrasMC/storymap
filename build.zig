@@ -251,11 +251,20 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const lz4_mod = b.createModule(.{
+        .root_source_file = b.path("lib/lz4/lz4.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const mc_mod = b.createModule(.{
         .root_source_file = b.path("src/mc/mc.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "nbt", .module = nbt_mod }},
+        .imports = &.{
+            .{ .name = "nbt", .module = nbt_mod },
+            .{ .name = "lz4", .module = lz4_mod },
+        },
     });
 
     const renderer_mod = b.createModule(.{
@@ -335,7 +344,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
         args_mod,    sqlite_mod,   protobuf_mod, png_mod, jxl_mod, webp_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
-        console_mod, storyblk_mod, renderer_mod, vs_mod,  cli_mod, nbt_mod,  mc_mod,
+        console_mod, storyblk_mod, renderer_mod, vs_mod,  cli_mod, nbt_mod,  lz4_mod,   mc_mod,
     };
     for (tested) |module| {
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = module })).step);

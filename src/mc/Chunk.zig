@@ -106,14 +106,21 @@ fn dataOf(container: nbt.Compound) Error!?nbt.Array(i64) {
     return data.longArray;
 }
 
-/// A palette entry: a block, and the values of its properties, as strings. A block's default
-/// state may leave them out.
+/// A palette entry: a block, and the values of its properties, as strings. Null properties mean
+/// its default state, or that it has none. A default state may be saved as the block's id alone.
+/// An NBT list holds one type, so in a palette with compounds too, that string is wrapped in a
+/// compound, as the field named "".
 pub const Block = struct {
     id: []const u8,
     properties: ?nbt.Compound,
 
     pub fn of(entry: nbt.Value) Error!Block {
+        if (entry == .string) return .{ .id = entry.string, .properties = null };
         if (entry != .compound) return error.InvalidChunk;
+        if (try entry.compound.get("")) |wrapped| {
+            if (wrapped != .string) return error.InvalidChunk;
+            return .{ .id = wrapped.string, .properties = null };
+        }
         const id = try entry.compound.get("id") orelse return error.InvalidChunk;
         if (id != .string) return error.InvalidChunk;
         const properties = try entry.compound.get("properties");
@@ -204,6 +211,18 @@ test parse {
     const block: Block = try .of((try palette.next()).?);
     try std.testing.expectEqualStrings("stone", block.id);
     try std.testing.expectEqualStrings("b", (try block.properties.?.get("a")).?.string);
+
+    // A default state saved as its id alone.
+    const default: Block = try .of(.{ .string = "minecraft:deepslate" });
+    try std.testing.expectEqualStrings("minecraft:deepslate", default.id);
+    try std.testing.expectEqual(null, default.properties);
+    try std.testing.expectError(error.InvalidChunk, Block.of(.{ .int = 1 }));
+
+    // The same in a palette with compounds too, wrapped.
+    const wrapped = [_]u8{ 10, 0, 0, 8, 0, 0, 0, 5 } ++ "stone".* ++ [_]u8{ 0, 0 };
+    const unwrapped: Block = try .of(.{ .compound = try nbt.parse(&wrapped) });
+    try std.testing.expectEqualStrings("stone", unwrapped.id);
+    try std.testing.expectEqual(null, unwrapped.properties);
 
     // Without its sections, it isn't a chunk.
     try std.testing.expectError(error.InvalidChunk, parse(&.{ 10, 0, 0, 0 }));
