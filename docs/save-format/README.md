@@ -376,7 +376,7 @@ Water fills the blocks below sea level: the top water block of a sea or lake is 
 
 ## 7. Map chunks
 
-`mapchunk.data` is one plain Protobuf message per chunk column, not compressed: ~10 KB per row in the 1.22.7 world, ~17 KB in the 1.19 sample. *(Verified (1.19, 1.22.7): every row parses completely.)* Its per-column maps hold 1,024 values, one per block column at index `z * 32 + x`, written as repeated varints (not packed). The message is `ServerMapChunk`; names and types are the schema's, and the meanings come from the game's [`IMapChunk`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IMapChunk.cs) interface.
+`mapchunk.data` is one plain Protobuf message per chunk column, not compressed: ~10 KiB per row in the 1.22.7 world, ~17 KiB in the 1.19 sample. *(Verified (1.19, 1.22.7): every row parses completely.)* Its per-column maps hold 1,024 values, one per block column at index `z * 32 + x`, written as repeated varints (not packed). The message is `ServerMapChunk`; names and types are the schema's, and the meanings come from the game's [`IMapChunk`](https://github.com/anegostudios/vsapi/blob/63d33f70018c606fb0f70ead900fe90625fbd7b2/Common/API/IMapChunk.cs) interface.
 
 | # | Wire type | Per row | Values (1.22.7 · 1.19) | Name |
 | --- | --- | --- | --- | --- |

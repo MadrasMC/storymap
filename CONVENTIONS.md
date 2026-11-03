@@ -27,6 +27,10 @@ Everything that knows Vintage Story, its save format, its assets and its block n
 
 Switching to a new Zig release must cause a Storymap version bump in `build.zig.zon`.
 
+## Sizes
+
+Sizes of memory and files are written in binary units (KiB, MiB and GiB), with a space before the unit: `2 GiB`, `256 KiB`. Code that formats bytes must divide by powers of two (`1 << 20`). If a tool counts in decimal units, it must be converted to binary units. Some tools may write "KB" and "MB" when they actually count in binary (Windows Explorer and PowerShell's `1MB` count in 1024s); convert units based on what it is and not what the label says.
+
 ## Zig conventions
 
 ### Parameter order

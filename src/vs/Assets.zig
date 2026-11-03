@@ -55,7 +55,7 @@ pub const Name = struct {
     path: []const u8,
 };
 
-/// The largest asset file read; the biggest in 1.22.7 is a few MB.
+/// The largest asset file read; the biggest in 1.22.7 is a few MiB.
 const maxFileBytes = 64 << 20;
 
 /// `game` is the install folder, `data` the data folder. A mod that can't be read is skipped

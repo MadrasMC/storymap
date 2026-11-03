@@ -114,7 +114,7 @@ Everything a map needs from the assets is prepared once, by [`src/vs/Prepared.zi
 - **Never left half written:** the file is written beside its path, as `<file name>.<process id>.partial`, and renamed over it once complete, and a partial file is removed if writing fails. A file that doesn't start with `STORYBLK` is never replaced. A partial file left by a killed writer is removed by a later prepare, once it's an hour old. A file a render has mapped can be replaced: the render goes on reading what it mapped.
 - **A save's unknown blocks are reported:** those of mods that aren't installed, and any others the file doesn't have.
 
-Preparing 1.22.7 with Primitive Survival takes about 2 s, for 14,781 blocks, and drawing their sprites about 25 s more, at a peak of 116 MB of memory beside the file: block type files are read one at a time, each freed before the next, with only how each shape file is placed kept between them, and sprites are written out as they're drawn.
+Preparing 1.22.7 with Primitive Survival takes about 2 s, for 14,781 blocks, and drawing their sprites about 25 s more, at a peak of 116 MiB of memory beside the file: block type files are read one at a time, each freed before the next, with only how each shape file is placed kept between them, and sprites are written out as they're drawn.
 
 ## Sprites
 
@@ -125,4 +125,4 @@ The isometric view's sprites of every prepared block are drawn while preparing, 
 - **Pixels shared:** sprites that come out the same keep one copy of their pixels, found by hashing each sprite as it's drawn. A rotation is mostly other sprites seen again: a turned plant at 90° is the same plant two turns along.
 - **Its own version:** `sprites` and `sprite_layers` carry the version of how sprites are drawn (`Sprites.generatorVersion`), which goes into the file's hash, so a change prepares the file again.
 - **Laid out to be read in place:** everything in the two sections lies at a multiple of its own size, in little-endian order ([spec §3](storyblk/spec.md#3-layout)).
-- **Size:** for 1.22.7 with Primitive Survival, 55,559 sprites in each rotation, 83,384 of the 222,236 different, 333 MB of pixels, drawn in about 25 s; without sharing, it would be 784 MB. A single rotation is 196 MB; without the shapes' alternates, it was 108 MB, and without their turns too, 88 MB.
+- **Size:** for 1.22.7 with Primitive Survival, 55,559 sprites in each rotation, 83,384 of the 222,236 different, 317 MiB of pixels, drawn in about 25 s; without sharing, it would be 748 MiB. A single rotation is 187 MiB; without the shapes' alternates, it was 108 MiB, and without their turns too, 88 MiB.

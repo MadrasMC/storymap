@@ -72,7 +72,7 @@
 				<li><p><b>A subtree is the unit of work.</b> It's one tile at the <em>cut level</em> and every tile under it. Below the cut, work is only ever handed out a whole subtree at a time.</p></li>
 				<li><p><b>Each subtree belongs to one worker, start to finish.</b> So the worker can shrink each finished tile straight into its parent's buffer, without waiting for or coordinating with any other worker.</p></li>
 				<li><p><b>The cut is the highest level with at least 4 tiles per worker.</b> That makes between 4 and just under 16 subtrees per worker. Subtrees differ in size, so a worker that finishes early takes the next one instead of sitting idle. In a small world no level has that many tiles, and the cut is at level 0.</p></li>
-				<li><p><b>Each finished subtree leaves one waiting half</b>: its tile at the cut level, shrunk to half size, 256 KB, a quarter of a 1 MB tile. It waits until the levels above the cut are built, so the waiting halves take about <em>subtrees × 256 KB</em>: with 14 workers, between 14 and 56 MB. The tile list says how many subtrees there are, so that space is set aside before any work starts, along with one more block the size of the level above the cut. The levels above take turns with the two. Separately, each worker keeps one full-size 1 MB buffer per level of its subtree.</p></li>
+				<li><p><b>Each finished subtree leaves one waiting half</b>: its tile at the cut level, shrunk to half size, 256 KiB, a quarter of a 1 MiB tile. It waits until the levels above the cut are built, so the waiting halves take about <em>subtrees × 256 KiB</em>: with 14 workers, between 14 and 56 MiB. The tile list says how many subtrees there are, so that space is set aside before any work starts, along with one more block the size of the level above the cut. The levels above take turns with the two. Separately, each worker keeps one full-size 1 MiB buffer per level of its subtree.</p></li>
 			</ol>
 			<p>Above the cut, the levels are built one at a time from the waiting halves, with the workers sharing out each level's tiles.</p>
 			<p>Below, the same steps run on a made-up world of 16 × 16 tiles. Try 1, 2 and 3 workers: the cut moves, and so does the number of waiting halves.</p>
@@ -123,8 +123,8 @@
 				<table>
 					<thead><tr><th>What</th><th>Size</th><th>How many</th></tr></thead>
 					<tbody>
-						<tr><td>Tile buffers</td><td>1 MB each</td><td>one per level of a subtree, per worker</td></tr>
-						<tr><td>Waiting halves</td><td>256 KB each</td><td>one per subtree, from 4 to just under 16 per worker, plus one block the size of the level above the cut, which the levels above take turns with; all set aside before any work starts</td></tr>
+						<tr><td>Tile buffers</td><td>1 MiB each</td><td>one per level of a subtree, per worker</td></tr>
+						<tr><td>Waiting halves</td><td>256 KiB each</td><td>one per subtree, from 4 to just under 16 per worker, plus one block the size of the level above the cut, which the levels above take turns with; all set aside before any work starts</td></tr>
 						<tr><td>The tile list</td><td>a few bytes per tile</td><td>every tile with something in it</td></tr>
 					</tbody>
 				</table>
@@ -581,8 +581,8 @@
 		pyramid.replaceChildren(...groups);
 
 		const buffersInUse = sim.workers.reduce((sum, w) => sum + w.buffers.length, 0);
-		const mb = (n) => (n * 0.25).toFixed(2).replace(/\.?0+$/, "");
-		$("#meter").innerHTML = `As real 512-pixel tiles: <b>${buffersInUse} MB</b> of tile buffers, <b>${mb(slotCount())} MB</b> set aside for waiting halves, ${waiting()} filled.`;
+		const mib = (n) => (n * 0.25).toFixed(2).replace(/\.?0+$/, "");
+		$("#meter").innerHTML = `As real 512-pixel tiles: <b>${buffersInUse} MiB</b> of tile buffers, <b>${mib(slotCount())} MiB</b> set aside for waiting halves, ${waiting()} filled.`;
 		$("#tick").textContent = `step ${sim.step}`;
 		$("#status").textContent = sim.status;
 		$("#step").disabled = sim.done;

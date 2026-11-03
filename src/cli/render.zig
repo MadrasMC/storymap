@@ -570,8 +570,8 @@ fn filesOf(arena: std.mem.Allocator, name: []const u8, format: tiles.Format, pla
 }
 
 /// How much memory an image may need before a render asks about it.
-const memoryToAsk = 2_000_000_000;
-const memoryToAskText = "2 GB";
+const memoryToAsk = 2 << 30;
+const memoryToAskText = "2 GiB";
 
 /// Stops at an image larger than its format allows, and asks about images that need more than
 /// `memoryToAsk`, unless `yes`; without a terminal to ask on, it stops.
@@ -584,16 +584,16 @@ fn checkImages(io: std.Io, views: []const []const tiles.ImageFile, format: tiles
         if (@max(width, height) > format.maxSide()) console.fail("{s}: {} × {} pixels, cannot exceed {s}'s {} × {} limit", .{ file.path, width, height, format.name(), format.maxSide(), format.maxSide() });
         const bytes = file.placement.memory(format);
         if (bytes <= memoryToAsk) continue;
-        console.warn("{s}: {} × {} pixels, may use up to about {d:.1} GB", .{ file.path, width, height, gigabytes(bytes) });
+        console.warn("{s}: {} × {} pixels, may use up to about {d:.1} GiB", .{ file.path, width, height, gibibytes(bytes) });
         largest = @max(largest, bytes);
     };
     if (largest == 0 or yes) return;
-    const answer = console.confirm(io, "are you sure?", .{}) orelse console.fail("images may use up to {d:.1} GB of memory: pass `--yes` to continue", .{gigabytes(largest)});
+    const answer = console.confirm(io, "are you sure?", .{}) orelse console.fail("images may use up to {d:.1} GiB of memory: pass `--yes` to continue", .{gibibytes(largest)});
     if (!answer) console.exit(1);
 }
 
-fn gigabytes(bytes: u64) f64 {
-    return @as(f64, @floatFromInt(bytes)) / 1e9;
+fn gibibytes(bytes: u64) f64 {
+    return @as(f64, @floatFromInt(bytes)) / (1 << 30);
 }
 
 /// Stops with a message for an image too large to place.

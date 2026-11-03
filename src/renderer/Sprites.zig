@@ -103,7 +103,7 @@ pub const Sections = struct {
     /// Where each different sprite's layers are, by their hash (`shareLast`).
     offsets: std.AutoHashMapUnmanaged([16]u8, u32) = .empty,
 
-    /// How long a buffer to give `init`: enough for many sprites, the largest about 92 KB.
+    /// How long a buffer to give `init`: enough for many sprites, the largest 90 KiB.
     pub const bufferLength = 1 << 20;
 
     /// The bytes of a `sprites` section of `count` sprites in each rotation.

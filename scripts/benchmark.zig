@@ -194,7 +194,7 @@ fn writeRow(out: *Io.Writer, result: Result, runs: Runs, saveHash: []const u8) !
     if (runs.isometric) {
         if (result.isometric) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
     }
-    try out.print(" {d:.3} s | {d:.0} MB |\n", .{ result.seconds.open, @as(f64, @floatFromInt(result.peak)) / 1e6 });
+    try out.print(" {d:.3} s | {d:.0} MiB |\n", .{ result.seconds.open, @as(f64, @floatFromInt(result.peak)) / (1 << 20) });
     try out.flush();
 }
 

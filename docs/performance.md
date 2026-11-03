@@ -8,8 +8,8 @@ A world of 29,192 chunks, 2.79 km² drawn as 34 tiles in 5 levels. Intel Core Ul
 
 | version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.2.0 | 442c9598fa0d | 0.224 s | 12.5 | 130209 | 0.210 s | 0.015 s | 153 MB |
-| 0.1.0 | 442c9598fa0d | 0.278 s | 10.1 | 105016 | 0.260 s | 0.014 s | 170 MB |
+| 0.2.0 | 442c9598fa0d | 0.224 s | 12.5 | 130209 | 0.210 s | 0.015 s | 146 MiB |
+| 0.1.0 | 442c9598fa0d | 0.278 s | 10.1 | 105016 | 0.260 s | 0.014 s | 162 MiB |
 
 ## Measuring
 

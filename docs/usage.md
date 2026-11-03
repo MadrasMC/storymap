@@ -68,11 +68,11 @@ Images are in the tiles' format ([Tile formats](#tile-formats)).
 
 | format | memory | largest |
 | --- | --- | --- |
-| PNG | written as it's drawn: about 2 KB per pixel of width, at any height | 2,147,483,647 a side |
+| PNG | written as it's drawn: about 2 KiB per pixel of width, at any height | 2,147,483,647 a side |
 | JPEG XL | held whole: about 12 bytes per pixel | 1,073,741,824 a side |
 | WebP | held whole: about 64 bytes per pixel | 16,383 a side |
 
-Before drawing, a render asks about images that need more than 2 GB of memory, and stops without a terminal to ask on.
+Before drawing, a render asks about images that may use more than 2 GiB of memory, and stops without a terminal to ask on.
 `--yes`, or `-y`, writes them without asking.
 
 ## Appearance

@@ -73,7 +73,7 @@ pub const Decoder = struct {
     blockEntityMemory: std.heap.FixedBufferAllocator,
 
     /// Room for one chunk's parsed block entities. The busiest chunk in the test saves (a ruin
-    /// with 659 chiseled blocks, 134 KB of raw data) needs 615 KB; see docs/rendering.md.
+    /// with 659 chiseled blocks, 131 KiB of raw data) needs 601 KiB; see docs/rendering.md.
     pub const defaultBlockEntityBytes = 2 << 20;
 
     pub fn init(allocator: std.mem.Allocator, blockEntityBytes: usize) !Decoder {

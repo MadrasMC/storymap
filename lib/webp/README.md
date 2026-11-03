@@ -28,4 +28,4 @@ try dir.writeFile(io, .{ .sub_path = "tile.webp", .data = file });
 | `Encoder.working.peak`, `Encoder.working.overflows` | the most working memory an encode took, and how many allocations didn't fit and came from `malloc` |
 | `Options.method` | libwebp's trade between speed and size, from 0, the fastest (the default), to 6 |
 | `Options.effort` | how hard it looks for a smaller file, from 0 (the default) to 100 |
-| `Options.workingMemory` | the working memory's size in bytes; by default 4 MB and 48 bytes a pixel (16.6 MB for 512 × 512, where tiles took up to 11.6) |
+| `Options.workingMemory` | the working memory's size in bytes; by default 4 MiB and 48 bytes a pixel (16 MiB for 512 × 512, where tiles took up to 11.0) |

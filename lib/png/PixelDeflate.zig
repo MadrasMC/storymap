@@ -65,7 +65,7 @@ pub fn compress(self: *PixelDeflate, data: []const u8, rowBytes: usize, out: []u
     lengths.counts[256] = 1;
 
     var bits: BitWriter = .{ .out = out };
-    // CMF: deflate with a 32 KB window; FLG: the fastest level, and a multiple of 31.
+    // CMF: deflate with a 32 KiB window; FLG: the fastest level, and a multiple of 31.
     bits.writeBytes(&.{ 0x78, 0x01 });
     const codes: Codes = .of(&lengths, &distances);
     if (codes.bits(&lengths, &distances) < data.len * 8) {

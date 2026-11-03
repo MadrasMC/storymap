@@ -338,7 +338,7 @@ const ChunkCache = struct {
         }
     };
 
-    /// Chunks remembered, and how many of them can have blocks to draw: 80 KB each.
+    /// Chunks remembered, and how many of them can have blocks to draw: 80 KiB each.
     pub const defaultChunks = 4096;
     pub const defaultChunksWithBlocks = 128;
 

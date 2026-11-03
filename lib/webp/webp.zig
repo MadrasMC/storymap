@@ -13,8 +13,8 @@ pub const Options = struct {
     /// How hard it looks for a smaller file, from 0 to 100.
     effort: f32 = 0,
     /// The working memory libwebp allocates from, in bytes; what doesn't fit comes from `malloc`.
-    /// By default 4 MB and 48 bytes a pixel of the largest image: 512 × 512 tiles took up to
-    /// 11.6 MB, and a 64 × 48 image 1.2 MB.
+    /// By default 4 MiB and 48 bytes a pixel of the largest image: 512 × 512 tiles took up to
+    /// 11.0 MiB, and a 64 × 48 image 1.1 MiB.
     workingMemory: ?usize = null,
 };
 
