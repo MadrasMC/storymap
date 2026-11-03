@@ -153,18 +153,23 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
     const info = try contents.info(encoded.allocator());
     var partial: storyblk.PartialFile = try .create(io, std.Io.Dir.cwd(), path);
     errdefer partial.discard();
+    const entries = try encoded.allocator().alignedAlloc(u8, .@"4", Sprites.Sections.entriesLength(plan.count));
     // Only their lengths matter yet: blocks' sprites aren't known, but their records' sizes are.
-    const entryBytes = try encoded.allocator().alloc(u8, Sprites.Sections.entriesLength(plan.count));
-    const layout = try encodeSections(encoded.allocator(), contents, entryBytes);
+    const layout = try encodeSections(encoded.allocator(), contents, entries);
 
     var layersBuffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
-    var sprites: Sprites.Sections = .init(io, partial.file, try storyblk.lastOffset(info, &layout), &layersBuffer);
-    try isometric.drawSprites(arena, drawables, plan, &sprites);
-    contents.useSprites(plan.blocks);
-    try sprites.flush();
-    console.log("sprites: {} drawn in {d:.1} s, {} unique", .{ sprites.entries.items.len, secondsSince(io, start), sprites.offsets.count() });
+    var sprites: Sprites.Sections = .init(io, partial.file, try storyblk.lastOffset(info, &layout), &layersBuffer, entries, isometric.blockWidth);
+    {
+        // From `gpa`, freed once drawn: in an arena, this would size a block far beyond what's used.
+        defer sprites.offsets.deinit(init.gpa);
+        try sprites.ensureCapacity(init.gpa);
+        try isometric.drawSprites(arena, drawables, plan, &sprites);
+        contents.useSprites(plan.blocks);
+        try sprites.flush();
+        console.log("sprites: {} drawn in {d:.1} s, {} unique", .{ sprites.count, secondsSince(io, start), sprites.offsets.count() });
+    }
 
-    const sections = try encodeSections(encoded.allocator(), contents, try sprites.entryBytes(encoded.allocator(), isometric.blockWidth));
+    const sections = try encodeSections(encoded.allocator(), contents, entries);
     _ = scratch.reset(.free_all);
     try partial.finish(hash, info, &sections, @intCast(sprites.layers.length));
 }

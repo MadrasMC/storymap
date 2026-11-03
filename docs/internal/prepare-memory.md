@@ -1,6 +1,6 @@
 # Memory of `storymap prepare`
 
-How the peak memory of `storymap prepare` changed when the prepared blocks moved from a folder of files to one `.storyblk` file, the changes that brought it from 2,385 MB to 92 MB, and what drawing every rotation added to it.
+How the peak memory of `storymap prepare` changed when the prepared blocks moved from a folder of files to one `.storyblk` file, the changes that brought it from 2,385 MB to 92 MB, what drawing every rotation added to it, and how that was taken back.
 
 ## Measurements
 
@@ -11,7 +11,7 @@ From 4a5c21c on, it's 55,559 sprites in each rotation.
 | --- | --- |
 | private | peak private memory (`PeakPagedMemorySize64`): what the process holds that only it can use |
 | working set | peak physical memory in use by the process (`PeakWorkingSet64`), including mapped files |
-| reading, drawing, writing | the stages of preparing, the first two taking about 2 s and 5 s |
+| reading, drawing, writing | the stages of preparing, the first two taking about 2 s and 5 s, or 21 s for every rotation |
 
 Stage figures were sampled every 20 ms, so they can miss a short spike.
 Totals come from the system's own peak counters.
@@ -35,7 +35,13 @@ Arena figures come from `queryCapacity` and counting allocators in throwaway bui
 | 5f343d6 | per-file arena capped, entries grown outside an arena | 92 MB | 126 MB |
 | d97fc40 | sprites written from a 1 MiB buffer instead of a mapped window | 92 MB | 73 MB |
 | 4a5c21c | a cube's north and west faces kept | 99 MB | 77 MB |
+| 4704e21 | sprite records written in place | 93 MB | 77 MB |
+| 5ff45ed | each overlay decoded once | 93 MB | 78 MB |
+| 0519a02 | each image made in place | 93 MB | 78 MB |
+| 522fb7b | texture colours taken from decoded images | 93 MB | 78 MB |
 | fe4cb32 | every rotation drawn, identical pixels shared | 116 MB | 84 MB |
+| b6e58bf | the last four steps merged with every rotation | 119 MB | 81 MB |
+| f501fc5 | sprite hash table outside the arena, for drawing only | 93 MB | 79 MB |
 
 Up to 4a5c21c, reading stayed at about 2 s, and drawing at about 5 s, perhaps 0.2 s slower with the mapped file.
 From 83bfd70 on, each step's file was compared byte for byte with the last commit's and matched, apart from colour maps changing format in dd06565, and 8490221, which was compared between `storymap prepare` and a render instead.
@@ -180,6 +186,49 @@ Nothing above `FileBuffer` changed, and the file stayed byte-identical.
 
 A full disk is now an ordinary write error on every system.
 
+### Sprite records
+
+The peak had risen to 95–99 MB by 66c9e18, and it was in drawing: 94 MB sampled against reading's 84 MB.
+Each sprite's record went on a list that grew as sprites were drawn, and the finished list was copied into the `sprites` section.
+The plan already gives the number of sprites, so the list only repeated what was known.
+
+4704e21 sizes the section once, from `plan.count`, and `Sections.add` writes each record in its place.
+Drawing and writing fell to 65 MB.
+
+### Overlays
+
+An overlay is a texture drawn over others, such as an ore over each rock.
+Reading decoded overlays 1,601 times for 260 distinct files.
+
+5ff45ed decodes each one the first time and keeps it in the reading arena, about 1 MB in all.
+That saved about 0.2 s of reading, measured in only two undisturbed pairs of runs.
+
+### Images
+
+`Images.make` decoded each texture into the per-file arena, and `Images.index` then copied the finished image to contents.
+0519a02 has `make` choose where each step writes, so the last step's image is already in contents.
+A plain texture decodes straight there, and one with a half or a turn is written there by that step.
+
+stb's own buffer is still copied once, into that place.
+The peak didn't change, as the copies had been short-lived.
+
+### Texture colours
+
+A block's colours were worked out from the PNG, read and decoded apart from its images, so 1,451 of the 1,613 colour textures were decoded twice.
+
+| measure | value |
+| --- | --- |
+| PNGs read for images | 3,729 |
+| PNGs read for colours | 1,613 |
+| PNGs read for both | 1,451 |
+| time decoding for colours | 86 ms |
+
+522fb7b names a block's colour and grain textures before its images are made.
+When `make` decodes one of those files, it takes the colours before crops, overlays and turns change the pixels, and keeps them only for that block.
+Decodes for colours fell from 1,613 to 427, which leaves textures with no image, and those whose image was made for another block.
+
+That's a gain of about 0.1 s, too small to measure in these runs.
+
 ### Every rotation
 
 The file now holds the isometric view in 4 rotations, 222,236 sprites, of which 83,384 are unique.
@@ -193,10 +242,53 @@ The entries and the table of hashes are sized once, from the plan.
 | drawing | 5.2 s | 21.2 s |
 | file | 198.7 MB | 337.6 MB |
 
-Reading didn't change, so the 17 MB is after it, but it hasn't been broken down.
+Reading didn't change, so the 17 MB is after it: mostly the table of hashes, and the arena block it took (see Sprite hash table).
 Without sharing, the pixels alone would be 784 MB, not 333 MB.
 
 These two runs used the system's peak counters after the process exited, with both binaries in one folder.
+
+### Merging the steps with every rotation
+
+The steps from 4704e21 to 522fb7b were made beside fe4cb32, and b6e58bf merged them with it.
+The `sprites` section is now sized for every rotation and written in place, and sprites share their layers as before.
+The file is byte-identical to fe4cb32's.
+
+| memory while writing | fe4cb32 | b6e58bf |
+| --- | --- | --- |
+| contents arena | 94.3 MB | 102.4 MB |
+| sections arena | 17.8 MB | 12.8 MB |
+| other process memory | 3.5 MB | 3.5 MB |
+| total | 115.6 MB | 118.7 MB |
+| private | 116 MB | 119 MB |
+
+Holding the sprite records once took 5 MB off the sections arena.
+The contents arena grew by 8 MB, as an arena sizes a new block at 1.5 times its last one plus the request.
+On fe4cb32, the records' 3.4 MB took the new block, and the table of hashes fitted in it.
+After the merge, the table's 11 MB takes it.
+
+Drawing took 21.4–21.8 s on fe4cb32 and 21.3–22.0 s merged.
+
+The peak lasts only for the second encoding, just before the contents arena is freed.
+Samples and counters read while the process runs miss it, and showed 103 and 111 MB.
+
+### Sprite hash table
+
+The table of hashes has 524,288 slots of 21 bytes, 11 MB, as it's sized for every sprite before any are compared.
+In the contents arena, it took a block of 45.1 MB, and about 34 MB of that was never touched.
+That's why private memory stayed at 111 MB through drawing while the working set was 78 MB.
+
+f501fc5 allocates the table from `gpa` and frees it when drawing ends, before the second encoding.
+The contents arena stays at 57.3 MB, its size after reading.
+`Sections.shareLast` no longer allocates, as all the room is made first.
+
+| over 3 alternating runs | before | after |
+| --- | --- | --- |
+| private | 118.8 MB | 93.0–93.1 MB |
+| working set | 80.6 MB | 78.9–79.0 MB |
+| contents arena after drawing | 102.4 MB | 57.3 MB |
+| drawing | 21.1–21.4 s | 20.6–21.0 s |
+
+These runs read the peak counters from the process's handle after it exited, so its last moments count.
 
 ## Estimates and measurements
 
@@ -210,11 +302,16 @@ Several estimates made along the way were wrong, and measuring settled each one.
 | skipping `open` takes the peak to 252 MB | 283 MB: most of the rise was writing |
 | freeing contents takes the peak to 252 MB | 261 MB: encoding still needs them |
 | the mapped file alone takes the peak to about 60–70 MB | 117 MB: reading was still higher |
+| a few hundred textures are decoded for both colours and images | 1,451 of 1,613 |
+| the merge added 8 MB to the peak | 3 MB: the earlier counters missed the last moments |
+| moving the table of hashes takes the peak to about 85 MB | 93 MB: a short spike that samples miss |
 
 ## Findings
 
 - **Arenas keep what they replace.** Anything that grows by reallocating should grow outside an arena, or be sized first.
 - **Arenas free all at once.** Data with different lifetimes needs different arenas: what's small and needed later can pin everything beside it.
+- **Arenas size a new block by the last one.** A large request late in a run can reserve far more than it uses, so it's better allocated on its own.
+- **A running process's peak counters can miss its end.** Read them from its handle after it exits.
 - **`std.heap.page_allocator` commits on Windows.** A large allocation counts against the commit limit even if never touched.
 - **`Allocator.alloc` fills memory in safe builds.** That touches every page of a large allocation; `rawAlloc` doesn't.
 - **`Io.File.MemoryMap` ignores its offset on Windows in Zig 0.17.** `createFileMap` passes `null` to `NtMapViewOfSection`.
@@ -224,7 +321,8 @@ Several estimates made along the way were wrong, and measuring settled each one.
 
 ## Remaining
 
-At 116 MB, the peak is past reading, as drawing every rotation raised it.
+The peak is 93 MB, the same as before every rotation was drawn.
+Samples reach only 80–84 MB, so it's a short spike, probably in reading, but it hasn't been found.
 Drawing still takes about 4 times as long, as every sprite is drawn before it can be compared: skipping turned plants, which are mostly other turns of themselves, would save about 30% of the sprites.
 
 Only Windows has run this: Linux and macOS have only been compiled, and only one mod has been tried (`TODO.md`, items 13 and 14).

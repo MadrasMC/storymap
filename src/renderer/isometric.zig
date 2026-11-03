@@ -636,9 +636,9 @@ const Sprite = Sprites.Sprite;
 const SpriteLayers = Sprites.SpriteLayers;
 
 /// Draws `cube`'s sprite in its variant `variant`, as `rotation` shows it, into `sections`.
-fn cubeSprite(sections: *Sprites.Sections, allocator: std.mem.Allocator, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb, rotation: Rotation) !void {
+fn cubeSprite(sections: *Sprites.Sections, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb, rotation: Rotation) !void {
     const left, const right = rotation.sides(cube);
-    const room = try sections.add(allocator, .{
+    const room = try sections.add(.{
         .left = 0,
         .top = 0,
         .width = blockWidth,
@@ -821,7 +821,7 @@ pub const turns = 8;
 /// it shows if at least half of them are covered, the average of their colours, the depth of the
 /// nearest. Added to `sections`, trimmed to the pixels it shows, and returned with its layers
 /// there.
-fn shapeSprite(sections: *Sprites.Sections, allocator: std.mem.Allocator, shape: *const world.Shape, variant: usize, turn: ?usize, rotation: Rotation, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
+fn shapeSprite(sections: *Sprites.Sections, shape: *const world.Shape, variant: usize, turn: ?usize, rotation: Rotation, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
     std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
     target.clear();
     const scale: f32 = samples;
@@ -889,7 +889,7 @@ fn shapeSprite(sections: *Sprites.Sections, allocator: std.mem.Allocator, shape:
         .height = @intCast(height),
         .flags = .{ .tinted = anyTinted, .fills = fills },
     };
-    const room = try sections.add(allocator, sprite);
+    const room = try sections.add(sprite);
     const plain = room.plain;
     const tinted = room.tinted;
     const depths = room.depths;
@@ -1005,24 +1005,23 @@ pub fn planSprites(arena: std.mem.Allocator, drawables: []const Drawable) !Sprit
 /// Draws the sprites `plan` lists into `sections`, in every rotation, one rotation after another
 /// and one sprite at a time, each run by the first block that has it. Sprites that come out the
 /// same share their layers, as most of a rotation's are another's: a turned plant's every eighth
-/// of a circle, for one.
+/// of a circle, for one. `sections.ensureCapacity` must have made room.
 pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: SpritePlan, sections: *Sprites.Sections) !void {
     var target = try shapeTarget(arena);
-    try sections.ensureCapacity(arena, plan.count * Sprites.rotationCount);
     for (std.enums.values(Rotation), 0..) |rotation, quarter| {
         const earlier = quarter * plan.count;
         for (plan.blocks, drawables) |block, drawable| {
-            if (block.variants == 0 or block.first + earlier != sections.entries.items.len) continue;
+            if (block.variants == 0 or block.first + earlier != sections.count) continue;
             if (drawable.cube) |cube| {
                 for (0..block.variants) |variant| {
-                    try cubeSprite(sections, arena, cube, variant, drawable.colour, rotation);
-                    try sections.shareLast(arena);
+                    try cubeSprite(sections, cube, variant, drawable.colour, rotation);
+                    sections.shareLast();
                 }
             } else {
                 target.keepsOpacity = drawable.seeThrough;
                 for (0..block.turns) |turn| for (drawable.shapes) |*shape| for (0..block.variants) |variant| {
-                    _ = try shapeSprite(sections, arena, shape, variant, if (drawable.turned) turn else null, rotation, &target);
-                    try sections.shareLast(arena);
+                    _ = try shapeSprite(sections, shape, variant, if (drawable.turned) turn else null, rotation, &target);
+                    sections.shareLast();
                 };
             }
         }
@@ -1200,7 +1199,8 @@ test shapeSprite {
     const file = try tmp.dir.createFile(io, "sprites", .{ .read = true });
     defer file.close(io);
     var buffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
-    var sections: Sprites.Sections = .init(io, file, 0, &buffer);
+    var entries: [Sprites.Sections.entriesLength(16)]u8 align(4) = undefined;
+    var sections: Sprites.Sections = .init(io, file, 0, &buffer, &entries, blockWidth);
     const red: [4][4]u8 = @splat(.{ 200, 0, 0, 255 });
     const image: world.Image = .{ .width = 2, .height = 2, .pixels = &red };
     const textures = [_]world.CubeFaces.Face{.{ .plain = &.{&image} }};
@@ -1211,7 +1211,7 @@ test shapeSprite {
 
     // A whole block's box is the cube, filling the square, its faces lit as a cube's and each
     // pixel as deep as a cube's.
-    const cube, const cubePixels = try shapeSprite(&sections, allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
+    const cube, const cubePixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expectEqual([4]i64{ 0, 0, w, w }, [4]i64{ cube.left, cube.top, cube.width, cube.height });
     try std.testing.expect(cube.flags.fills);
     try std.testing.expect(!cube.flags.tinted);
@@ -1225,7 +1225,7 @@ test shapeSprite {
     try std.testing.expect(!cubePixels.shows(pixelAt(&cube, 0, 0).?));
 
     // A slab leaves the top of the square empty, for what's behind it to show.
-    const slab, const slabPixels = try shapeSprite(&sections, allocator, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
+    const slab, const slabPixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expect(!slab.flags.fills);
     try std.testing.expectEqual(w / 4, slab.top);
     try std.testing.expectEqual(null, pixelAt(&slab, w / 8, w / 2));
@@ -1234,13 +1234,13 @@ test shapeSprite {
     // A plank twice as long as the block reaches out of its square both ways, drawn whole.
     var plank = testBox(.{ 2, 1.0 / 16.0, 1 });
     plank.transform[0][3] = -0.5;
-    const long, _ = try shapeSprite(&sections, allocator, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, .deg0, &target);
+    const long, _ = try shapeSprite(&sections, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expectEqual(-w / 4, long.left);
     try std.testing.expectEqual(w + w / 2, long.width);
 
     // A tinted texture goes into the tinted layer, covering the plain one.
     const tinted = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
-    const grass, const grassPixels = try shapeSprite(&sections, allocator, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, .deg0, &target);
+    const grass, const grassPixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, .deg0, &target);
     try std.testing.expect(grass.flags.tinted);
     const p = pixelAt(&grass, top[0], top[1]).?;
     try std.testing.expectEqual(colours[0], grassPixels.tinted.?[p]);
@@ -1252,9 +1252,9 @@ test shapeSprite {
     wall.transform[0][3] = 0.75;
     const shape: world.Shape = .{ .boxes = &.{wall}, .textures = &textures };
     const middle = [2]i64{ w / 2, w * 5 / 16 };
-    const unturned, _ = try shapeSprite(&sections, allocator, &shape, 0, null, .deg0, &target);
+    const unturned, _ = try shapeSprite(&sections, &shape, 0, null, .deg0, &target);
     try std.testing.expectEqual(null, pixelAt(&unturned, middle[0], middle[1]));
-    const turned, const turnedPixels = try shapeSprite(&sections, allocator, &shape, 0, turns / 2, .deg0, &target);
+    const turned, const turnedPixels = try shapeSprite(&sections, &shape, 0, turns / 2, .deg0, &target);
     try std.testing.expect(turnedPixels.shows(pixelAt(&turned, middle[0], middle[1]).?));
 
     // Turns 0 and 7, −22.5° and −67.5°, are as far either side of south-east, where the view
@@ -1264,8 +1264,8 @@ test shapeSprite {
     post.transform[0][3] = 0.8125;
     post.transform[2][3] = 0.4375;
     const postShape: world.Shape = .{ .boxes = &.{post}, .textures = &textures };
-    const right, _ = try shapeSprite(&sections, allocator, &postShape, 0, 0, .deg0, &target);
-    const left, _ = try shapeSprite(&sections, allocator, &postShape, 0, 7, .deg0, &target);
+    const right, _ = try shapeSprite(&sections, &postShape, 0, 0, .deg0, &target);
+    const left, _ = try shapeSprite(&sections, &postShape, 0, 7, .deg0, &target);
     try std.testing.expect(right.left > w / 2);
     try std.testing.expectEqual(@as(i32, w) - right.left - right.width, left.left);
     try std.testing.expectEqual(right.top, left.top);
@@ -1273,8 +1273,8 @@ test shapeSprite {
     // At 90° a wall along the east of its place is at the back, as one along the north is at 0°.
     var northWall = testBox(.{ 1, 1, 0.25 });
     northWall.transform[2][3] = 0;
-    const atBack, const atBackPixels = try shapeSprite(&sections, allocator, &.{ .boxes = &.{northWall}, .textures = &textures }, 0, null, .deg0, &target);
-    const fromEast, const fromEastPixels = try shapeSprite(&sections, allocator, &shape, 0, null, .deg90, &target);
+    const atBack, const atBackPixels = try shapeSprite(&sections, &.{ .boxes = &.{northWall}, .textures = &textures }, 0, null, .deg0, &target);
+    const fromEast, const fromEastPixels = try shapeSprite(&sections, &shape, 0, null, .deg90, &target);
     try std.testing.expectEqual(atBack.left, fromEast.left);
     try std.testing.expectEqual(atBack.top, fromEast.top);
     try std.testing.expectEqual(atBack.width, fromEast.width);
@@ -1324,15 +1324,17 @@ test drawSprites {
     defer tmp.cleanup();
     const file = try tmp.dir.createFile(io, "sprites", .{ .read = true });
     defer file.close(io);
-    var buffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
-    var sections: Sprites.Sections = .init(io, file, 0, &buffer);
     const plan = try planSprites(allocator, &drawables);
     try std.testing.expectEqual(3 + turns + 6, plan.count);
+    var buffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
+    const entries = try allocator.alignedAlloc(u8, .@"4", Sprites.Sections.entriesLength(plan.count));
+    var sections: Sprites.Sections = .init(io, file, 0, &buffer, entries, blockWidth);
+    try sections.ensureCapacity(allocator);
     try drawSprites(allocator, &drawables, plan, &sections);
     try sections.flush();
     const blocks = plan.blocks;
 
-    const sprites = try Sprites.parse(try sections.entryBytes(allocator, blockWidth), try sections.readLayers(allocator));
+    const sprites = try Sprites.parse(entries, try sections.readLayers(allocator));
     try std.testing.expectEqual(plan.count, sprites.count);
     try std.testing.expectEqual(plan.count * Sprites.rotationCount, sprites.entries.len);
     try std.testing.expectEqual(blockWidth, sprites.blockWidth);
