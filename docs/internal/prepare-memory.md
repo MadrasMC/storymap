@@ -1,10 +1,11 @@
 # Memory of `storymap prepare`
 
-How the peak memory of `storymap prepare` changed when the prepared blocks moved from a folder of files to one `.storyblk` file, and the changes that brought it from 2,385 MB to 92 MB.
+How the peak memory of `storymap prepare` changed when the prepared blocks moved from a folder of files to one `.storyblk` file, and the changes that brought it from 2,385 MB to 93 MB.
 
 ## Measurements
 
 All figures are for preparing Vintage Story 1.22.7 with one mod, Primitive Survival 5.1.4: 14,781 blocks and 55,096 sprites, in a 196 MB file, on Windows in a ReleaseFast build.
+From 66c9e18 on, rendering features added since d97fc40 make that 55,559 sprites in a 190 MB file.
 
 | term | meaning |
 | --- | --- |
@@ -33,9 +34,14 @@ Arena figures come from `queryCapacity` and counting allocators in throwaway bui
 | d089f5f | sprites drawn into a mapped partial file | 117 MB | 126 MB |
 | 5f343d6 | per-file arena capped, entries grown outside an arena | 92 MB | 126 MB |
 | d97fc40 | sprites written from a 1 MiB buffer instead of a mapped window | 92 MB | 73 MB |
+| 66c9e18 | rendering features added since | 95–99 MB | 77–81 MB |
+| 4704e21 | sprite records written in place | 93 MB | 77 MB |
+| 5ff45ed | each overlay decoded once | 93 MB | 78 MB |
+| 0519a02 | each image made in place | 93 MB | 78 MB |
+| 522fb7b | texture colours taken from decoded images | 93 MB | 78 MB |
 
 Reading stayed at about 2 s throughout, and drawing at about 5 s, perhaps 0.2 s slower with the mapped file.
-From 83bfd70 on, each step's file was compared byte for byte with the last commit's and matched, apart from colour maps changing format in dd06565, and 8490221, which was compared between `storymap prepare` and a render instead.
+From 83bfd70 on, each step's file was compared byte for byte with the last commit's and matched, apart from colour maps changing format in dd06565, 8490221, which was compared between `storymap prepare` and a render instead, and 66c9e18, which isn't a step.
 The switch itself changed 9,527 of the 55,096 sprites a little, and 57 in size, as the text format rounded boxes and texture coordinates to 1/100,000 and the file keeps them exact: with that rounding put back, every sprite matched byte for byte.
 
 ## Folder of files
@@ -177,6 +183,49 @@ Nothing above `FileBuffer` changed, and the file stayed byte-identical.
 
 A full disk is now an ordinary write error on every system.
 
+### Sprite records
+
+The peak had risen to 95–99 MB by 66c9e18, and it was in drawing: 94 MB sampled against reading's 84 MB.
+Each sprite's record went on a list that grew as sprites were drawn, and the finished list was copied into the `sprites` section.
+The plan already gives the number of sprites, so the list only repeated what was known.
+
+4704e21 sizes the section once, from `plan.count`, and `Sections.add` writes each record in its place.
+Drawing and writing fell to 65 MB.
+
+### Overlays
+
+An overlay is a texture drawn over others, such as an ore over each rock.
+Reading decoded overlays 1,601 times for 260 distinct files.
+
+5ff45ed decodes each one the first time and keeps it in the reading arena, about 1 MB in all.
+That saved about 0.2 s of reading, measured in only two undisturbed pairs of runs.
+
+### Images
+
+`Images.make` decoded each texture into the per-file arena, and `Images.index` then copied the finished image to contents.
+0519a02 has `make` choose where each step writes, so the last step's image is already in contents.
+A plain texture decodes straight there, and one with a half or a turn is written there by that step.
+
+stb's own buffer is still copied once, into that place.
+The peak didn't change, as the copies had been short-lived.
+
+### Texture colours
+
+A block's colours were worked out from the PNG, read and decoded apart from its images, so 1,451 of the 1,613 colour textures were decoded twice.
+
+| measure | value |
+| --- | --- |
+| PNGs read for images | 3,729 |
+| PNGs read for colours | 1,613 |
+| PNGs read for both | 1,451 |
+| time decoding for colours | 86 ms |
+
+522fb7b names a block's colour and grain textures before its images are made.
+When `make` decodes one of those files, it takes the colours before crops, overlays and turns change the pixels, and keeps them only for that block.
+Decodes for colours fell from 1,613 to 427, which leaves textures with no image, and those whose image was made for another block.
+
+That's a gain of about 0.1 s, too small to measure in these runs.
+
 ## Estimates and measurements
 
 Several estimates made along the way were wrong, and measuring settled each one.
@@ -189,6 +238,7 @@ Several estimates made along the way were wrong, and measuring settled each one.
 | skipping `open` takes the peak to 252 MB | 283 MB: most of the rise was writing |
 | freeing contents takes the peak to 252 MB | 261 MB: encoding still needs them |
 | the mapped file alone takes the peak to about 60–70 MB | 117 MB: reading was still higher |
+| a few hundred textures are decoded for both colours and images | 1,451 of 1,613 |
 
 ## Findings
 
@@ -203,6 +253,7 @@ Several estimates made along the way were wrong, and measuring settled each one.
 
 ## Remaining
 
-At 92 MB, the peak is in reading, and drawing needs 64 MB.
+The peak is 93 MB by the system's counter.
+Sampled every 10 ms, reading holds 84 MB and drawing and writing 65 MB, so the peak is a short spike that sampling misses.
 
 Only Windows has run this: Linux and macOS have only been compiled, and only one mod has been tried (`TODO.md`, items 13 and 14).
