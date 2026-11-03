@@ -3,7 +3,7 @@
 //! or `.jxl` in JPEG XL, or `.webp` in WebP (docs/rendering.md#output-tiles-and-levels-of-detail).
 //!
 //! A view is a type with:
-//! - `name`, its folder in the output, e.g. "topdown";
+//! - `name: []const u8`, a field, its folder in the output, e.g. "topdown";
 //! - `Worker`, one per thread, with `init(view: *const View, allocator) !Worker`,
 //!   `deinit(*Worker, allocator)` and `draw(*Worker, tile: Tile, pixels: *Pixels) !bool`, false
 //!   for a tile with nothing on it;
@@ -328,6 +328,8 @@ fn Job(comptime View: type) type {
         /// The next tile in `items` to take, shared by all workers.
         next: *std.atomic.Value(usize),
         output: Output,
+        /// The view's folder in the output.
+        name: []const u8,
         worker: View.Worker,
         /// One tile's pixels per level of a subtree: level 0's are drawn, the others built.
         pixels: []Pixels,
@@ -357,6 +359,7 @@ fn Job(comptime View: type) type {
                 .drawn = drawn,
                 .next = next,
                 .output = output,
+                .name = view.name,
                 .worker = try .init(view, allocator),
                 .pixels = pixels,
             };
@@ -476,7 +479,7 @@ fn Job(comptime View: type) type {
             const writing: Io.Timestamp = .now(self.io, .awake);
             defer timeSince(self.io, &self.stats.write, writing);
             var buffer: [64]u8 = undefined;
-            const dir = try std.fmt.bufPrint(&buffer, "{s}/{d}/{d}", .{ View.name, level, tile.x });
+            const dir = try std.fmt.bufPrint(&buffer, "{s}/{d}/{d}", .{ self.name, level, tile.x });
             try folder.createDirPath(self.io, dir);
             var pathBuffer: [80]u8 = undefined;
             const path = try std.fmt.bufPrint(&pathBuffer, "{s}/{d}.{s}", .{ dir, tile.y, self.output.format.extension() });

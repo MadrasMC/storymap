@@ -201,6 +201,13 @@ pub fn parse(entries: []align(4) const u8, layers: []align(4) const u8) error{No
     return self;
 }
 
+/// Those of rotation `rotation`, by quarter turn from 0.
+pub fn ofRotation(self: *const Sprites, rotation: usize) Sprites {
+    var out = self.*;
+    out.entries = self.entries[rotation * self.count ..][0..self.count];
+    return out;
+}
+
 /// Sprite `index`'s layers, where the file is.
 pub fn layersOf(self: *const Sprites, index: u32) SpriteLayers {
     const sprite = self.entries[index];
@@ -264,6 +271,12 @@ test "add and parse" {
     try std.testing.expectEqualSlices(i16, &.{ 3, 4 }, read.layersOf(0).depths);
     try std.testing.expectEqual(null, read.layersOf(0).tinted);
     try std.testing.expect(read.entries[0].flags.fills);
+
+    // A rotation's sprites are numbered as rotation 0's are, and read the same layers here.
+    const last = read.ofRotation(rotationCount - 1);
+    try std.testing.expectEqual(2, last.entries.len);
+    try std.testing.expectEqual(&read.entries[6], &last.entries[0]);
+    try std.testing.expect(last.entries[1].flags.tinted);
 
     // A `sprites` section of another length than its count gives, or a sprite whose layers go
     // past the end of `sprite_layers`, isn't one.

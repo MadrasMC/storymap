@@ -85,8 +85,8 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
 fn View(comptime Source: type) type {
     return struct {
         const Self = @This();
-        pub const name = folder;
 
+        name: []const u8 = folder,
         source: *const Source,
         heights: relief.Heights,
         style: union(enum) { relief: world.Palette, game: Source.MapStyle },

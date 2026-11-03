@@ -65,9 +65,6 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         parseViews(text) orelse console.fail("`--views`: invalid views {s}. expected: topdown, isometric or isometric@0,90,180,270, joined by +", .{text})
     else
         .{ .topdown = true };
-    for (chosen.rotations, 0..) |wanted, i| {
-        if (wanted and i != 0) console.fail("`--views`: only isometric@0 can be drawn yet", .{});
-    }
     const paths: prepare.Paths = .{
         .game = parsed.value("game"),
         .data = parsed.value("data"),
@@ -115,15 +112,19 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     if (topdownStats) |stats| logTopdown(&save, stats);
     if (writtenTopdown) |list| try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .format = output.format, .written = list });
 
-    var isometricStats: ?isometric.Stats = null;
-    const writtenIsometric = if (chosen.rotations[0]) list: {
-        isometricStats = .{};
+    var isometricStats: [isometric.Sprites.rotationCount]?isometric.Stats = @splat(null);
+    var writtenIsometric: [isometric.Sprites.rotationCount]?[]tiles.Written = @splat(null);
+    defer for (writtenIsometric) |written| if (written) |list| allocator.free(list);
+    for (chosen.rotations, std.enums.values(isometric.Rotation), &isometricStats, &writtenIsometric) |wanted, rotation, *rotationStats, *written| {
+        if (!wanted) continue;
+        var stats: isometric.Stats = .{};
         const sprites = if (prepared) |*blocks| &blocks.sprites else null;
-        break :list try isometric.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.isometric, .sprites = sprites }, &isometricStats.?);
-    } else null;
-    defer if (writtenIsometric) |list| allocator.free(list);
-    if (isometricStats) |stats| console.log("isometric: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });
-    if (writtenIsometric) |list| try views.append(allocator, .{ .name = isometric.folder, .title = isometric.title, .projection = isometric.projection, .blockWidth = isometric.blockWidth, .format = output.format, .written = list });
+        const list = try isometric.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation }, &stats);
+        written.* = list;
+        rotationStats.* = stats;
+        console.log("{s}: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ rotation.folder(), stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });
+        try views.append(allocator, .{ .name = rotation.folder(), .title = rotation.title(), .projection = isometric.projection, .blockWidth = isometric.blockWidth, .rotation = rotation.degrees(), .format = output.format, .written = list });
+    }
 
     if (out) |dir| {
         const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
@@ -140,6 +141,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
 
     if (!parsed.flag("json")) return;
     const arena = init.arena.allocator();
+    const isometricStyle = try std.fmt.allocPrint(arena, "{f}", .{theme.isometric});
     const report: Report = .{
         .version = build_options.version,
         .world = std.fs.path.basename(savePath),
@@ -158,14 +160,10 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
             .seconds = seconds(stats.duration),
             .workerSeconds = .of(stats.pipeline),
         } else null,
-        .isometric = if (isometricStats) |stats| .{
-            .style = try std.fmt.allocPrint(arena, "{f}", .{theme.isometric}),
-            .tiles = stats.tiles,
-            .levels = stats.levels,
-            .chunksRead = stats.chunksRead,
-            .seconds = seconds(stats.duration),
-            .workerSeconds = .of(stats.pipeline),
-        } else null,
+        .isometric = .ofIsometric(isometricStyle, isometricStats[0]),
+        .@"isometric-90" = .ofIsometric(isometricStyle, isometricStats[1]),
+        .@"isometric-180" = .ofIsometric(isometricStyle, isometricStats[2]),
+        .@"isometric-270" = .ofIsometric(isometricStyle, isometricStats[3]),
     };
     try console.print(init.io, "{f}\n", .{std.json.fmt(report, .{ .emit_null_optional_fields = false })});
 }
@@ -195,6 +193,9 @@ const Report = struct {
     },
     topdown: ?View = null,
     isometric: ?View = null,
+    @"isometric-90": ?View = null,
+    @"isometric-180": ?View = null,
+    @"isometric-270": ?View = null,
 
     const View = struct {
         style: []const u8,
@@ -207,6 +208,18 @@ const Report = struct {
         /// Drawing, encoding and writing every tile.
         seconds: f64,
         workerSeconds: WorkerSeconds,
+
+        fn ofIsometric(style: []const u8, drawn: ?isometric.Stats) ?View {
+            const stats = drawn orelse return null;
+            return .{
+                .style = style,
+                .tiles = stats.tiles,
+                .levels = stats.levels,
+                .chunksRead = stats.chunksRead,
+                .seconds = seconds(stats.duration),
+                .workerSeconds = .of(stats.pipeline),
+            };
+        }
     };
 
     /// Each part of the tile pipeline, summed over all workers (`tiles.Stats`).

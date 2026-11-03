@@ -164,9 +164,9 @@ html, body { background: var(--paper); color: var(--fg); font: var(--t-body)/1.4
 	background: none; border: 0; border-left: 1px solid var(--rule); border-radius: 0; box-shadow: none;
 }
 /* The views, above the zoom key: each a word in small capitals, the one shown underlined. */
-.views { position: absolute; right: var(--inset); bottom: calc(var(--inset) + var(--bar) + var(--s2)); display: flex; gap: 0.125rem; padding: 0.25rem; }
+.views { position: absolute; right: var(--inset); bottom: calc(var(--inset) + var(--bar) + var(--s2)); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.125rem; max-width: calc(100vw - 2 * var(--inset)); padding: 0.25rem; }
 .views button {
-	padding: 0.4375rem 0.625rem; border: 0; border-radius: 0.125rem; background: none; cursor: pointer;
+	padding: 0.4375rem 0.625rem; border: 0; border-radius: 0.125rem; background: none; cursor: pointer; white-space: nowrap;
 	font: var(--t-small)/1 var(--serif); font-variant: small-caps; letter-spacing: 0.06em; color: var(--muted);
 }
 .views button:hover:not(:disabled) { background: #ede8db; color: var(--ink); }
