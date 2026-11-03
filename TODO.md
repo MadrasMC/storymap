@@ -49,6 +49,13 @@ No allocation at runtime, TigerBeetle style ([`docs/rendering.md`](docs/renderin
 5. **Enforcement.** An allocator that refuses to allocate after startup; SQLite on a fixed block (`SQLITE_ENABLE_MEMSYS5`).
 15. **Profile a render.** A render of both views of a 76 MiB save, preparing first, peaked at 571 MiB of private memory, and what takes it hasn't been measured, nor how a render's memory and time divide between its stages. Measure both on `large.vcdbs` first: it decides what items 4 and 5 should go after. Also try `--webp` and `--lossy-from` on it: drawing tall grass took its isometric PNG tiles from 3.57 to 4.69 GiB, and if that can't be brought down, a render needs an option to leave out kinds of blocks.
 
+## Preparing
+
+16. **Draw sprites faster.** Preparing 1.22.7 with Primitive Survival draws 222,236 sprites, four rotations of 55,559, in about 22 s on one core of 14, after about 2 s of reading the assets (15 s with the game's files not yet cached). Measured with timers in a scratch build, three runs agreeing: rasterizing shapes 14.2 s (208,204 draws), trimming and copying them 5.4 s, clearing the drawing area 1.25 s, hashing for sharing 0.73 s, cubes 0.33 s (14,032 draws), writing 0.12 s. In order of cost:
+	- **Bounds while rasterizing:** clearing and trimming go over the whole 96 × 96 target, at 4 samples a pixel, for every shape, however little it covers. Track what the triangles cover, and clear and trim only that.
+	- **Turned plants from rotation 0:** a turned shape's turns are 45° apart, so at 90° its turn t is its turn t + 2 at 0°, and plants are about a third of the shape draws. Take those from rotation 0 instead of drawing them again. 3% of those pairs differ by rounding, so a few sprites would change slightly.
+	- **Every core:** sprites don't depend on each other. Each worker needs a target of its own, and the order sprites go into the file and are shared must stay the same, so the file comes out byte for byte as before.
+
 ## Isometric render
 
 7. **Coloured cubes.** Every block drawn as a cube in its average colour, its top, left and right faces lit differently, from one direction. Builds the isometric view without block art: tiles defined in pixels, each a slanted strip through the world's height; drawing back to front; what the game's reader gives the renderer (blocks in 3D, where the top-down map has a surface); a second projection in the viewer; and how fast it is, as it reads every chunk under a tile. Left:
