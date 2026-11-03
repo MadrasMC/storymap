@@ -77,8 +77,6 @@ pub const Image = struct {
         level: u6,
         /// All of the map in the frame, touching it on its tighter side.
         fit,
-        /// The frame inside the map's bounding box, touching it on its looser side.
-        fill,
     };
 
     fn needsBounds(self: Image) bool {
@@ -497,16 +495,13 @@ const Placement = struct {
         const top: f64 = @floatFromInt(bounds.top);
         const right: f64 = @floatFromInt(bounds.right);
         const bottom: f64 = @floatFromInt(bounds.bottom);
-        const across = width / (right - left);
-        const down = height / (bottom - top);
         const scale: f64 = switch (image.scale) {
             .level => |level| std.math.ldexp(@as(f64, 1), -@as(i32, level)),
-            .fit => @min(across, down),
-            .fill => @max(across, down),
+            .fit => @min(width / (right - left), height / (bottom - top)),
         };
         const level = switch (image.scale) {
             .level => |level| level,
-            .fit, .fill => levelOf(scale),
+            .fit => levelOf(scale),
         };
         const pixelsPerLevel = std.math.ldexp(@as(f64, 1), level);
         const centreX: f64 = if (image.centre) |centre| @floatFromInt(centre[0]) else (left + right) / 2;
@@ -550,7 +545,7 @@ test Placement {
     );
 }
 
-test "fit touches the frame on its tighter side and fill on its looser one" {
+test "fit touches the frame on its tighter side" {
     const bounds: Bounds = .{ .left = 0, .top = 0, .right = 1000, .bottom = 500 };
     const frame: Image.Frame = .{ .width = 300, .height = 300 };
     // 0.3 image pixels per map pixel, between levels 1 and 2: taken from level 1, every
@@ -560,14 +555,6 @@ test "fit touches the frame on its tighter side and fill on its looser one" {
     try std.testing.expectApproxEqAbs(@as(f64, 500) / 300, fit.step, 1e-9);
     try std.testing.expectEqual(0, fit.sourceX(0));
     try std.testing.expectEqual(499, fit.sourceX(299));
-    // 500 map pixels high fills 300 image pixels, and the map runs off left and right.
-    const fill: Placement = try .of(.{ .path = "", .frame = frame, .scale = .fill }, bounds);
-    try std.testing.expectEqual(0, fill.level);
-    try std.testing.expectApproxEqAbs(@as(f64, 500) / 300, fill.step, 1e-9);
-    try std.testing.expectEqual(0, fill.sourceY(0));
-    try std.testing.expectEqual(499, fill.sourceY(299));
-    try std.testing.expectEqual(250, fill.sourceX(0));
-    try std.testing.expectEqual(749, fill.sourceX(299));
     // A frame larger than the map draws level 0's pixels larger.
     const large: Placement = try .of(.{ .path = "", .frame = .{ .width = 2000, .height = 1000 }, .scale = .fit }, bounds);
     try std.testing.expectEqual(0, large.level);
