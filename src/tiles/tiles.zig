@@ -13,6 +13,8 @@
 //! A tile at level n covers 2 × 2 tiles at level n − 1, up to a single tile at the top, or up to
 //! 2 × 2 where tiles either side of 0 never meet (`Pyramid`). Each is built from its four
 //! children shrunk to half size, so nothing is read back from disk.
+//!
+//! Besides or instead of the tiles, it writes images of a view (`Image`), each drawn on its own.
 const std = @import("std");
 const Io = std.Io;
 const png = @import("png");
@@ -51,6 +53,24 @@ pub const Output = struct {
     /// For WebP, the level from which tiles are lossy, at quality 90, where blocks are drawn
     /// small enough that blurred edges don't show; null for none.
     lossyFrom: ?u8 = null,
+    /// Whether to write the map's tiles.
+    map: bool = true,
+    /// Images to write besides, or instead of, the tiles.
+    images: []const Image = &.{},
+};
+
+/// An image of a view's map at one of its levels, written to one PNG file, however large,
+/// without ever holding all of it (`writeImage`).
+pub const Image = struct {
+    /// Its path in `Output.folder`.
+    path: []const u8,
+    /// Its size in pixels; null for all of the map's tiles at `level`.
+    frame: ?Frame = null,
+    /// The level-0 pixel at its centre; null for the map's centre. Only with a `frame`.
+    centre: ?[2]i64 = null,
+    level: u6,
+
+    pub const Frame = struct { width: u32, height: u32 };
 };
 
 pub const Format = enum {
@@ -130,10 +150,22 @@ pub fn rgba(r: u8, g: u8, b: u8, a: u8) u32 {
 
 pub const transparent = rgba(0, 0, 0, 0);
 
-/// Draws the tiles in `list` and builds every level above them. Appends the tiles written to a
-/// folder to `written`, sorted by level, then x, then y.
+/// Draws the map in `list` as `output` asks: its tiles, then its images, each drawn on its own.
+/// Appends the tiles written to a folder to `written`, sorted by level, then x, then y.
 pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, list: []const Tile, output: Output, written: *std.ArrayList(Written)) !Stats {
-    var pyramid: Pyramid = try .init(allocator, list);
+    var stats: Stats = if (output.map) try renderMap(View, allocator, io, view, list, output, written) else .{};
+    if (output.images.len == 0 or list.len == 0) return stats;
+    var levels: usize = 1;
+    for (output.images) |image| levels = @max(levels, @as(usize, image.level) + 1);
+    var pyramid: Pyramid = try .init(allocator, list, levels);
+    defer pyramid.deinit(allocator);
+    for (output.images) |image| try writeImage(View, allocator, io, view, &pyramid, image, output, &stats);
+    return stats;
+}
+
+/// Draws the tiles in `list`, builds every level above them and writes them all.
+fn renderMap(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, list: []const Tile, output: Output, written: *std.ArrayList(Written)) !Stats {
+    var pyramid: Pyramid = try .init(allocator, list, 1);
     defer pyramid.deinit(allocator);
 
     // Workers take whole subtrees: a tile at level `split` and everything under it. `split` is
@@ -176,7 +208,7 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
 
     const threads = try allocator.alloc(?std.Thread, count);
     defer allocator.free(threads);
-    try runAll(View, jobs, threads, Job(View).run);
+    try runAll(Job(View), jobs, threads, Job(View).run);
 
     // Each level overwrites the halves of the level two below, which the level in between has
     // already used.
@@ -188,7 +220,7 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
         var nextAbove: std.atomic.Value(usize) = .init(0);
         const task: Above = .{ .level = level, .tiles = tiles, .belowTiles = &pyramid.levels[level - 1], .below = below, .built = built, .next = &nextAbove };
         for (jobs) |*job| job.above = &task;
-        try runAll(View, jobs, threads, Job(View).runAbove);
+        try runAll(Job(View), jobs, threads, Job(View).runAbove);
         below = built;
     }
 
@@ -203,7 +235,7 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     return stats;
 }
 
-fn runAll(comptime View: type, jobs: []Job(View), threads: []?std.Thread, comptime phase: fn (*Job(View)) void) !void {
+fn runAll(comptime Worker: type, jobs: []Worker, threads: []?std.Thread, comptime phase: fn (*Worker) void) !void {
     for (jobs, threads) |*job, *thread| {
         // If a thread can't be started, that share of the work runs here instead.
         thread.* = std.Thread.spawn(.{}, phase, .{job}) catch null;
@@ -211,6 +243,241 @@ fn runAll(comptime View: type, jobs: []Job(View), threads: []?std.Thread, compti
     }
     for (threads) |thread| if (thread) |t| t.join();
     for (jobs) |*job| if (job.err) |err| return err;
+}
+
+/// Writes `image` to its file, or encodes it and drops it without a folder.
+fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, image: Image, output: Output, stats: *Stats) !void {
+    const rect = try Rect.of(image, pyramid.levels[image.level].keys());
+    var encoder: png.RowEncoder = try .init(allocator, rect.width, .level_4);
+    defer encoder.deinit(allocator);
+
+    var buffer: [1 << 16]u8 = undefined;
+    var discarding: Io.Writer.Discarding = .init(&buffer);
+    const file = if (output.folder) |folder| try folder.createFile(io, image.path, .{}) else null;
+    defer if (file) |opened| opened.close(io);
+    var fileWriter = if (file) |opened| opened.writer(io, &buffer) else undefined;
+    const out = if (file != null) &fileWriter.interface else &discarding.writer;
+
+    try encoder.begin(out, rect.width, rect.height);
+    try drawRows(View, allocator, io, view, pyramid, image.level, rect, &encoder, !output.map, stats);
+    try encoder.finish();
+    try out.flush();
+}
+
+/// Where an image falls on its level, in that level's pixels.
+const Rect = struct {
+    left: i64,
+    top: i64,
+    width: u32,
+    height: u32,
+
+    fn of(image: Image, level: []const Tile) error{ImageTooLarge}!Rect {
+        var low = level[0];
+        var high = level[0];
+        for (level) |tile| {
+            low = .{ .x = @min(low.x, tile.x), .y = @min(low.y, tile.y) };
+            high = .{ .x = @max(high.x, tile.x), .y = @max(high.y, tile.y) };
+        }
+        const map: Rect = .{
+            .left = @as(i64, low.x) * size,
+            .top = @as(i64, low.y) * size,
+            .width = std.math.cast(u32, (@as(i64, high.x) - low.x + 1) * size) orelse return error.ImageTooLarge,
+            .height = std.math.cast(u32, (@as(i64, high.y) - low.y + 1) * size) orelse return error.ImageTooLarge,
+        };
+        const frame = image.frame orelse return map;
+        const centreX, const centreY = if (image.centre) |centre|
+            [2]i64{ centre[0] >> image.level, centre[1] >> image.level }
+        else
+            [2]i64{ map.left + map.width / 2, map.top + map.height / 2 };
+        return .{ .left = centreX - frame.width / 2, .top = centreY - frame.height / 2, .width = frame.width, .height = frame.height };
+    }
+};
+
+test Rect {
+    const level: []const Tile = &.{ .{ .x = -1, .y = 2 }, .{ .x = 1, .y = 3 } };
+    try std.testing.expectEqual(Rect{ .left = -512, .top = 1024, .width = 1536, .height = 1024 }, try Rect.of(.{ .path = "", .level = 0 }, level));
+    const frame: Image.Frame = .{ .width = 100, .height = 50 };
+    // In the middle of the map's tiles.
+    try std.testing.expectEqual(Rect{ .left = 206, .top = 1511, .width = 100, .height = 50 }, try Rect.of(.{ .path = "", .frame = frame, .level = 0 }, level));
+    // A centre is in level-0 pixels, and level 2's are 4 of them.
+    try std.testing.expectEqual(Rect{ .left = 200, .top = -25, .width = 100, .height = 50 }, try Rect.of(.{ .path = "", .frame = frame, .centre = .{ 1000, 0 }, .level = 2 }, level));
+}
+
+/// Draws the tiles under `rect`, one row of them at a time, top to bottom, and gives each row of
+/// pixels to `sink.writeRow`. Workers draw a row of tiles together into one buffer, so memory
+/// follows the image's width, not its height. Tiles have no order of their own to be drawn in, as
+/// each is drawn from the world alone.
+fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, level: usize, rect: Rect, sink: anytype, collect: bool, stats: *Stats) !void {
+    const firstColumn = @divFloor(rect.left, size);
+    const columns: usize = @intCast(@divFloor(rect.left + rect.width - 1, size) - firstColumn + 1);
+    var band: Band = .{
+        .tiles = try allocator.alloc(Pixels, columns),
+        .firstColumn = @intCast(firstColumn),
+        .level = level,
+        .steps = Band.stepsFor(columns, level),
+    };
+    defer allocator.free(band.tiles);
+    const row = try allocator.alloc(u32, rect.width);
+    defer allocator.free(row);
+
+    const cores = std.Thread.getCpuCount() catch 1;
+    const count = @max(1, @min(cores, band.itemCount()));
+    const jobs = try allocator.alloc(ImageJob(View), count);
+    defer allocator.free(jobs);
+    var ready: usize = 0;
+    defer for (jobs[0..ready]) |*job| job.deinit(allocator);
+    for (jobs) |*job| {
+        job.* = try .init(view, allocator, io, pyramid, &band);
+        ready += 1;
+    }
+    const threads = try allocator.alloc(?std.Thread, count);
+    defer allocator.free(threads);
+
+    const bottom = rect.top + rect.height;
+    var y = rect.top;
+    while (y < bottom) {
+        const tileRow = @divFloor(y, size);
+        for (band.tiles) |*tile| @memset(tile, transparent);
+        for (jobs) |*job| job.row = @intCast(tileRow);
+        band.next.store(0, .monotonic);
+        try runAll(ImageJob(View), jobs, threads, ImageJob(View).run);
+
+        const encoding: Io.Timestamp = .now(io, .awake);
+        const rowsEnd = @min(bottom, (tileRow + 1) * size);
+        while (y < rowsEnd) : (y += 1) {
+            band.copyRow(row, rect, y - tileRow * size);
+            try sink.writeRow(std.mem.sliceAsBytes(row));
+        }
+        timeSince(io, &stats.compress, encoding);
+    }
+    for (jobs) |*job| {
+        if (collect) view.collect(&job.worker);
+        stats.add(job.stats);
+    }
+}
+
+/// One row of an image's tiles, as workers draw it. It's shared out in items, tiles `steps`
+/// levels below the image's, so an image of few tiles still keeps every core busy.
+const Band = struct {
+    /// The row's tiles, left to right.
+    tiles: []Pixels,
+    firstColumn: i32,
+    level: usize,
+    steps: u4,
+    /// The next item to take, shared by all workers.
+    next: std.atomic.Value(usize) = .init(0),
+
+    /// `shrink`'s sums fit up to here.
+    const maxSteps = 8;
+
+    /// The fewest steps with enough items to keep every core busy.
+    fn stepsFor(columns: usize, level: usize) u4 {
+        const cores = std.Thread.getCpuCount() catch 1;
+        var steps: u4 = 0;
+        while (steps < @min(level, maxSteps) and columns << (2 * @as(u6, steps)) < 4 * cores) steps += 1;
+        return steps;
+    }
+
+    fn itemCount(self: *const Band) usize {
+        return self.tiles.len << (2 * @as(u6, self.steps));
+    }
+
+    /// Copies the row of pixels `tileY` rows down the band, as much of it as is in `rect`, into
+    /// `row`.
+    fn copyRow(self: *const Band, row: []u32, rect: Rect, tileY: i64) void {
+        const right = rect.left + rect.width;
+        for (self.tiles, 0..) |*tile, i| {
+            const tileLeft = (@as(i64, self.firstColumn) + @as(i64, @intCast(i))) * size;
+            const from = @max(rect.left, tileLeft);
+            const to = @min(right, tileLeft + size);
+            const at: usize = @intCast(tileY * size + from - tileLeft);
+            @memcpy(row[@intCast(from - rect.left)..@intCast(to - rect.left)], tile[at..][0..@intCast(to - from)]);
+        }
+    }
+};
+
+/// One thread's view worker and buffers, reused for every row of an image's tiles.
+fn ImageJob(comptime View: type) type {
+    return struct {
+        const Self = @This();
+
+        io: Io,
+        pyramid: *const Pyramid,
+        band: *Band,
+        /// The row of tiles being drawn.
+        row: i32 = 0,
+        worker: View.Worker,
+        /// One tile's pixels for each level up to an item's.
+        pixels: []Pixels,
+        stats: Stats = .{},
+        err: ?anyerror = null,
+
+        fn init(view: *const View, allocator: std.mem.Allocator, io: Io, pyramid: *const Pyramid, band: *Band) !Self {
+            const pixels = try allocator.alloc(Pixels, band.level - band.steps + 1);
+            errdefer allocator.free(pixels);
+            return .{ .io = io, .pyramid = pyramid, .band = band, .worker = try .init(view, allocator), .pixels = pixels };
+        }
+
+        fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            self.worker.deinit(allocator);
+            allocator.free(self.pixels);
+        }
+
+        fn run(self: *Self) void {
+            self.runOrFail() catch |err| {
+                self.err = err;
+            };
+        }
+
+        fn runOrFail(self: *Self) !void {
+            const band = self.band;
+            const span = @as(usize, 1) << band.steps;
+            const perRow = band.tiles.len * span;
+            const itemLevel = band.level - band.steps;
+            while (true) {
+                const i = band.next.fetchAdd(1, .monotonic);
+                if (i >= band.itemCount()) return;
+                const across = i % perRow;
+                const down = i / perRow;
+                const tile: Tile = .{
+                    .x = band.firstColumn * @as(i32, @intCast(span)) + @as(i32, @intCast(across)),
+                    .y = self.row * @as(i32, @intCast(span)) + @as(i32, @intCast(down)),
+                };
+                const into = &band.tiles[across / span];
+                if (band.steps == 0) {
+                    _ = try self.build(itemLevel, tile, into);
+                } else if (try self.build(itemLevel, tile, &self.pixels[itemLevel])) {
+                    const side = size / span;
+                    const start: Io.Timestamp = .now(self.io, .awake);
+                    shrink(&self.pixels[itemLevel], band.steps, into[(down * size + across % span) * side..], size);
+                    timeSince(self.io, &self.stats.shrink, start);
+                }
+            }
+        }
+
+        /// Draws or builds a tile into `pixels`. Returns false, leaving them as they were or
+        /// transparent, if it has nothing on it.
+        fn build(self: *Self, level: usize, tile: Tile, pixels: *Pixels) !bool {
+            if (!self.pyramid.levels[level].contains(tile)) return false;
+            if (level == 0) {
+                const start: Io.Timestamp = .now(self.io, .awake);
+                defer timeSince(self.io, &self.stats.draw, start);
+                return self.worker.draw(tile, pixels);
+            }
+            @memset(pixels, transparent);
+            const child = &self.pixels[level - 1];
+            var any = false;
+            for (0..4) |quarter| {
+                if (!try self.build(level - 1, tile.child(quarter), child)) continue;
+                any = true;
+                const corner = (quarter / 2) * half * size + (quarter % 2) * half;
+                const start: Io.Timestamp = .now(self.io, .awake);
+                shrink(child, 1, pixels[corner..], size);
+                timeSince(self.io, &self.stats.shrink, start);
+            }
+            return any;
+        }
+    };
 }
 
 /// Room for every tile written, shared by all workers.
@@ -251,7 +518,8 @@ const Above = struct {
 const Pyramid = struct {
     levels: []std.AutoArrayHashMapUnmanaged(Tile, void),
 
-    fn init(allocator: std.mem.Allocator, list: []const Tile) !Pyramid {
+    /// `minimumLevels` goes on past the top level, for an image more zoomed out than the map.
+    fn init(allocator: std.mem.Allocator, list: []const Tile, minimumLevels: usize) !Pyramid {
         var levels: std.ArrayList(std.AutoArrayHashMapUnmanaged(Tile, void)) = .empty;
         errdefer {
             for (levels.items) |*level| level.deinit(allocator);
@@ -259,7 +527,7 @@ const Pyramid = struct {
         }
         try levels.append(allocator, .empty);
         for (list) |tile| try levels.items[0].put(allocator, tile, {});
-        while (!isTopLevel(levels.items[levels.items.len - 1].keys())) {
+        while (levels.items.len < minimumLevels or !isTopLevel(levels.items[levels.items.len - 1].keys())) {
             try levels.append(allocator, .empty);
             const below = &levels.items[levels.items.len - 2];
             const above = &levels.items[levels.items.len - 1];
@@ -292,23 +560,25 @@ const Pyramid = struct {
     }
 };
 
-/// Shrinks `pixels` to half size into `into`, whose rows are `stride` pixels apart. Each pixel
-/// averages four, colours weighted by alpha, so transparent pixels make edges partly
-/// transparent rather than darker.
-fn shrink(pixels: *const Pixels, into: []u32, stride: usize) void {
-    for (0..half) |y| for (0..half) |x| {
+/// Halves `pixels` `steps` times over into `into`, whose rows are `stride` pixels apart. Each
+/// pixel averages those it covers, colours weighted by alpha, so transparent pixels make edges
+/// partly transparent rather than darker.
+fn shrink(pixels: *const Pixels, steps: u4, into: []u32, stride: usize) void {
+    const span = @as(usize, 1) << steps;
+    const covered: u32 = @intCast(span * span);
+    for (0..size / span) |y| for (0..size / span) |x| {
         var sum: [4]u32 = .{ 0, 0, 0, 0 };
-        for ([_]usize{ 0, 1, size, size + 1 }) |offset| {
-            const p: [4]u8 = @bitCast(pixels[(y * 2) * size + x * 2 + offset]);
+        for (0..span) |below| for (0..span) |beside| {
+            const p: [4]u8 = @bitCast(pixels[(y * span + below) * size + x * span + beside]);
             for (sum[0..3], p[0..3]) |*total, channel| total.* += @as(u32, channel) * p[3];
             sum[3] += p[3];
-        }
+        };
         const alpha = sum[3];
         into[y * stride + x] = if (alpha == 0) transparent else rgba(
             @intCast((sum[0] + alpha / 2) / alpha),
             @intCast((sum[1] + alpha / 2) / alpha),
             @intCast((sum[2] + alpha / 2) / alpha),
-            @intCast((alpha + 2) / 4),
+            @intCast((alpha + covered / 2) / covered),
         );
     };
 }
@@ -408,7 +678,7 @@ fn Job(comptime View: type) type {
             }
             try self.write(level, tile, pixels);
             const start: Io.Timestamp = .now(self.io, .awake);
-            shrink(pixels, into, stride);
+            shrink(pixels, 1, into, stride);
             timeSince(self.io, &self.stats.shrink, start);
             return true;
         }
@@ -443,7 +713,7 @@ fn Job(comptime View: type) type {
                 if (!any) continue;
                 try self.write(task.level, tile, pixels);
                 const start: Io.Timestamp = .now(self.io, .awake);
-                shrink(pixels, task.built.halves[i * half * half ..], half);
+                shrink(pixels, 1, task.built.halves[i * half * half ..], half);
                 timeSince(self.io, &self.stats.shrink, start);
             }
         }
@@ -505,7 +775,7 @@ test "Tile.parent rounds down, also below 0" {
 
 test Pyramid {
     // Two tiles side by side and one far away: they meet in one tile three levels up.
-    var pyramid: Pyramid = try .init(std.testing.allocator, &.{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 5, .y = 5 } });
+    var pyramid: Pyramid = try .init(std.testing.allocator, &.{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 }, .{ .x = 5, .y = 5 } }, 1);
     defer pyramid.deinit(std.testing.allocator);
     try std.testing.expectEqual(4, pyramid.levels.len);
     try std.testing.expectEqual(3, pyramid.levels[0].count());
@@ -514,14 +784,21 @@ test Pyramid {
     try std.testing.expectEqual(1, pyramid.levels[3].count());
 }
 
+test "a pyramid goes on past its top for the levels asked for" {
+    var pyramid: Pyramid = try .init(std.testing.allocator, &.{.{ .x = 3, .y = 0 }}, 4);
+    defer pyramid.deinit(std.testing.allocator);
+    try std.testing.expectEqual(4, pyramid.levels.len);
+    try std.testing.expect(pyramid.levels[3].contains(.{ .x = 0, .y = 0 }));
+}
+
 test "a pyramid over tiles either side of 0 ends where they come no closer" {
     // Across, -3 to 2 merge to -1 and 0 two levels up, and go no further.
-    var row: Pyramid = try .init(std.testing.allocator, &.{ .{ .x = -3, .y = 5 }, .{ .x = -2, .y = 5 }, .{ .x = 1, .y = 5 }, .{ .x = 2, .y = 5 } });
+    var row: Pyramid = try .init(std.testing.allocator, &.{ .{ .x = -3, .y = 5 }, .{ .x = -2, .y = 5 }, .{ .x = 1, .y = 5 }, .{ .x = 2, .y = 5 } }, 1);
     defer row.deinit(std.testing.allocator);
     try std.testing.expectEqual(3, row.levels.len);
     try std.testing.expectEqual(2, row.levels[2].count());
     // Down, 4 and 7 still come together two levels up, so the levels go on until they have.
-    var apart: Pyramid = try .init(std.testing.allocator, &.{ .{ .x = -1, .y = 4 }, .{ .x = 0, .y = 7 } });
+    var apart: Pyramid = try .init(std.testing.allocator, &.{ .{ .x = -1, .y = 4 }, .{ .x = 0, .y = 7 } }, 1);
     defer apart.deinit(std.testing.allocator);
     try std.testing.expectEqual(3, apart.levels.len);
     try std.testing.expectEqual(2, apart.levels[2].count());
@@ -550,9 +827,105 @@ test shrink {
     pixels[size + 2] = rgba(30, 30, 30, 255);
     pixels[size + 3] = rgba(40, 40, 40, 255);
     var into: [half * half]u32 = undefined;
-    shrink(pixels, &into, half);
+    shrink(pixels, 1, &into, half);
     // Still pure red, half transparent: not darkened towards black.
     try std.testing.expectEqual(rgba(255, 0, 0, 128), into[0]);
     try std.testing.expectEqual(rgba(25, 25, 25, 255), into[1]);
     try std.testing.expectEqual(transparent, into[2]);
+
+    // Two steps: the first 4 × 4 is those two reds, those greys, and transparent otherwise.
+    var quarter: [128 * 128]u32 = undefined;
+    shrink(pixels, 2, &quarter, 128);
+    try std.testing.expectEqual(rgba(102, 17, 17, 96), quarter[0]);
+    try std.testing.expectEqual(transparent, quarter[1]);
+}
+
+/// A view whose level-0 tiles are each one colour, from where they are.
+const SolidView = struct {
+    name: []const u8 = "solid",
+    drawnTiles: usize = 0,
+
+    fn colour(tile: Tile) u32 {
+        return rgba(@intCast(tile.x + 10), @intCast(tile.y + 10), 0, 255);
+    }
+
+    pub fn collect(self: *SolidView, worker: *const Worker) void {
+        self.drawnTiles += worker.drawnTiles;
+    }
+
+    pub const Worker = struct {
+        drawnTiles: usize = 0,
+
+        pub fn init(_: *const SolidView, _: std.mem.Allocator) !Worker {
+            return .{};
+        }
+
+        pub fn deinit(_: *Worker, _: std.mem.Allocator) void {}
+
+        pub fn draw(self: *Worker, tile: Tile, pixels: *Pixels) !bool {
+            self.drawnTiles += 1;
+            @memset(pixels, colour(tile));
+            return true;
+        }
+    };
+};
+
+/// Keeps the rows it's given, in order.
+const RowSink = struct {
+    pixels: []u32,
+    width: usize,
+    rows: usize = 0,
+
+    fn writeRow(self: *RowSink, row: []const u8) !void {
+        @memcpy(std.mem.sliceAsBytes(self.pixels[self.rows * self.width..][0..self.width]), row);
+        self.rows += 1;
+    }
+};
+
+fn expectRows(list: []const Tile, level: usize, rect: Rect, expected: fn (x: usize, y: usize) u32, drawnTiles: usize) !void {
+    const allocator = std.testing.allocator;
+    var pyramid: Pyramid = try .init(allocator, list, level + 1);
+    defer pyramid.deinit(allocator);
+    const pixels = try allocator.alloc(u32, @as(usize, rect.width) * rect.height);
+    defer allocator.free(pixels);
+    var view: SolidView = .{};
+    var sink: RowSink = .{ .pixels = pixels, .width = rect.width };
+    var stats: Stats = .{};
+    try drawRows(SolidView, allocator, std.testing.io, &view, &pyramid, level, rect, &sink, true, &stats);
+    try std.testing.expectEqual(rect.height, sink.rows);
+    try std.testing.expectEqual(drawnTiles, view.drawnTiles);
+    for (0..rect.height) |y| for (0..rect.width) |x| {
+        try std.testing.expectEqual(expected(x, y), pixels[y * rect.width + x]);
+    };
+}
+
+test "an image crosses tiles, and is transparent where the map has none" {
+    const expected = struct {
+        // The frame starts 10 pixels into tile -1, 0 across, and 20 pixels above tile 0, 0.
+        fn at(x: usize, y: usize) u32 {
+            if (y < 20) return transparent;
+            if (x < 10) return SolidView.colour(.{ .x = -1, .y = 0 });
+            if (x < 10 + size) return SolidView.colour(.{ .x = 0, .y = 0 });
+            return transparent;
+        }
+    }.at;
+    try expectRows(
+        &.{ .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 5, .y = 5 } },
+        0,
+        .{ .left = -10, .top = -20, .width = size + 30, .height = size + 21 - 1 },
+        expected,
+        2,
+    );
+}
+
+test "an image at level 2 averages the tiles under it" {
+    const expected = struct {
+        // Each level-0 tile is 128 pixels wide at level 2.
+        fn at(x: usize, y: usize) u32 {
+            return SolidView.colour(.{ .x = @intCast(x / 128), .y = @intCast(y / 128) });
+        }
+    }.at;
+    var list: [16]Tile = undefined;
+    for (&list, 0..) |*tile, i| tile.* = .{ .x = @intCast(i % 4), .y = @intCast(i / 4) };
+    try expectRows(&list, 2, .{ .left = 0, .top = 0, .width = size, .height = size }, expected, 16);
 }

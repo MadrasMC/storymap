@@ -20,6 +20,7 @@ pub const spec: args.Spec = .{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
         .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
         .{ .name = "views", .value = "views", .description = "Which views to draw, joined by +: topdown (the default), isometric, or isometric@rotations, of 0, 90, 180 and 270 joined by commas." },
+        .{ .name = "mode", .value = "mode", .description = "What to write, joined by +: map (the default), or image[:widthxheight]@[x,z,]1:n, a PNG of each view at 1:n, a power of two, around a position as the game shows it, of the whole map without a size." },
         .{ .name = "clip", .value = "shape", .description = "Draw only part of the world, around a position as the game shows it: circle:radius@x,z, square:side@x,z or rect:widthxheight@x,z, in blocks, or between two corners, rect:x,z..x,z." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
@@ -65,6 +66,11 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         parseViews(text) orelse console.fail("`--views`: invalid views {s}. expected: topdown, isometric or isometric@0,90,180,270, joined by +", .{text})
     else
         .{ .topdown = true };
+    const arena = init.arena.allocator();
+    const mode: Mode = if (parsed.value("mode")) |text|
+        try parseMode(arena, text) orelse console.fail("`--mode`: invalid mode {s}. expected: map or image[:widthxheight]@[x,z,]1:n, joined by +", .{text})
+    else
+        .{ .map = true };
     const paths: prepare.Paths = .{
         .game = parsed.value("game"),
         .data = parsed.value("data"),
@@ -83,7 +89,8 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         if (format != .webp) console.fail("`--lossy-from`: only with `--webp`", .{});
         break :level std.fmt.parseInt(u8, text, 10) catch console.fail("`--lossy-from`: invalid level {s}. expected: a level from 0", .{text});
     } else null;
-    const output: tiles.Output = .{ .folder = out, .format = format, .lossyFrom = lossyFrom };
+    if (format != .png and mode.images.len > 0) console.warn("images are written as PNG, not {s}", .{if (format == .webp) "WebP" else "JPEG XL"});
+    const output: tiles.Output = .{ .folder = out, .format = format, .lossyFrom = lossyFrom, .map = mode.map };
 
     const loading: std.Io.Timestamp = .now(init.io, .awake);
     var prepared = prepare.blocks(init, paths, force);
@@ -102,14 +109,21 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
 
     var views: std.ArrayList(viewer.View) = .empty;
     defer views.deinit(allocator);
+    var description = save.describe();
+    if (parsed.value("name")) |name| description.name = name;
+    const place: Place = .{ .origin = .{ description.origin.x, description.origin.z }, .seaLevel = description.seaLevel };
 
     var topdownStats: ?topdown.Stats = null;
     const writtenTopdown = if (chosen.topdown) list: {
         topdownStats = .{};
-        break :list try topdown.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.topdown }, &topdownStats.?);
+        var viewOutput = output;
+        viewOutput.images = try imagesOf(arena, mode.images, topdown.folder, place, .topdown);
+        const list = try topdown.render(SaveFile, allocator, init.io, &save, viewOutput, .{ .style = theme.topdown }, &topdownStats.?);
+        logImages(viewOutput.images);
+        break :list list;
     } else null;
     defer if (writtenTopdown) |list| allocator.free(list);
-    if (topdownStats) |stats| logTopdown(&save, stats);
+    if (topdownStats) |stats| if (mode.map) logTopdown(&save, stats);
     if (writtenTopdown) |list| try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .format = output.format, .written = list });
 
     var isometricStats: [isometric.Sprites.rotationCount]?isometric.Stats = @splat(null);
@@ -119,28 +133,30 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         if (!wanted) continue;
         var stats: isometric.Stats = .{};
         const sprites = if (prepared) |*blocks| &blocks.sprites else null;
-        const list = try isometric.render(SaveFile, allocator, init.io, &save, output, .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation }, &stats);
+        var viewOutput = output;
+        viewOutput.images = try imagesOf(arena, mode.images, rotation.folder(), place, .{ .isometric = rotation });
+        const list = try isometric.render(SaveFile, allocator, init.io, &save, viewOutput, .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation }, &stats);
         written.* = list;
         rotationStats.* = stats;
-        console.log("{s}: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ rotation.folder(), stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });
+        if (mode.map) console.log("{s}: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ rotation.folder(), stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });
+        logImages(viewOutput.images);
         try views.append(allocator, .{ .name = rotation.folder(), .title = rotation.title(), .projection = isometric.projection, .blockWidth = isometric.blockWidth, .rotation = rotation.degrees(), .format = output.format, .written = list });
     }
 
-    if (out) |dir| {
+    if (out) |dir| if (mode.map) {
         const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
-        var description = save.describe();
-        if (parsed.value("name")) |name| description.name = name;
         try viewer.write(allocator, init.io, dir, description, now, views.items, theme);
-    }
+    };
     const total = start.untilNow(init.io, .awake);
-    if (write) {
+    if (write and mode.map) {
         console.log("done in {d:.2} s: {s}/index.html", .{ seconds(total), outPath });
+    } else if (write) {
+        console.log("done in {d:.2} s: {s}", .{ seconds(total), outPath });
     } else {
         console.log("done in {d:.2} s, nothing written", .{seconds(total)});
     }
 
     if (!parsed.flag("json")) return;
-    const arena = init.arena.allocator();
     const isometricStyle = try std.fmt.allocPrint(arena, "{f}", .{theme.isometric});
     const report: Report = .{
         .version = build_options.version,
@@ -356,6 +372,145 @@ test parseViews {
     for ([_][]const u8{ "", "+", "topdown+", "side", "topdown@90", "isometric@", "isometric@45", "isometric@360", "isometric@-90", "isometric@90,", "Isometric" }) |text| {
         try std.testing.expectEqual(null, parseViews(text));
     }
+}
+
+/// What `--mode` names.
+const Mode = struct {
+    map: bool = false,
+    images: []const ImageMode = &.{},
+};
+
+/// An image `--mode` names, for every view.
+const ImageMode = struct {
+    frame: ?tiles.Image.Frame = null,
+    /// Its centre as the game shows it.
+    position: ?[2]i32 = null,
+    level: u6,
+
+    /// The size of an image with a position and no size.
+    const defaultFrame: tiles.Image.Frame = .{ .width = 4096, .height = 4096 };
+};
+
+/// The modes in `text`, or null if it isn't a list of them.
+fn parseMode(arena: std.mem.Allocator, text: []const u8) error{OutOfMemory}!?Mode {
+    var mode: Mode = .{};
+    var images: std.ArrayList(ImageMode) = .empty;
+    var names = std.mem.splitScalar(u8, text, '+');
+    while (names.next()) |name| {
+        if (std.mem.eql(u8, name, "map")) {
+            mode.map = true;
+        } else {
+            try images.append(arena, parseImageMode(name) orelse return null);
+        }
+    }
+    mode.images = images.items;
+    return mode;
+}
+
+/// The image `text` names, or null if it isn't one.
+fn parseImageMode(text: []const u8) ?ImageMode {
+    if (!std.mem.startsWith(u8, text, "image")) return null;
+    const rest = text["image".len..];
+    const at = std.mem.indexOfScalar(u8, rest, '@') orelse return null;
+    var frame: ?tiles.Image.Frame = null;
+    if (at > 0) {
+        if (rest[0] != ':') return null;
+        const by = std.mem.indexOfScalar(u8, rest[0..at], 'x') orelse return null;
+        frame = .{
+            .width = std.fmt.parseInt(u32, rest[1..by], 10) catch return null,
+            .height = std.fmt.parseInt(u32, rest[by + 1 .. at], 10) catch return null,
+        };
+        if (frame.?.width == 0 or frame.?.height == 0) return null;
+    }
+    const place = rest[at + 1..];
+    const lastComma = std.mem.lastIndexOfScalar(u8, place, ',');
+    const level = parseScale(if (lastComma) |comma| place[comma + 1..] else place) orelse return null;
+    const position: ?[2]i32 = if (lastComma) |comma| position: {
+        const x, const z = parsePosition(place[0..comma]) orelse return null;
+        break :position .{ std.math.cast(i32, x) orelse return null, std.math.cast(i32, z) orelse return null };
+    } else null;
+    if (position != null and frame == null) frame = ImageMode.defaultFrame;
+    return .{ .frame = frame, .position = position, .level = level };
+}
+
+/// The level of scale 1:n, or null if it isn't one, with n a power of two.
+fn parseScale(text: []const u8) ?u6 {
+    if (!std.mem.startsWith(u8, text, "1:")) return null;
+    const n = std.fmt.parseInt(u64, text[2..], 10) catch return null;
+    if (n == 0 or !std.math.isPowerOfTwo(n)) return null;
+    return std.math.log2_int(u64, n);
+}
+
+test parseMode {
+    var state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer state.deinit();
+    const arena = state.allocator();
+    const mapOnly = (try parseMode(arena, "map")).?;
+    try std.testing.expect(mapOnly.map);
+    try std.testing.expectEqual(0, mapOnly.images.len);
+
+    const both = (try parseMode(arena, "map+image:1920x1080@256,-5888,1:2+image@1:8")).?;
+    try std.testing.expect(both.map);
+    try std.testing.expectEqual(ImageMode{ .frame = .{ .width = 1920, .height = 1080 }, .position = .{ 256, -5888 }, .level = 1 }, both.images[0]);
+    try std.testing.expectEqual(ImageMode{ .level = 3 }, both.images[1]);
+
+    try std.testing.expectEqual(ImageMode{ .frame = .{ .width = 2, .height = 3 }, .level = 0 }, (try parseMode(arena, "image:2x3@1:1")).?.images[0]);
+    try std.testing.expectEqual(ImageMode{ .frame = ImageMode.defaultFrame, .position = .{ 1, 2 }, .level = 2 }, (try parseMode(arena, "image@1,2,1:4")).?.images[0]);
+    try std.testing.expect(!(try parseMode(arena, "image@1:1")).?.map);
+
+    for ([_][]const u8{ "", "+", "map+", "tiles", "image", "image@", "image:2x3", "image@1:3", "image@1:0", "image@2:1", "image@1,1:2", "image@1,2,3,1:2", "image:0x3@1:1", "image:2@1:1", "imagery@1:1", "image@9999999999,0,1:1" }) |text| {
+        try std.testing.expectEqual(null, try parseMode(arena, text));
+    }
+}
+
+/// How positions as the game shows them become a view's pixels.
+const Place = struct {
+    /// The block the game shows as 0, 0.
+    origin: [2]i64,
+    seaLevel: u16,
+
+    /// The level-0 pixel at the block at `position`. Isometric, a pixel is a whole line of
+    /// blocks, so it's the top of the block at sea level, as on the page.
+    fn pixelOf(self: Place, projection: Projection, position: [2]i32) [2]i64 {
+        const x = position[0] + self.origin[0];
+        const z = position[1] + self.origin[1];
+        return switch (projection) {
+            .topdown => .{ x, z },
+            .isometric => |rotation| rotation.toPixels(x, self.seaLevel, z),
+        };
+    }
+};
+
+const Projection = union(enum) {
+    topdown,
+    isometric: isometric.Rotation,
+};
+
+/// The images a view writes for `modes`, in files named after it.
+fn imagesOf(arena: std.mem.Allocator, modes: []const ImageMode, name: []const u8, place: Place, projection: Projection) ![]const tiles.Image {
+    const images = try arena.alloc(tiles.Image, modes.len);
+    for (images, modes, 1..) |*image, mode, number| {
+        image.* = .{
+            .path = if (modes.len == 1) try std.fmt.allocPrint(arena, "{s}.png", .{name}) else try std.fmt.allocPrint(arena, "{s}-{}.png", .{ name, number }),
+            .frame = mode.frame,
+            .centre = if (mode.position) |position| place.pixelOf(projection, position) else null,
+            .level = mode.level,
+        };
+    }
+    return images;
+}
+
+fn logImages(images: []const tiles.Image) void {
+    for (images) |image| console.log("image: {s}", .{image.path});
+}
+
+test "Place.pixelOf is where the page places a position" {
+    const place: Place = .{ .origin = .{ 512000, 512000 }, .seaLevel = 110 };
+    try std.testing.expectEqual([2]i64{ 512010, 511980 }, place.pixelOf(.topdown, .{ 10, -20 }));
+    // Isometric, at (x, z) from the origin: x − z blocks across, x + z + 1 half-diamonds down.
+    const x: i64 = 512000 + 10;
+    const z: i64 = 512000 - 20;
+    try std.testing.expectEqual([2]i64{ (x - z) * 16, (x + z + 1) * 8 - 111 * 16 }, place.pixelOf(.{ .isometric = .deg0 }, .{ 10, -20 }));
 }
 
 /// The area `--clip` names, or null if it isn't one.

@@ -91,6 +91,13 @@ pub const Rotation = enum(u2) {
         };
     }
 
+    /// The level-0 pixel at the middle of the top of the block at (x, z) in the world, at height
+    /// `y`.
+    pub fn toPixels(self: Rotation, x: i64, y: i64, z: i64) [2]i64 {
+        const viewX, const viewZ = self.toView(x, z);
+        return .{ (viewX - viewZ) * across, (viewX + viewZ + 1) * down - (y + 1) * below };
+    }
+
     /// The view's coordinates of the block at (x, z) in the world.
     fn toView(self: Rotation, x: i64, z: i64) [2]i64 {
         return switch (self) {

@@ -30,6 +30,34 @@ A rotation moves the viewer clockwise around the world:
 | 180 | south-east |
 | 270 | south-west |
 
+## Images
+
+`--mode` chooses what to write, `map` by default: the tiles and the page.
+`image` writes one PNG of each view instead, and `map+image` writes both.
+An image is written as it's drawn, so its memory follows its width, not its height.
+
+```
+image[:<width>x<height>]@[<x>,<z>,]1:<n>
+```
+
+| part | contents |
+| --- | --- |
+| `<width>x<height>` | the image's size in pixels; without it, all of the map, or 4096x4096 around a position |
+| `<x>,<z>` | the block at its centre, as the game shows it; without it, the map's centre |
+| `1:<n>` | its scale, a power of two: `1:1` is full detail, `1:2` half of that |
+
+| form | images |
+| --- | --- |
+| `--mode image@1:1` | all of the map at full detail |
+| `--mode image:1920x1080@256,-5888,1:2` | 1920 × 1080 around 256, -5888, at half size |
+| `--mode map+image@1:8` | the tiles and the page, and all of the map at 1:8 |
+| `--mode image@1:1+image@1:8` | two images |
+
+An image is named after its view, as `topdown.png`, or `topdown-1.png` and `topdown-2.png` for two.
+It's transparent where the map has nothing.
+In the isometric view, a position is taken at sea level, as on the page.
+`--webp` and `--jpegxl` apply to tiles only: images are always PNG.
+
 ## Appearance
 
 | option | use |
