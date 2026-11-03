@@ -1,6 +1,6 @@
-# Memory of `storymap prepare`
+# Performance of `storymap prepare`
 
-How the peak memory of `storymap prepare` changed when the prepared blocks moved from a folder of files to one `.storyblk` file, the changes that brought it from 2,385 MiB to 92 MiB, what drawing every rotation added to it, and how that was taken back.
+How the peak memory and time of `storymap prepare` changed: memory when the prepared blocks moved from a folder of files to one `.storyblk` file, the changes that brought it from 2,385 MiB to 92 MiB, what drawing every rotation added to it and how that was taken back, and the time drawing every rotation took and how not drawing shapes twice took most of it back.
 
 ## Measurements
 
@@ -11,11 +11,12 @@ From 4a5c21c on, it's 55,559 sprites in each rotation.
 | --- | --- |
 | private | peak private memory (`PeakPagedMemorySize64`): what the process holds that only it can use |
 | working set | peak physical memory in use by the process (`PeakWorkingSet64`), including mapped files |
-| reading, drawing, writing | the stages of preparing, the first two taking about 2 s and 5 s, or 21 s for every rotation |
+| reading, drawing, writing | the stages of preparing: reading about 2 s; drawing about 5 s for one rotation, 21 s for every rotation, and 9 s once shapes weren't drawn twice |
 
 Stage figures were sampled every 20 ms, so they can miss a short spike.
 Totals come from the system's own peak counters.
 Arena figures come from `queryCapacity` and counting allocators in throwaway builds.
+The time each part of drawing takes comes from timers around it in throwaway builds, summed over a run.
 
 ## Results
 
@@ -42,6 +43,7 @@ Arena figures come from `queryCapacity` and counting allocators in throwaway bui
 | fe4cb32 | every rotation drawn, identical pixels shared | 116 MiB | 84 MiB |
 | b6e58bf | the last four steps merged with every rotation | 119 MiB | 81 MiB |
 | f501fc5 | sprite hash table outside the arena, for drawing only | 93 MiB | 79 MiB |
+| e4cc7ce | shapes keyed before drawing, and not drawn twice | 106 MiB | 86–90 MiB |
 
 Up to 4a5c21c, reading stayed at about 2 s, and drawing at about 5 s, perhaps 0.2 s slower with the mapped file.
 From 83bfd70 on, each step's file was compared byte for byte with the last commit's and matched, apart from colour maps changing format in dd06565, and 8490221, which was compared between `storymap prepare` and a render instead.
@@ -290,6 +292,54 @@ The contents arena stays at 57.3 MiB, its size after reading.
 
 These runs read the peak counters from the process's handle after it exited, so its last moments count.
 
+### Shapes keyed before drawing
+
+Of the 222,236 sprites for every rotation, 138,852 repeated another's pixels, and each of those was drawn before the hash of its pixels found it.
+Drawing took 22 s, on one core of 14:
+
+| part, at e3a4cfb | time |
+| --- | --- |
+| rasterizing shapes, 208,204 draws | 14.2 s |
+| trimming and copying them | 5.4 s |
+| clearing the drawing area | 1.25 s |
+| hashing their pixels | 0.73 s |
+| cubes, 14,032 draws | 0.33 s |
+| writing | 0.12 s |
+
+A repeated shape is nearly always the same draw reached by another route: a turned plant at 90° is its own turn two along at 0°, and stairs facing north at 90° are the stairs facing west at 0°.
+Its inputs differ only in the last bits of their floats, from different arithmetic.
+e4cc7ce hashes what a shape is drawn from before drawing it, and a match is that sprite again, undrawn ([docs/blocks.md](../blocks.md#sprites)).
+The hash takes the faces in order: their corners rounded to a 64th of a sample, their depths and texture coordinates to a 4096th, their images by their pixels, so copies of a texture match, and leaves out faces with no area.
+
+| repeated sprites | count | share |
+| --- | --- | --- |
+| shapes skipped by the input hash, never drawn | 134,846 | 96.3% |
+| shapes drawn, then dropped by the hash of their pixels | 4,047 | 2.9% |
+| cubes drawn, then dropped by the hash of their pixels | 1,070 | 0.8% |
+
+| part | e3a4cfb | e4cc7ce |
+| --- | --- | --- |
+| rasterizing shapes | 14.2 s | 4.86 s |
+| trimming and copying | 5.4 s | 1.94 s |
+| clearing the drawing area | 1.25 s | 0.42 s |
+| hashing pixels | 0.73 s | 0.31 s |
+| cubes | 0.33 s | 0.32 s |
+| writing | 0.12 s | 0.11 s |
+| placing faces, before hashing them | – | 0.26 s |
+| hashing inputs | – | 0.37 s |
+| drawing | 22 s | 8.5 s |
+| whole command, warm cache | 23.7–23.9 s | 10.5–10.8 s |
+| private | 93 MiB | 106 MiB |
+| working set | 78–82 MiB | 86–90 MiB |
+| file | 321.9 MiB | 315.2 MiB |
+
+The times are from three runs of each, agreeing within 0.3 s, and the memory from three alternating runs of each, read from the process's handle after it exited.
+The file is smaller as rounding merges 1,657 sprites that float noise had drawn a few pixels apart: where two crossing faces tie on depth, the noise broke the tie differently for the same shape reached by two routes.
+Most are ghost pipe flowers.
+
+The extra 13 MiB hasn't been broken down.
+The table of inputs' hashes is sized for every sprite, 524,288 slots of 13 bytes, 6.5 MiB, and it's allocated in the drawing arena: the late, large request that Sprite hash table found reserves far more than it uses there.
+
 ## Estimates and measurements
 
 Several estimates made along the way were wrong, and measuring settled each one.
@@ -305,6 +355,8 @@ Several estimates made along the way were wrong, and measuring settled each one.
 | a few hundred textures are decoded for both colours and images | 1,451 of 1,613 |
 | the merge added 8 MiB to the peak | 3 MiB: the earlier counters missed the last moments |
 | moving the table of hashes takes the peak to about 85 MiB | 93 MiB: a short spike that samples miss |
+| an exact hash of a shape's inputs catches most repeats | 11%: the same draw by another route differs in the last bits of its floats |
+| rounded inputs catch 132,881 repeats | 134,846, with images hashed by their pixels and faces with no area left out |
 
 ## Findings
 
@@ -321,8 +373,8 @@ Several estimates made along the way were wrong, and measuring settled each one.
 
 ## Remaining
 
-The peak is 93 MiB, the same as before every rotation was drawn.
-Samples reach only 80–84 MiB, so it's a short spike, probably in reading, but it hasn't been found.
-Drawing still takes about 4 times as long, as every sprite is drawn before it can be compared: skipping turned plants, which are mostly other turns of themselves, would save about 30% of the sprites.
+The peak is 106 MiB, 13 MiB above where moving the table of hashes left it.
+The table of inputs' hashes is the likely cause: allocating it from `gpa`, as f501fc5 does the table of pixels' hashes, is the next thing to try.
+Drawing takes 8.5 s on one core: rasterizing the 73,358 shapes still drawn takes 4.9 s, and clearing and trimming them 2.4 s (`TODO.md`, item 16).
 
 Only Windows has run this: Linux and macOS have only been compiled, and only one mod has been tried (`TODO.md`, items 13 and 14).
