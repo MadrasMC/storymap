@@ -33,6 +33,12 @@ pub const Error = error{
 /// before that changed keep theirs.
 const Compression = enum(u8) { gzip = 1, zlib = 2, none = 3, lz4 = 4 };
 
+/// Whether the region has a chunk at (`x`, `z`), from 0 to `side`, without reading it.
+pub fn holds(self: Region, x: usize, z: usize) bool {
+    if (self.bytes.len < headerLength) return false;
+    return std.mem.readInt(u32, self.bytes[(z * side + x) * 4 ..][0..4], .big) != 0;
+}
+
 /// The chunk at (`x`, `z`) in the region, from 0 to `side`, decompressed into `buffer`; null
 /// where the region has none.
 pub fn chunk(self: Region, buffer: []u8, x: usize, z: usize) Error!?[]u8 {
@@ -97,6 +103,8 @@ test chunk {
     const region: Region = .{ .bytes = &file };
     try std.testing.expectEqualStrings("plain", (try region.chunk(&buffer, 3, 1)).?);
     try std.testing.expectEqual(null, try region.chunk(&buffer, 1, 3));
+    try std.testing.expect(region.holds(3, 1));
+    try std.testing.expect(!region.holds(1, 3));
 
     // zlib, in one stored block: its header, the block's lengths, and a checksum.
     const text = "a chunk";
