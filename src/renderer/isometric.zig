@@ -43,8 +43,6 @@ const relief = @import("relief.zig");
 const rasterizer = @import("rasterizer.zig");
 pub const Sprites = @import("Sprites.zig");
 
-pub const folder = "isometric";
-pub const title = "Isometric";
 /// Level-0 pixels from blocks: a block at (x, y, z) in the view's coordinates (`Rotation.toView`)
 /// is drawn in the `blockWidth`-pixel square from ((x − z − 1) · `blockWidth` / 2,
 /// (x + z) · `blockWidth` / 4 − (y + 1) · `blockWidth` / 2).
@@ -69,6 +67,25 @@ pub const Rotation = enum(u2) {
     deg90,
     deg180,
     deg270,
+
+    /// Its tiles' folder in the output.
+    pub fn folder(self: Rotation) []const u8 {
+        return switch (self) {
+            .deg0 => "isometric",
+            .deg90 => "isometric-90",
+            .deg180 => "isometric-180",
+            .deg270 => "isometric-270",
+        };
+    }
+
+    pub fn title(self: Rotation) []const u8 {
+        return switch (self) {
+            .deg0 => "Isometric",
+            .deg90 => "Isometric 90°",
+            .deg180 => "Isometric 180°",
+            .deg270 => "Isometric 270°",
+        };
+    }
 
     /// The view's coordinates of the block at (x, z) in the world.
     fn toView(self: Rotation, x: i64, z: i64) [2]i64 {
@@ -173,8 +190,7 @@ pub const Options = struct {
     /// How blocks are drawn: a theme's `isometric/style.txt`. The game has one style, `game`.
     style: Style,
     /// The sprites the `game` style draws blocks in (`drawSprites`), each block in those its
-    /// source gives it (`spritesOf`); without them, it draws every block in its colour. They must
-    /// be drawn for `rotation`.
+    /// source gives it (`spritesOf`); without them, it draws every block in its colour.
     sprites: ?*const Sprites = null,
     rotation: Rotation = .deg0,
 };
@@ -184,7 +200,8 @@ pub const Options = struct {
 /// than a chunk can number error.TooManyLooks.
 pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options, stats: *Stats) ![]tiles.Written {
     const start: Io.Timestamp = .now(io, .awake);
-    var view: View(Source) = try .init(allocator, source, options.style, options.sprites, options.rotation);
+    const rotated = if (options.sprites) |sprites| sprites.ofRotation(@backingInt(options.rotation)) else null;
+    var view: View(Source) = try .init(allocator, source, options.style, if (rotated) |*sprites| sprites else null, options.rotation);
     defer view.deinit(allocator);
     const list = try tileList(allocator, source.chunkColumns, source.heights().world, options.rotation);
     defer allocator.free(list);
@@ -1463,8 +1480,8 @@ test "lines of sight in every rotation" {
 fn View(comptime Source: type) type {
     return struct {
         const Self = @This();
-        pub const name = folder;
 
+        name: []const u8,
         source: *const Source,
         /// How each block ID is drawn: 0 not at all, otherwise its look's index in `looks` + 1.
         blockLooks: []u16,
@@ -1563,6 +1580,7 @@ fn View(comptime Source: type) type {
                 },
             }
             return .{
+                .name = rotation.folder(),
                 .source = source,
                 .blockLooks = blockLooks,
                 .looks = try looks.toOwnedSlice(allocator),
