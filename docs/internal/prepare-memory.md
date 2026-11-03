@@ -264,7 +264,7 @@ The file is byte-identical to fe4cb32's.
 Holding the sprite records once took 5 MiB off the sections arena.
 The contents arena grew by 8 MiB, as an arena sizes a new block at 1.5 times its last one plus the request.
 On fe4cb32, the records' 3.4 MiB took the new block, and the table of hashes fitted in it.
-After the merge, the table's 11 MiB takes it.
+After the merge, the table's 10.5 MiB takes it.
 
 Drawing took 21.4–21.8 s on fe4cb32 and 21.3–22.0 s merged.
 
