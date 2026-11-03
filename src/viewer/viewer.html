@@ -319,7 +319,9 @@ function start(makeTheme) {
 		watchLoading(pending);
 		report();
 	}
-	// Edges are rounded to whole pixels, so neighbouring tiles meet without hairline gaps.
+	// Edges are rounded to whole pixels, so neighbouring tiles meet. A tile the browser scales
+	// fades out at its edges, so it reaches a pixel into the next, or what's under them would show
+	// as hairlines.
 	function place(img, level, x, y, placed) {
 		if (placed.has(img)) return;
 		const span = T * 2 ** level;
@@ -327,9 +329,10 @@ function start(makeTheme) {
 		const x1 = Math.round(((x + 1) * span - cam.x) * cam.s + W / 2);
 		const y0 = Math.round((y * span - cam.y) * cam.s + H / 2);
 		const y1 = Math.round(((y + 1) * span - cam.y) * cam.s + H / 2);
+		const overlap = (x1 - x0) * window.devicePixelRatio === T ? 0 : 1;
 		img.style.transform = `translate(${x0}px, ${y0}px)`;
-		img.style.width = `${x1 - x0}px`;
-		img.style.height = `${y1 - y0}px`;
+		img.style.width = `${x1 - x0 + overlap}px`;
+		img.style.height = `${y1 - y0 + overlap}px`;
 		// More detailed levels go on top of the ones standing in for them.
 		img.style.zIndex = String(top - level + 1);
 		if (img.parentNode !== layer) {
