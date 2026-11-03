@@ -1,5 +1,5 @@
-//! A Minecraft world's overworld, opened for reading: a `Source` for the top-down view
-//! (`topdown.zig`). A tile is exactly a region file. Heights are from the world's bottom, as
+//! A Minecraft world's overworld, opened for reading: a `Source` for the top-down and isometric
+//! views (`topdown.zig`, `isometric.zig`). A tile is exactly a region file. Heights are from the world's bottom, as
 //! `world` has them, so a world from −64 up has its sea at 127.
 const World = @This();
 
@@ -8,6 +8,7 @@ const Io = std.Io;
 const Dir = Io.Dir;
 const tiles = @import("tiles");
 const world = @import("world");
+const nbt = @import("nbt");
 const Region = @import("Region.zig");
 const Chunk = @import("Chunk.zig");
 
@@ -35,10 +36,16 @@ tileList: []tiles.Tile,
 /// The `world.Chunk` columns that may have blocks. A region's table doesn't say which chunks are
 /// finished, so some of them have none.
 chunkColumns: []world.ChunkColumn,
+/// The chunks in the regions, finished or not.
+chunkCount: usize,
 /// The height of the world's bottom, in blocks.
 bottom: i32,
 /// How many blocks high the world is.
 height: u16,
+/// The world's name, and the version of the game that last saved it, from `level.dat`; empty
+/// without one.
+name: []const u8,
+version: []const u8,
 names: *Names,
 
 /// The block names met so far, each with an ID, shared by every thread's `Reader`.
@@ -85,17 +92,69 @@ pub fn open(allocator: std.mem.Allocator, io: Io, path: []const u8) !World {
     const buffer = try allocator.alloc(u8, maxChunkBytes);
     defer allocator.free(buffer);
     const bottom, const height = try findHeights(regions, io, list.items, buffer);
-    const chunkColumns = try findColumns(allocator, regions, io, list.items);
+    const chunkColumns, const chunkCount = try findColumns(allocator, regions, io, list.items);
     errdefer allocator.free(chunkColumns);
     const tileList = try list.toOwnedSlice(allocator);
     errdefer allocator.free(tileList);
     const names = try allocator.create(Names);
     names.* = .{ .arena = .init(allocator) };
-    return .{ .io = io, .regions = regions, .tileList = tileList, .chunkColumns = chunkColumns, .bottom = bottom, .height = height, .names = names };
+    errdefer {
+        names.arena.deinit();
+        allocator.destroy(names);
+    }
+    const name, const version = try readLevel(names.arena.allocator(), io, folder, buffer);
+    return .{
+        .io = io,
+        .regions = regions,
+        .tileList = tileList,
+        .chunkColumns = chunkColumns,
+        .chunkCount = chunkCount,
+        .bottom = bottom,
+        .height = height,
+        .name = name,
+        .version = version,
+        .names = names,
+    };
+}
+
+/// The world's name and its game version from `level.dat`, kept in `arena`; empty where it
+/// can't be read.
+fn readLevel(arena: std.mem.Allocator, io: Io, folder: Dir, buffer: []u8) !struct { []const u8, []const u8 } {
+    const compressed = folder.readFileAlloc(io, "level.dat", arena, .limited(64 << 20)) catch return .{ "", "" };
+    var input: Io.Reader = .fixed(compressed);
+    var window: [std.compress.flate.max_window_len]u8 = undefined;
+    var inflate: std.compress.flate.Decompress = .init(&input, .gzip, &window);
+    var output: Io.Writer = .fixed(buffer);
+    const length = inflate.reader.streamRemaining(&output) catch return .{ "", "" };
+    const root = nbt.parse(buffer[0..length]) catch return .{ "", "" };
+    const data = (root.get("Data") catch null) orelse return .{ "", "" };
+    if (data != .compound) return .{ "", "" };
+    const name = stringIn(data.compound, "LevelName");
+    const version: []const u8 = if (data.compound.get("Version") catch null) |value| (if (value == .compound) stringIn(value.compound, "Name") else "") else "";
+    return .{ try arena.dupe(u8, name), try arena.dupe(u8, version) };
+}
+
+fn stringIn(compound: nbt.Compound, key: []const u8) []const u8 {
+    const value = (compound.get(key) catch null) orelse return "";
+    return if (value == .string) value.string else "";
+}
+
+/// The game shows positions as they are, so the origin is (0, 0).
+pub fn describe(self: *const World) world.Description {
+    return .{
+        .game = .{ .name = "Minecraft", .version = self.version },
+        .name = self.name,
+        .origin = .{ .x = 0, .z = 0 },
+        .seaLevel = self.heights().sea,
+    };
+}
+
+pub fn countChunks(self: *const World) error{}!usize {
+    return self.chunkCount;
 }
 
 pub fn close(self: *World, allocator: std.mem.Allocator) void {
-    self.names.ids.deinit(allocator);
+    // `ids` is in the arena too.
     self.names.arena.deinit();
     allocator.destroy(self.names);
     allocator.free(self.chunkColumns);
@@ -103,22 +162,25 @@ pub fn close(self: *World, allocator: std.mem.Allocator) void {
     self.regions.close(self.io);
 }
 
-/// The `world.Chunk` columns holding any chunk in the regions, from their tables alone.
-fn findColumns(allocator: std.mem.Allocator, regions: Dir, io: Io, tileList: []const tiles.Tile) ![]world.ChunkColumn {
+/// The `world.Chunk` columns holding any chunk in the regions, and the chunks, from their tables
+/// alone.
+fn findColumns(allocator: std.mem.Allocator, regions: Dir, io: Io, tileList: []const tiles.Tile) !struct { []world.ChunkColumn, usize } {
     var columns: std.AutoArrayHashMapUnmanaged(world.ChunkColumn, void) = .empty;
     defer columns.deinit(allocator);
+    var count: usize = 0;
     for (tileList) |tile| {
         var mapped = try MappedRegion.open(regions, io, tile) orelse continue;
         defer mapped.close(io);
         for (0..Region.side) |z| for (0..Region.side) |x| {
             if (!mapped.region().holds(x, z)) continue;
+            count += 1;
             try columns.put(allocator, .{
                 .x = @divFloor(tile.x * Region.side + @as(i32, @intCast(x)), cubeColumns),
                 .z = @divFloor(tile.y * Region.side + @as(i32, @intCast(z)), cubeColumns),
             }, {});
         };
     }
-    return allocator.dupe(world.ChunkColumn, columns.keys());
+    return .{ try allocator.dupe(world.ChunkColumn, columns.keys()), count };
 }
 
 /// The region a file holds, from its name, `r.<x>.<z>.mca`; null for any other file.

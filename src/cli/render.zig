@@ -1,11 +1,12 @@
-//! `storymap <save-file>`, the default command: renders a top-down map of a save as tiles, with
-//! index.html beside them to view it.
+//! `storymap <world>`, the default command: renders a top-down map of a Vintage Story save or a
+//! Minecraft world as tiles, with index.html beside them to view it.
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const tiles = @import("tiles");
 const SaveFile = @import("vs").SaveFile;
 const Prepared = @import("vs").Prepared;
+const mc = @import("mc");
 const topdown = @import("renderer").topdown;
 const isometric = @import("renderer").isometric;
 const Style = @import("theme").Style;
@@ -36,12 +37,12 @@ pub const spec: args.Spec = .{
         prepare.dataOption,
     },
     .positionals = &.{
-        .{ .name = "save-file", .description = "The world's save file (.vcdbs)." },
+        .{ .name = "world", .description = "A Vintage Story save file (.vcdbs), or a Minecraft world's folder." },
         .{ .name = "folder", .optional = true, .description = "The output folder: out by default." },
     },
     .description =
-    \\Renders a top-down map of a Vintage Story save as tiles in the output folder, with
-    \\index.html beside them to view it.
+    \\Renders a top-down map of a Vintage Story save or a Minecraft world as tiles in the output
+    \\folder, with index.html beside them to view it.
     \\
     \\What the map needs from the game's and mods' assets is prepared once into the prepared
     \\blocks file, the first time a render needs it, or again with --prepare; prepare does only
@@ -52,7 +53,7 @@ pub const spec: args.Spec = .{
 pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const start: std.Io.Timestamp = .now(init.io, .awake);
     const allocator = init.gpa;
-    const savePath = parsed.positional("save-file").?;
+    const savePath = parsed.positional("world").?;
     const outPath = parsed.positional("folder") orelse "out";
     const themeName = parsed.value("theme") orelse "printed";
     const season: ?SaveFile.Season = if (parsed.value("season")) |name|
@@ -91,11 +92,40 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         break :level std.fmt.parseInt(u8, text, 10) catch console.fail("`--lossy-from`: invalid level {s}. expected: a level from 0", .{text});
     } else null;
     const output: tiles.Output = .{ .folder = out, .format = format, .lossyFrom = lossyFrom, .map = mode.map };
+    var request: Request = .{
+        .start = start,
+        .savePath = savePath,
+        .outPath = outPath,
+        .name = parsed.value("name"),
+        .chosen = chosen,
+        .mode = mode,
+        .theme = theme,
+        .output = output,
+        .write = write,
+        .json = parsed.flag("json"),
+        .yes = parsed.flag("yes"),
+    };
+
+    if (isFolder(init.io, savePath)) {
+        if (season != null) console.fail("`--season`: only for Vintage Story saves", .{});
+        if (area != null) console.fail("`--clip`: only for Vintage Story saves", .{});
+        if (force or parsed.value("blocks") != null or paths.game != null or paths.data != null)
+            console.fail("`--prepare`, `--blocks`, `--game` and `--data`: only for Vintage Story saves", .{});
+        if (chosen.topdown and theme.topdown == .game) console.fail("the game's own top-down styles: only for Vintage Story saves; draw a Minecraft world in another style, such as `--style relief`", .{});
+        const opening: std.Io.Timestamp = .now(init.io, .awake);
+        var source = mc.World.open(allocator, init.io, savePath) catch |err| switch (err) {
+            error.NotAWorld => console.fail("{s}: not a Minecraft world (no finished chunks in its region files)", .{savePath}),
+            else => console.fail("{s}: could not read ({s})", .{ savePath, @errorName(err) }),
+        };
+        defer source.close(allocator);
+        request.openTime = opening.untilNow(init.io, .awake);
+        return draw(mc.World, allocator, init.io, arena, &source, null, request);
+    }
 
     const loading: std.Io.Timestamp = .now(init.io, .awake);
     var prepared = prepare.blocks(init, paths, force);
     defer if (prepared) |*blocks| blocks.deinit(init.io);
-    const blocksTime = loading.untilNow(init.io, .awake);
+    request.blocksTime = loading.untilNow(init.io, .awake);
 
     const opening: std.Io.Timestamp = .now(init.io, .awake);
     var save = try openSaveFile(allocator, init.io, savePath, area);
@@ -105,14 +135,48 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         try warnUnknownBlocks(allocator, &blocks.prepared, &save);
         save.useBlocks(&blocks.prepared);
     }
-    const openTime = opening.untilNow(init.io, .awake);
+    request.openTime = opening.untilNow(init.io, .awake);
+    return draw(SaveFile, allocator, init.io, arena, &save, if (prepared) |*blocks| &blocks.sprites else null, request);
+}
 
+/// What drawing a world's views needs from the command line, whatever its game.
+const Request = struct {
+    start: std.Io.Timestamp,
+    savePath: []const u8,
+    outPath: []const u8,
+    /// The world's name on the page, instead of its own.
+    name: ?[]const u8,
+    chosen: Views,
+    mode: Mode,
+    theme: Theme,
+    output: tiles.Output,
+    write: bool,
+    json: bool,
+    yes: bool,
+    blocksTime: std.Io.Duration = .zero,
+    openTime: std.Io.Duration = .zero,
+};
+
+/// Whether `path` is a folder, as a Minecraft world is; a Vintage Story save is a file.
+fn isFolder(io: std.Io, path: []const u8) bool {
+    var folder = std.Io.Dir.cwd().openDir(io, path, .{}) catch return false;
+    folder.close(io);
+    return true;
+}
+
+/// Draws the views `request` names of `source`, a game's world (topdown.zig, isometric.zig),
+/// writes the page, and reports.
+fn draw(comptime Source: type, allocator: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, source: *Source, sprites: ?*const isometric.Sprites, request: Request) !void {
+    const chosen = request.chosen;
+    const mode = request.mode;
+    const theme = request.theme;
+    const output = request.output;
+    const format = output.format;
     var views: std.ArrayList(viewer.View) = .empty;
     defer views.deinit(allocator);
-    var description = save.describe();
-    if (parsed.value("name")) |name| description.name = name;
+    var description = source.describe();
+    if (request.name) |name| description.name = name;
     const place: Place = .{ .origin = .{ description.origin.x, description.origin.z }, .seaLevel = description.seaLevel };
-    const sprites = if (prepared) |*blocks| &blocks.sprites else null;
     const topdownOptions: topdown.Options = .{ .style = theme.topdown };
 
     // Every view's images are placed before any view is drawn, so their sizes are checked, and
@@ -122,17 +186,17 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     if (mode.images.len > 0) {
         if (chosen.topdown) {
             const placements = try arena.alloc(tiles.Placement, mode.images.len);
-            topdown.placeImages(SaveFile, allocator, init.io, &save, try requestsOf(arena, mode.images, place, .topdown), topdownOptions, placements) catch |err| return failPlacing(err);
+            topdown.placeImages(Source, allocator, io, source, try requestsOf(arena, mode.images, place, .topdown), topdownOptions, placements) catch |err| return failPlacing(err);
             topdownImages = try filesOf(arena, topdown.folder, format, placements);
         }
         for (chosen.rotations, std.enums.values(isometric.Rotation), &isometricImages) |wanted, rotation, *files| {
             if (!wanted) continue;
             const placements = try arena.alloc(tiles.Placement, mode.images.len);
             const options: isometric.Options = .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation };
-            isometric.placeImages(SaveFile, allocator, init.io, &save, try requestsOf(arena, mode.images, place, .{ .isometric = rotation }), options, placements) catch |err| return failPlacing(err);
+            isometric.placeImages(Source, allocator, io, source, try requestsOf(arena, mode.images, place, .{ .isometric = rotation }), options, placements) catch |err| return failPlacing(err);
             files.* = try filesOf(arena, rotation.folder(), format, placements);
         }
-        checkImages(init.io, &([_][]const tiles.ImageFile{topdownImages} ++ isometricImages), format, parsed.flag("yes"));
+        checkImages(io, &([_][]const tiles.ImageFile{topdownImages} ++ isometricImages), format, request.yes);
     }
 
     var topdownStats: ?topdown.Stats = null;
@@ -140,12 +204,12 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         topdownStats = .{};
         var viewOutput = output;
         viewOutput.images = topdownImages;
-        const list = try topdown.render(SaveFile, allocator, init.io, &save, viewOutput, topdownOptions, &topdownStats.?);
+        const list = try topdown.render(Source, allocator, io, source, viewOutput, topdownOptions, &topdownStats.?);
         logImages(viewOutput.images);
         break :list list;
     } else null;
     defer if (writtenTopdown) |list| allocator.free(list);
-    if (topdownStats) |stats| if (mode.map) logTopdown(&save, stats);
+    if (topdownStats) |stats| if (mode.map) logTopdown(Source, source, stats);
     if (writtenTopdown) |list| try views.append(allocator, .{ .name = topdown.folder, .title = topdown.title, .projection = topdown.projection, .format = output.format, .written = list });
 
     var isometricStats: [isometric.Sprites.rotationCount]?isometric.Stats = @splat(null);
@@ -156,7 +220,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         var stats: isometric.Stats = .{};
         var viewOutput = output;
         viewOutput.images = files;
-        const list = try isometric.render(SaveFile, allocator, init.io, &save, viewOutput, .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation }, &stats);
+        const list = try isometric.render(Source, allocator, io, source, viewOutput, .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation }, &stats);
         written.* = list;
         rotationStats.* = stats;
         if (mode.map) console.log("{s}: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ rotation.folder(), stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });
@@ -164,30 +228,30 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         try views.append(allocator, .{ .name = rotation.folder(), .title = rotation.title(), .projection = isometric.projection, .blockWidth = isometric.blockWidth, .rotation = rotation.degrees(), .format = output.format, .written = list });
     }
 
-    if (out) |dir| if (mode.map) {
-        const now = std.Io.Timestamp.now(init.io, .real).toSeconds();
-        try viewer.write(allocator, init.io, dir, description, now, views.items, theme);
+    if (output.folder) |dir| if (mode.map) {
+        const now = std.Io.Timestamp.now(io, .real).toSeconds();
+        try viewer.write(allocator, io, dir, description, now, views.items, theme);
     };
-    const total = start.untilNow(init.io, .awake);
-    if (write and mode.map) {
-        console.log("done in {d:.2} s: {s}/index.html", .{ seconds(total), outPath });
-    } else if (write) {
-        console.log("done in {d:.2} s: {s}", .{ seconds(total), outPath });
+    const total = request.start.untilNow(io, .awake);
+    if (request.write and mode.map) {
+        console.log("done in {d:.2} s: {s}/index.html", .{ seconds(total), request.outPath });
+    } else if (request.write) {
+        console.log("done in {d:.2} s: {s}", .{ seconds(total), request.outPath });
     } else {
         console.log("done in {d:.2} s, nothing written", .{seconds(total)});
     }
 
-    if (!parsed.flag("json")) return;
+    if (!request.json) return;
     const isometricStyle = try std.fmt.allocPrint(arena, "{f}", .{theme.isometric});
     const report: Report = .{
         .version = build_options.version,
-        .world = std.fs.path.basename(savePath),
+        .world = std.fs.path.basename(request.savePath),
         .build = @tagName(builtin.mode),
         .threads = std.Thread.getCpuCount() catch 1,
-        .written = write,
+        .written = request.write,
         .format = @tagName(output.format),
-        .chunks = try save.countChunks(),
-        .seconds = .{ .blocks = seconds(blocksTime), .open = seconds(openTime), .total = seconds(total) },
+        .chunks = try source.countChunks(),
+        .seconds = .{ .blocks = seconds(request.blocksTime), .open = seconds(request.openTime), .total = seconds(total) },
         .topdown = if (topdownStats) |stats| .{
             .style = try std.fmt.allocPrint(arena, "{f}", .{theme.topdown}),
             .tiles = stats.tiles,
@@ -202,7 +266,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .@"isometric-180" = .ofIsometric(isometricStyle, isometricStats[2]),
         .@"isometric-270" = .ofIsometric(isometricStyle, isometricStats[3]),
     };
-    try console.print(init.io, "{f}\n", .{std.json.fmt(report, .{ .emit_null_optional_fields = false })});
+    try console.print(io, "{f}\n", .{std.json.fmt(report, .{ .emit_null_optional_fields = false })});
 }
 
 /// What `--json` prints: the render's times and counts.
@@ -284,7 +348,7 @@ fn seconds(duration: std.Io.Duration) f64 {
 }
 
 /// The top-down view's tiles, time and surface, and its most common blocks by name.
-fn logTopdown(save: *const SaveFile, stats: topdown.Stats) void {
+fn logTopdown(comptime Source: type, source: *const Source, stats: topdown.Stats) void {
     if (stats.surface) |surface| {
         console.log("top-down: {} tiles in {} levels in {d:.2} s, surface y {}..{}", .{ stats.tiles, stats.levels, seconds(stats.duration), surface.lowest, surface.highest });
     } else {
@@ -296,7 +360,7 @@ fn logTopdown(save: *const SaveFile, stats: topdown.Stats) void {
     for (stats.commonBlocks, 0..) |common, i| {
         const block = common orelse break;
         const separator = if (i == 0) "" else ",";
-        if (save.blockName(block.id)) |code| {
+        if (source.blockName(block.id)) |code| {
             line.print("{s} {s} {}%", .{ separator, code, block.percent }) catch break;
         } else {
             line.print("{s} #{} {}%", .{ separator, block.id, block.percent }) catch break;

@@ -306,6 +306,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "vs", .module = vs_mod },
+            .{ .name = "mc", .module = mc_mod },
             .{ .name = "renderer", .module = renderer_mod },
             .{ .name = "viewer", .module = viewer_mod },
             .{ .name = "theme", .module = theme_mod },
