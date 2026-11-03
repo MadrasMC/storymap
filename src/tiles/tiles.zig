@@ -16,6 +16,7 @@
 //!
 //! Besides or instead of the tiles, it writes images of a view (`Image`), each drawn on its own.
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const png = @import("png");
 const jxl = @import("jxl");
@@ -255,10 +256,14 @@ fn renderMap(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *V
     return stats;
 }
 
+/// On Windows a thread's stack size is what's committed when it starts, and the stack still
+/// grows to the executable's reserve; elsewhere it's the most the stack can grow to.
+const threadConfig: std.Thread.SpawnConfig = if (builtin.os.tag == .windows) .{ .stack_size = 64 * 1024 } else .{};
+
 fn runAll(comptime Worker: type, jobs: []Worker, threads: []?std.Thread, comptime phase: fn (*Worker) void) !void {
     for (jobs, threads) |*job, *thread| {
         // If a thread can't be started, that share of the work runs here instead.
-        thread.* = std.Thread.spawn(.{}, phase, .{job}) catch null;
+        thread.* = std.Thread.spawn(threadConfig, phase, .{job}) catch null;
         if (thread.* == null) phase(job);
     }
     for (threads) |thread| if (thread) |t| t.join();
