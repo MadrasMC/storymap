@@ -159,10 +159,15 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
 
     var layersBuffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
     var sprites: Sprites.Sections = .init(io, partial.file, try storyblk.lastOffset(info, &layout), &layersBuffer, entries, isometric.blockWidth);
-    try isometric.drawSprites(arena, drawables, plan, &sprites);
-    contents.useSprites(plan.blocks);
-    try sprites.flush();
-    console.log("sprites: {} drawn in {d:.1} s, {} unique", .{ sprites.count, secondsSince(io, start), sprites.offsets.count() });
+    {
+        // From `gpa`, freed once drawn: in an arena, this would size a block far beyond what's used.
+        defer sprites.offsets.deinit(init.gpa);
+        try sprites.ensureCapacity(init.gpa);
+        try isometric.drawSprites(arena, drawables, plan, &sprites);
+        contents.useSprites(plan.blocks);
+        try sprites.flush();
+        console.log("sprites: {} drawn in {d:.1} s, {} unique", .{ sprites.count, secondsSince(io, start), sprites.offsets.count() });
+    }
 
     const sections = try encodeSections(encoded.allocator(), contents, entries);
     _ = scratch.reset(.free_all);

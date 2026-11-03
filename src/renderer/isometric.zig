@@ -998,10 +998,9 @@ pub fn planSprites(arena: std.mem.Allocator, drawables: []const Drawable) !Sprit
 /// Draws the sprites `plan` lists into `sections`, in every rotation, one rotation after another
 /// and one sprite at a time, each run by the first block that has it. Sprites that come out the
 /// same share their layers, as most of a rotation's are another's: a turned plant's every eighth
-/// of a circle, for one.
+/// of a circle, for one. `sections.ensureCapacity` must have made room.
 pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: SpritePlan, sections: *Sprites.Sections) !void {
     var target = try shapeTarget(arena);
-    try sections.ensureCapacity(arena);
     for (std.enums.values(Rotation), 0..) |rotation, quarter| {
         const earlier = quarter * plan.count;
         for (plan.blocks, drawables) |block, drawable| {
@@ -1009,13 +1008,13 @@ pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: 
             if (drawable.cube) |cube| {
                 for (0..block.variants) |variant| {
                     try cubeSprite(sections, cube, variant, drawable.colour, rotation);
-                    try sections.shareLast(arena);
+                    sections.shareLast();
                 }
             } else {
                 target.keepsOpacity = drawable.seeThrough;
                 for (0..block.turns) |turn| for (drawable.shapes) |*shape| for (0..block.variants) |variant| {
                     _ = try shapeSprite(sections, shape, variant, if (drawable.turned) turn else null, rotation, &target);
-                    try sections.shareLast(arena);
+                    sections.shareLast();
                 };
             }
         }
@@ -1323,6 +1322,7 @@ test drawSprites {
     var buffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
     const entries = try allocator.alignedAlloc(u8, .@"4", Sprites.Sections.entriesLength(plan.count));
     var sections: Sprites.Sections = .init(io, file, 0, &buffer, entries, blockWidth);
+    try sections.ensureCapacity(allocator);
     try drawSprites(allocator, &drawables, plan, &sections);
     try sections.flush();
     const blocks = plan.blocks;

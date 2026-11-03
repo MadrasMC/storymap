@@ -126,13 +126,13 @@ pub const Sections = struct {
     }
 
     /// With the sprite last added filled in: if a sprite before it has the same layers, points
-    /// it at those instead and takes its own back.
-    pub fn shareLast(self: *Sections, allocator: std.mem.Allocator) !void {
+    /// it at those instead and takes its own back. `ensureCapacity` must have made room.
+    pub fn shareLast(self: *Sections) void {
         const sprite = &self.entries[self.count - 1];
         const length = sprite.layersLength();
         var hash: [16]u8 = undefined;
         std.crypto.hash.Blake3.hash(self.layers.buffer[self.layers.held - length .. self.layers.held], &hash, .{});
-        const found = try self.offsets.getOrPut(allocator, hash);
+        const found = self.offsets.getOrPutAssumeCapacity(hash);
         if (found.found_existing) {
             sprite.offset = found.value_ptr.*;
             self.layers.drop(length);
@@ -307,7 +307,7 @@ test "Sections.shareLast" {
     const moved: Sprite = .{ .left = 5, .top = 6, .width = 1, .height = 1, .flags = .{} };
     for ([_]Sprite{ sprite, sprite, sprite, moved }, [_]u32{ 1, 1, 2, 1 }) |each, colour| {
         (try sections.add(each)).plain[0] = colour;
-        try sections.shareLast(allocator);
+        sections.shareLast();
     }
     try sections.flush();
     const pixels = try sections.readLayers(allocator);
