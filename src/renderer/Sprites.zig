@@ -16,7 +16,7 @@ comptime {
 }
 
 /// How the sprites are drawn: raise it when that changes, so files drawn before are drawn again.
-pub const generatorVersion: u16 = 5;
+pub const generatorVersion: u16 = 6;
 /// The layout of both sections (spec §7).
 pub const layoutVersion: u8 = 2;
 
@@ -139,6 +139,12 @@ pub const Sections = struct {
         } else {
             found.value_ptr.* = sprite.offset;
         }
+    }
+
+    /// Adds sprite `index` again, its layers and all.
+    pub fn repeat(self: *Sections, index: u32) void {
+        self.entries[self.count] = self.entries[index];
+        self.count += 1;
     }
 
     /// `sprite_layers` is done, and all of it in the file.
@@ -297,7 +303,7 @@ test "Sections.shareLast" {
     const file = try tmp.dir.createFile(io, "sprites", .{ .read = true });
     defer file.close(io);
     var buffer: [Sections.bufferLength]u8 align(4) = undefined;
-    var section: [Sections.entriesLength(1)]u8 align(4) = undefined;
+    var section: [Sections.entriesLength(2)]u8 align(4) = undefined;
     var sections: Sections = .init(io, file, 0, &buffer, &section, 32);
     defer sections.offsets.deinit(allocator);
     try sections.ensureCapacity(allocator);
@@ -320,4 +326,11 @@ test "Sections.shareLast" {
     try std.testing.expectEqual(8, entries[2].offset);
     try std.testing.expectEqual(entries[0].offset, entries[3].offset);
     try std.testing.expectEqual(5, entries[3].left);
+
+    // Repeated, a sprite is the same again, and takes no layers.
+    const length = sections.layers.length;
+    sections.repeat(2);
+    try std.testing.expectEqual(entries[2], sections.entries[4]);
+    try std.testing.expectEqual(5, sections.count);
+    try std.testing.expectEqual(length, sections.layers.length);
 }

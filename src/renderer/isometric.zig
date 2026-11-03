@@ -825,19 +825,28 @@ fn shapeTarget(allocator: std.mem.Allocator) !ShapeTarget {
 /// `TesselationMetaData.randomRotations` lists them, from east towards north.
 pub const turns = 8;
 
-/// Draws `shape` in its textures, as `rotation` shows it, each in its variant `variant` (counting
-/// round again for one with fewer), in turn `turn` of `turns`, or unturned for null, its faces lit
-/// by the way they face in the view. Each of its pixels is drawn at `samples` × `samples` points:
-/// it shows if at least half of them are covered, the average of their colours, the depth of the
-/// nearest. Added to `sections`, trimmed to the pixels it shows, and returned with its layers
-/// there.
-fn shapeSprite(sections: *Sprites.Sections, shape: *const world.Shape, variant: usize, turn: ?usize, rotation: Rotation, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
-    std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
-    target.clear();
+/// A face of a shape as it's drawn: where its corners land in a `ShapeTarget`, its image, its light
+/// and its layer, 1 for the plain one and 2 for the tinted.
+const ShapeFace = struct { corners: [4]rasterizer.Corner, image: *const world.Image, light: u16, tag: u8 };
+
+/// How many faces of a shape `shapeFaces` must have room for.
+fn faceCount(shape: *const world.Shape) usize {
+    var count: usize = 0;
+    for (shape.boxes) |box| for (box.faces) |face| {
+        count += @intFromBool(face != null);
+    };
+    return count;
+}
+
+/// The faces of `shape`, written into `buffer`, as `rotation` shows them: in their textures, each
+/// in its variant `variant` (counting round again for one with fewer), in turn `turn` of `turns`,
+/// or unturned for null, lit by the way they face in the view.
+fn shapeFaces(buffer: []ShapeFace, shape: *const world.Shape, variant: usize, turn: ?usize, rotation: Rotation) []ShapeFace {
     const scale: f32 = samples;
     const angle = if (turn) |i| (@as(f32, @floatFromInt(i)) - 0.5) * std.math.tau / turns else 0;
     const cos = @cos(angle);
     const sin = @sin(angle);
+    var count: usize = 0;
     for (shape.boxes) |box| for (box.faces, 0..) |maybeFace, sideIndex| {
         const face = maybeFace orelse continue;
         const texture = shape.textures[face.texture];
@@ -861,10 +870,65 @@ fn shapeSprite(sections: *Sprites.Sections, shape: *const world.Shape, variant: 
                 .v = uv[1],
             };
         }
-        const lighting = if (box.shade) lightOf(points) else light.get(.top);
-        rasterizer.triangle(target, .{ corners[0], corners[1], corners[2] }, image, lighting, tag);
-        rasterizer.triangle(target, .{ corners[0], corners[2], corners[3] }, image, lighting, tag);
+        buffer[count] = .{ .corners = corners, .image = image, .light = if (box.shade) lightOf(points) else light.get(.top), .tag = tag };
+        count += 1;
     };
+    return buffer[0..count];
+}
+
+/// Each image's hash, by its pixels, so textures that are copies of one another hash alike.
+const ImageHashes = std.AutoHashMapUnmanaged(*const world.Image, u64);
+
+/// What a shape's picture is made from, as a hash: its faces, with their corners rounded to a 64th
+/// of a sample and their depths and texture coordinates to a 4096th, so faces placed by different
+/// arithmetic in the same place hash alike, and their images by their pixels. Faces with no area
+/// draw nothing, and are left out.
+fn shapeKey(arena: std.mem.Allocator, drawn: []const ShapeFace, keepsOpacity: bool, images: *ImageHashes) !u64 {
+    var hasher: std.hash.Wyhash = .init(0);
+    hasher.update(std.mem.asBytes(&keepsOpacity));
+    for (drawn) |face| {
+        var rounded: [4][5]i32 = undefined;
+        for (&rounded, face.corners) |*out, corner| out.* = .{
+            @intFromFloat(@round(corner.x * 64)),
+            @intFromFloat(@round(corner.y * 64)),
+            @intFromFloat(@round(corner.depth * 4096)),
+            @intFromFloat(@round(corner.u * 4096)),
+            @intFromFloat(@round(corner.v * 4096)),
+        };
+        var area: i64 = 0;
+        for (rounded, 0..) |a, i| {
+            const b = rounded[(i + 1) % rounded.len];
+            area += @as(i64, a[0]) * b[1] - @as(i64, b[0]) * a[1];
+        }
+        if (area == 0) continue;
+        const image = try images.getOrPut(arena, face.image);
+        if (!image.found_existing) {
+            var pixels: std.hash.Wyhash = .init(0);
+            pixels.update(std.mem.asBytes(&face.image.width));
+            pixels.update(std.mem.asBytes(&face.image.height));
+            pixels.update(std.mem.sliceAsBytes(face.image.pixels));
+            image.value_ptr.* = pixels.final();
+        }
+        hasher.update(std.mem.asBytes(&rounded));
+        hasher.update(std.mem.asBytes(image.value_ptr));
+        hasher.update(std.mem.asBytes(&face.light));
+        hasher.update(std.mem.asBytes(&face.tag));
+    }
+    return hasher.final();
+}
+
+/// Draws a shape's faces, `drawn`, into its sprite. Each of its pixels is drawn at `samples` ×
+/// `samples` points: it shows if at least half of them are covered, the average of their colours,
+/// the depth of the nearest. Added to `sections`, trimmed to the pixels it shows, and returned
+/// with its layers there.
+fn shapeSprite(sections: *Sprites.Sections, drawn: []const ShapeFace, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
+    std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
+    target.clear();
+    for (drawn) |face| {
+        const corners = face.corners;
+        rasterizer.triangle(target, .{ corners[0], corners[1], corners[2] }, face.image, face.light, face.tag);
+        rasterizer.triangle(target, .{ corners[0], corners[2], corners[3] }, face.image, face.light, face.tag);
+    }
 
     // The pixels it shows, and where they are.
     var shown: [shapeSide][shapeSide]bool = undefined;
@@ -1013,11 +1077,22 @@ pub fn planSprites(arena: std.mem.Allocator, drawables: []const Drawable) !Sprit
 }
 
 /// Draws the sprites `plan` lists into `sections`, in every rotation, one rotation after another
-/// and one sprite at a time, each run by the first block that has it. Sprites that come out the
-/// same share their layers, as most of a rotation's are another's: a turned plant's every eighth
-/// of a circle, for one. `sections.ensureCapacity` must have made room.
+/// and one sprite at a time, each run by the first block that has it. Most of a rotation's sprites
+/// are another's: a turned plant's every eighth of a circle, or a block's turned sibling. A shape
+/// made from what an earlier one was (`shapeKey`) is that sprite again, without drawing it, and
+/// sprites that come out the same anyway share their layers. `sections.ensureCapacity` must have
+/// made room.
 pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: SpritePlan, sections: *Sprites.Sections) !void {
     var target = try shapeTarget(arena);
+    var most: usize = 0;
+    for (drawables) |drawable| for (drawable.shapes) |*shape| {
+        most = @max(most, faceCount(shape));
+    };
+    const buffer = try arena.alloc(ShapeFace, most);
+    // Each shape's key, with the sprite first drawn from it.
+    var keys: std.AutoHashMapUnmanaged(u64, u32) = .empty;
+    try keys.ensureTotalCapacity(arena, @intCast(sections.entries.len));
+    var images: ImageHashes = .empty;
     for (std.enums.values(Rotation), 0..) |rotation, quarter| {
         const earlier = quarter * plan.count;
         for (plan.blocks, drawables) |block, drawable| {
@@ -1030,7 +1105,14 @@ pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: 
             } else {
                 target.keepsOpacity = drawable.seeThrough;
                 for (0..block.turns) |turn| for (drawable.shapes) |*shape| for (0..block.variants) |variant| {
-                    _ = try shapeSprite(sections, shape, variant, if (drawable.turned) turn else null, rotation, &target);
+                    const drawn = shapeFaces(buffer, shape, variant, if (drawable.turned) turn else null, rotation);
+                    const key = keys.getOrPutAssumeCapacity(try shapeKey(arena, drawn, drawable.seeThrough, &images));
+                    if (key.found_existing) {
+                        sections.repeat(key.value_ptr.*);
+                        continue;
+                    }
+                    key.value_ptr.* = @intCast(sections.count);
+                    _ = try shapeSprite(sections, drawn, &target);
                     sections.shareLast();
                 };
             }
@@ -1189,6 +1271,60 @@ fn testBox(size: [3]f32) world.Shape.Box {
     return .{ .transform = .{ .{ 1, 0, 0, 0 }, .{ 0, 1, 0, 0 }, .{ 0, 0, 1, 0 } }, .size = size, .shade = true, .faces = @splat(face) };
 }
 
+/// `shape`'s sprite, its faces (`shapeFaces`) drawn by `shapeSprite`.
+fn drawShape(sections: *Sprites.Sections, shape: *const world.Shape, variant: usize, turn: ?usize, rotation: Rotation, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
+    var buffer: [64]ShapeFace = undefined;
+    return shapeSprite(sections, shapeFaces(&buffer, shape, variant, turn, rotation), target);
+}
+
+test shapeKey {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var images: ImageHashes = .empty;
+    const red: [1][4]u8 = .{.{ 200, 0, 0, 255 }};
+    const blue: [1][4]u8 = .{.{ 0, 0, 200, 255 }};
+    const image: world.Image = .{ .width = 1, .height = 1, .pixels = &red };
+    const copy: world.Image = .{ .width = 1, .height = 1, .pixels = &red };
+    const other: world.Image = .{ .width = 1, .height = 1, .pixels = &blue };
+    const square = [4]rasterizer.Corner{
+        .{ .x = 64, .y = 64, .depth = 1, .u = 0, .v = 0 },
+        .{ .x = 128, .y = 64, .depth = 1.5, .u = 1, .v = 0 },
+        .{ .x = 128, .y = 128, .depth = 2, .u = 1, .v = 1 },
+        .{ .x = 64, .y = 128, .depth = 1.5, .u = 0, .v = 1 },
+    };
+    const face: ShapeFace = .{ .corners = square, .image = &image, .light = 208, .tag = 1 };
+    const key = try shapeKey(a, &.{face}, false, &images);
+
+    // Placed by other arithmetic, a hair apart; or in a copy of its texture; or beside a face
+    // with no area: the same.
+    var nudged = face;
+    nudged.corners[2].depth = 2.0000002;
+    nudged.corners[0].x = 63.999996;
+    try std.testing.expectEqual(key, try shapeKey(a, &.{nudged}, false, &images));
+    var copied = face;
+    copied.image = &copy;
+    try std.testing.expectEqual(key, try shapeKey(a, &.{copied}, false, &images));
+    var edgeOn = face;
+    for (&edgeOn.corners) |*corner| corner.x = 64;
+    try std.testing.expectEqual(key, try shapeKey(a, &.{ face, edgeOn }, false, &images));
+
+    // Another texture, light, layer or place, or glass: different.
+    var blueFace = face;
+    blueFace.image = &other;
+    try std.testing.expect(key != try shapeKey(a, &.{blueFace}, false, &images));
+    var darker = face;
+    darker.light = 176;
+    try std.testing.expect(key != try shapeKey(a, &.{darker}, false, &images));
+    var tinted = face;
+    tinted.tag = 2;
+    try std.testing.expect(key != try shapeKey(a, &.{tinted}, false, &images));
+    var moved = face;
+    moved.corners[1].x = 129;
+    try std.testing.expect(key != try shapeKey(a, &.{moved}, false, &images));
+    try std.testing.expect(key != try shapeKey(a, &.{face}, true, &images));
+}
+
 /// The index in `sprite` of the pixel at (`row`, `column`) of the cube's square, or null if the
 /// sprite doesn't reach it.
 fn pixelAt(sprite: *const Sprite, row: i64, column: i64) ?usize {
@@ -1221,7 +1357,7 @@ test shapeSprite {
 
     // A whole block's box is the cube, filling the square, its faces lit as a cube's and each
     // pixel as deep as a cube's.
-    const cube, const cubePixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
+    const cube, const cubePixels = try drawShape(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expectEqual([4]i64{ 0, 0, w, w }, [4]i64{ cube.left, cube.top, cube.width, cube.height });
     try std.testing.expect(cube.flags.fills);
     try std.testing.expect(!cube.flags.tinted);
@@ -1235,7 +1371,7 @@ test shapeSprite {
     try std.testing.expect(!cubePixels.shows(pixelAt(&cube, 0, 0).?));
 
     // A slab leaves the top of the square empty, for what's behind it to show.
-    const slab, const slabPixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
+    const slab, const slabPixels = try drawShape(&sections, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expect(!slab.flags.fills);
     try std.testing.expectEqual(w / 4, slab.top);
     try std.testing.expectEqual(null, pixelAt(&slab, w / 8, w / 2));
@@ -1244,13 +1380,13 @@ test shapeSprite {
     // A plank twice as long as the block reaches out of its square both ways, drawn whole.
     var plank = testBox(.{ 2, 1.0 / 16.0, 1 });
     plank.transform[0][3] = -0.5;
-    const long, _ = try shapeSprite(&sections, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, .deg0, &target);
+    const long, _ = try drawShape(&sections, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expectEqual(-w / 4, long.left);
     try std.testing.expectEqual(w + w / 2, long.width);
 
     // A tinted texture goes into the tinted layer, covering the plain one.
     const tinted = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
-    const grass, const grassPixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, .deg0, &target);
+    const grass, const grassPixels = try drawShape(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, .deg0, &target);
     try std.testing.expect(grass.flags.tinted);
     const p = pixelAt(&grass, top[0], top[1]).?;
     try std.testing.expectEqual(colours[0], grassPixels.tinted.?[p]);
@@ -1262,9 +1398,9 @@ test shapeSprite {
     wall.transform[0][3] = 0.75;
     const shape: world.Shape = .{ .boxes = &.{wall}, .textures = &textures };
     const middle = [2]i64{ w / 2, w * 5 / 16 };
-    const unturned, _ = try shapeSprite(&sections, &shape, 0, null, .deg0, &target);
+    const unturned, _ = try drawShape(&sections, &shape, 0, null, .deg0, &target);
     try std.testing.expectEqual(null, pixelAt(&unturned, middle[0], middle[1]));
-    const turned, const turnedPixels = try shapeSprite(&sections, &shape, 0, turns / 2, .deg0, &target);
+    const turned, const turnedPixels = try drawShape(&sections, &shape, 0, turns / 2, .deg0, &target);
     try std.testing.expect(turnedPixels.shows(pixelAt(&turned, middle[0], middle[1]).?));
 
     // Turns 0 and 7, −22.5° and −67.5°, are as far either side of south-east, where the view
@@ -1274,8 +1410,8 @@ test shapeSprite {
     post.transform[0][3] = 0.8125;
     post.transform[2][3] = 0.4375;
     const postShape: world.Shape = .{ .boxes = &.{post}, .textures = &textures };
-    const right, _ = try shapeSprite(&sections, &postShape, 0, 0, .deg0, &target);
-    const left, _ = try shapeSprite(&sections, &postShape, 0, 7, .deg0, &target);
+    const right, _ = try drawShape(&sections, &postShape, 0, 0, .deg0, &target);
+    const left, _ = try drawShape(&sections, &postShape, 0, 7, .deg0, &target);
     try std.testing.expect(right.left > w / 2);
     try std.testing.expectEqual(@as(i32, w) - right.left - right.width, left.left);
     try std.testing.expectEqual(right.top, left.top);
@@ -1283,8 +1419,8 @@ test shapeSprite {
     // At 90° a wall along the east of its place is at the back, as one along the north is at 0°.
     var northWall = testBox(.{ 1, 1, 0.25 });
     northWall.transform[2][3] = 0;
-    const atBack, const atBackPixels = try shapeSprite(&sections, &.{ .boxes = &.{northWall}, .textures = &textures }, 0, null, .deg0, &target);
-    const fromEast, const fromEastPixels = try shapeSprite(&sections, &shape, 0, null, .deg90, &target);
+    const atBack, const atBackPixels = try drawShape(&sections, &.{ .boxes = &.{northWall}, .textures = &textures }, 0, null, .deg0, &target);
+    const fromEast, const fromEastPixels = try drawShape(&sections, &shape, 0, null, .deg90, &target);
     try std.testing.expectEqual(atBack.left, fromEast.left);
     try std.testing.expectEqual(atBack.top, fromEast.top);
     try std.testing.expectEqual(atBack.width, fromEast.width);
