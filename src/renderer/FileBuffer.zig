@@ -38,6 +38,12 @@ pub fn reserve(self: *FileBuffer, length: usize) ![]u8 {
     return room;
 }
 
+/// Takes back the last `length` bytes reserved, usable no more, which must be the last call's.
+pub fn drop(self: *FileBuffer, length: usize) void {
+    self.held -= length;
+    self.length -= length;
+}
+
 test FileBuffer {
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -56,6 +62,9 @@ test FileBuffer {
         @memset(piece, 7);
     }
     @memcpy(try buffer.reserve(3), "end");
+    // Taken back, what comes next goes in its place.
+    _ = try buffer.reserve(5);
+    buffer.drop(5);
     try buffer.flush();
 
     var read: [3]u8 = undefined;

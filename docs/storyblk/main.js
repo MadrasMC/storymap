@@ -2,7 +2,7 @@
 // specifies: each block's sprites for the isometric view, tinted by its colour maps.
 
 const MAGIC = "STORYBLK";
-const CONTAINER_VERSION = 2;
+const CONTAINER_VERSION = 3;
 const HEADER_LENGTH = 24;
 // The sections this viewer reads, each with the layout version it reads of it (spec §7). It skips
 // any others.
@@ -12,11 +12,12 @@ const SECTIONS = new Map([
 	["colour_codes", 1],
 	["texture_colours", 1],
 	["colour_maps", 2],
-	["sprites", 1],
-	["sprite_layers", 1],
+	["sprites", 2],
+	["sprite_layers", 2],
 ]);
 const TEXTURE_COLOURS_LENGTH = 93;
 const SPRITE_LENGTH = 16;
+const ROTATIONS = 4;
 const NONE8 = 0xff;
 const NONE32 = 0xffffffff;
 // Block flags, and Sprite flags (spec §4).
@@ -174,7 +175,7 @@ function parse(buffer) {
 	const spriteFields = openSection("sprites");
 	const spriteCount = spriteFields.takeU32();
 	const blockWidth = spriteFields.takeU16();
-	if (spriteSection.length !== 8 + SPRITE_LENGTH * spriteCount) rejectFile("its sprites section isn't the length its count gives");
+	if (spriteSection.length !== 8 + SPRITE_LENGTH * ROTATIONS * spriteCount) rejectFile("its sprites section isn't the length its count gives");
 	const layerSection = sections.get("sprite_layers");
 	const sprites = {
 		count: spriteCount,

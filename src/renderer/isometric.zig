@@ -1,6 +1,8 @@
-//! The isometric view, looking north-west from above: every block drawn as a cube, its top,
-//! south and east faces lit differently. In the `relief` style each is in its map type's relief
-//! colour (`relief.zig`); in the `game` style, a block the game draws as a cube is in its
+//! The isometric view, looking down from above, north-west or turned from there (`Rotation`):
+//! every block drawn as a cube, its top, left and right faces lit differently. Everything here
+//! works in the view's coordinates, the same in every rotation, and only blocks, the sides of
+//! cubes and the corners of shapes are turned to it. In the `relief` style each is in its map
+//! type's relief colour (`relief.zig`); in the `game` style, a block the game draws as a cube is in its
 //! textures (`cubeLayers`), one the game draws in another shape is in that shape, or the one of
 //! its shapes its place picks (`shapeSprite`), each sprite drawn once, when the game's blocks
 //! are prepared (`drawSprites`), and any other block in its texture's average colour, each
@@ -43,8 +45,9 @@ pub const Sprites = @import("Sprites.zig");
 
 pub const folder = "isometric";
 pub const title = "Isometric";
-/// Level-0 pixels from blocks: a block at (x, y, z) is drawn in the `blockWidth`-pixel square
-/// from ((x − z − 1) · `blockWidth` / 2, (x + z) · `blockWidth` / 4 − (y + 1) · `blockWidth` / 2).
+/// Level-0 pixels from blocks: a block at (x, y, z) in the view's coordinates (`Rotation.toView`)
+/// is drawn in the `blockWidth`-pixel square from ((x − z − 1) · `blockWidth` / 2,
+/// (x + z) · `blockWidth` / 4 − (y + 1) · `blockWidth` / 2).
 pub const projection = "isometric";
 
 /// A block's width in level-0 pixels. Its top is a diamond this wide and half as tall, and its
@@ -57,6 +60,103 @@ const down = blockWidth / 4;
 const below = blockWidth / 2;
 
 const side = world.Chunk.side;
+
+/// How far the viewer has moved clockwise, seen from above, from looking north-west. The view's
+/// x runs right and down the screen and its z left and down, as east and south do at `deg0`, so
+/// the sides of a cube it shows are those towards +z and +x.
+pub const Rotation = enum(u2) {
+    deg0,
+    deg90,
+    deg180,
+    deg270,
+
+    /// The view's coordinates of the block at (x, z) in the world.
+    fn toView(self: Rotation, x: i64, z: i64) [2]i64 {
+        return switch (self) {
+            .deg0 => .{ x, z },
+            .deg90 => .{ z, -1 - x },
+            .deg180 => .{ -1 - x, -1 - z },
+            .deg270 => .{ -1 - z, x },
+        };
+    }
+
+    /// The world's coordinates of the block at (x, z) in the view.
+    fn toWorld(self: Rotation, x: i64, z: i64) [2]i64 {
+        return switch (self) {
+            .deg0 => .{ x, z },
+            .deg90 => .{ -1 - z, x },
+            .deg180 => .{ -1 - x, -1 - z },
+            .deg270 => .{ z, -1 - x },
+        };
+    }
+
+    /// The view's coordinates of a point in a block, from 0 to 1 across it.
+    fn pointToView(self: Rotation, x: f32, z: f32) [2]f32 {
+        return switch (self) {
+            .deg0 => .{ x, z },
+            .deg90 => .{ z, 1 - x },
+            .deg180 => .{ 1 - x, 1 - z },
+            .deg270 => .{ 1 - z, x },
+        };
+    }
+
+    /// The world's coordinates of a point in a block, from 0 to 1 across it.
+    fn pointToWorld(self: Rotation, x: f32, z: f32) [2]f32 {
+        return switch (self) {
+            .deg0 => .{ x, z },
+            .deg90 => .{ 1 - z, x },
+            .deg180 => .{ 1 - x, 1 - z },
+            .deg270 => .{ z, 1 - x },
+        };
+    }
+
+    /// How far a distance east and south is along the view's x and z.
+    fn distanceToView(self: Rotation, east: f32, south: f32) [2]f32 {
+        return switch (self) {
+            .deg0 => .{ east, south },
+            .deg90 => .{ south, -east },
+            .deg180 => .{ -east, -south },
+            .deg270 => .{ -south, east },
+        };
+    }
+
+    /// The change in the world's x and z from one block on a line of sight to the next.
+    fn lineStep(self: Rotation) [2]i64 {
+        return switch (self) {
+            .deg0 => .{ -1, -1 },
+            .deg90 => .{ 1, -1 },
+            .deg180 => .{ 1, 1 },
+            .deg270 => .{ -1, 1 },
+        };
+    }
+
+    /// The faces of `cube` the view shows on its left and right.
+    fn sides(self: Rotation, cube: *const world.CubeFaces) [2]world.CubeFaces.Face {
+        return switch (self) {
+            .deg0 => .{ cube.south, cube.east },
+            .deg90 => .{ cube.west, cube.south },
+            .deg180 => .{ cube.north, cube.west },
+            .deg270 => .{ cube.east, cube.north },
+        };
+    }
+};
+
+test Rotation {
+    for (std.enums.values(Rotation)) |rotation| {
+        const x, const z = rotation.toView(5, -7);
+        try std.testing.expectEqual([2]i64{ 5, -7 }, rotation.toWorld(x, z));
+        const px, const pz = rotation.pointToView(0.25, 0.75);
+        try std.testing.expectEqual([2]f32{ 0.25, 0.75 }, rotation.pointToWorld(px, pz));
+        // Going further along a line of sight is one less in the view's x and z.
+        const step = rotation.lineStep();
+        try std.testing.expectEqual([2]i64{ x - 1, z - 1 }, rotation.toView(5 + step[0], -7 + step[1]));
+    }
+    // The way each rotation faces is away from the viewer, one less in the view's x and z.
+    try std.testing.expectEqual([2]f32{ -1, -1 }, Rotation.deg0.distanceToView(-1, -1));
+    try std.testing.expectEqual([2]f32{ -1, -1 }, Rotation.deg90.distanceToView(1, -1));
+    try std.testing.expectEqual([2]f32{ -1, -1 }, Rotation.deg180.distanceToView(1, 1));
+    try std.testing.expectEqual([2]f32{ -1, -1 }, Rotation.deg270.distanceToView(-1, 1));
+}
 
 pub const Stats = struct {
     /// Tiles written, at every level.
@@ -73,8 +173,10 @@ pub const Options = struct {
     /// How blocks are drawn: a theme's `isometric/style.txt`. The game has one style, `game`.
     style: Style,
     /// The sprites the `game` style draws blocks in (`drawSprites`), each block in those its
-    /// source gives it (`spritesOf`); without them, it draws every block in its colour.
+    /// source gives it (`spritesOf`); without them, it draws every block in its colour. They must
+    /// be drawn for `rotation`.
     sprites: ?*const Sprites = null,
+    rotation: Rotation = .deg0,
 };
 
 /// Renders `source` into `output` and returns the tiles written, at every level, owned by the
@@ -82,9 +184,9 @@ pub const Options = struct {
 /// than a chunk can number error.TooManyLooks.
 pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, source: *const Source, output: tiles.Output, options: Options, stats: *Stats) ![]tiles.Written {
     const start: Io.Timestamp = .now(io, .awake);
-    var view: View(Source) = try .init(allocator, source, options.style, options.sprites);
+    var view: View(Source) = try .init(allocator, source, options.style, options.sprites, options.rotation);
     defer view.deinit(allocator);
-    const list = try tileList(allocator, source.chunkColumns, source.heights().world);
+    const list = try tileList(allocator, source.chunkColumns, source.heights().world, options.rotation);
     defer allocator.free(list);
 
     var written: std.ArrayList(tiles.Written) = .empty;
@@ -102,8 +204,9 @@ pub fn render(comptime Source: type, allocator: std.mem.Allocator, io: Io, sourc
     return result;
 }
 
-/// Where the blocks from (x0, y0, z0) to (x1, y1, z1), each included, are drawn, in level-0
-/// pixels: from `left` and `top` up to but not including `right` and `bottom`.
+/// Where the blocks from (x0, y0, z0) to (x1, y1, z1), each included, in the view's coordinates,
+/// are drawn, in level-0 pixels: from `left` and `top` up to but not including `right` and
+/// `bottom`.
 const Box = struct {
     left: i64,
     top: i64,
@@ -120,17 +223,22 @@ const Box = struct {
     }
 };
 
-/// A line of sight: the blocks drawn on one square, each one block west, north and down from
-/// the one before, further from the viewer. `u` is x − z and `v` is x + z − 2y, which stay the
-/// same along it; they're both even or both odd.
+/// A line of sight: the blocks drawn on one square, each one less in the view's x and z and one
+/// lower than the one before, further from the viewer. `u` is x − z and `v` is x + z − 2y, which
+/// stay the same along it; they're both even or both odd.
 const Line = struct {
     u: i64,
     v: i64,
 
-    /// The x and z of its block at height `y`.
+    /// The view's x and z of its block at height `y`.
     fn at(self: Line, y: i64) [2]i64 {
         const sum = self.v + 2 * y;
         return .{ @divExact(sum + self.u, 2), @divExact(sum - self.u, 2) };
+    }
+
+    /// x + y + z of its block at height `y`, larger nearer.
+    fn depth(self: Line, y: i64) i64 {
+        return self.v + 3 * y;
     }
 
     /// Where its blocks are drawn, in level-0 pixels.
@@ -147,6 +255,7 @@ test Line {
         const x, const z = line.at(y);
         try std.testing.expectEqual(line.u, x - z);
         try std.testing.expectEqual(line.v, x + z - 2 * y);
+        try std.testing.expectEqual(x + y + z, line.depth(y));
         try std.testing.expectEqual(Box.of(x, y, z, x, y, z), line.square());
     }
 }
@@ -331,13 +440,15 @@ test "ChunkCache.Slot.liquidAt" {
 }
 
 /// The tiles the chunk columns are drawn on, from the bottom of the world to its top.
-fn tileList(allocator: std.mem.Allocator, columns: []const world.ChunkColumn, height: u16) ![]tiles.Tile {
+fn tileList(allocator: std.mem.Allocator, columns: []const world.ChunkColumn, height: u16, rotation: Rotation) ![]tiles.Tile {
     var set: std.AutoArrayHashMapUnmanaged(tiles.Tile, void) = .empty;
     defer set.deinit(allocator);
     for (columns) |column| {
-        const x0 = @as(i64, column.x) * side;
-        const z0 = @as(i64, column.z) * side;
-        const box: Box = .of(x0, 0, z0, x0 + side - 1, @as(i64, height) - 1, z0 + side - 1);
+        const x = @as(i64, column.x) * side;
+        const z = @as(i64, column.z) * side;
+        const ax, const az = rotation.toView(x, z);
+        const bx, const bz = rotation.toView(x + side - 1, z + side - 1);
+        const box: Box = .of(@min(ax, bx), 0, @min(az, bz), @max(ax, bx), @as(i64, height) - 1, @max(az, bz));
         var ty = @divFloor(box.top, tiles.size);
         while (ty * tiles.size < box.bottom) : (ty += 1) {
             var tx = @divFloor(box.left, tiles.size);
@@ -354,15 +465,26 @@ test tileList {
     // around screen x 0, from 256 blocks up down to its bottom corner.
     const box = Box.of(0, 0, 0, 31, 255, 31);
     try std.testing.expectEqual(Box{ .left = -32 * across, .top = -256 * below, .right = 32 * across, .bottom = 62 * down - below + blockWidth }, box);
-    const list = try tileList(std.testing.allocator, &.{.{ .x = 0, .z = 0 }}, 256);
+    const list = try tileList(std.testing.allocator, &.{.{ .x = 0, .z = 0 }}, 256, .deg0);
     defer std.testing.allocator.free(list);
     const columns = @divFloor(box.right - 1, tiles.size) - @divFloor(box.left, tiles.size) + 1;
     const rows = @divFloor(box.bottom - 1, tiles.size) - @divFloor(box.top, tiles.size) + 1;
     try std.testing.expectEqual(@as(usize, @intCast(columns * rows)), list.len);
+
+    // Turned half way, the column is in the blocks from −32 to −1 of the view.
+    const turned = try tileList(std.testing.allocator, &.{.{ .x = 0, .z = 0 }}, 256, .deg180);
+    defer std.testing.allocator.free(turned);
+    const far = Box.of(-32, 0, -32, -1, 255, -1);
+    try std.testing.expect(turned.len > 0);
+    for (turned) |tile| {
+        try std.testing.expect(tile.x * tiles.size < far.right and (tile.x + 1) * tiles.size > far.left);
+        try std.testing.expect(tile.y * tiles.size < far.bottom and (tile.y + 1) * tiles.size > far.top);
+    }
 }
 
-/// How each face of a block's square is lit, by pixel.
-const Face = enum { none, top, south, east };
+/// How each face of a block's square is lit, by pixel. The left and right faces are those towards
+/// the view's +z and +x, which are south and east only at `Rotation.deg0`.
+const Face = enum { none, top, left, right };
 
 /// Which face each pixel of a block's square shows, by where its centre falls.
 const faces: [blockWidth][blockWidth]Face = faces: {
@@ -376,9 +498,9 @@ const faces: [blockWidth][blockWidth]Face = faces: {
         out[row][column] = if (@abs(x - a) / a + @abs(y - d) / d < 1)
             .top
         else if (x > a and y > 2 * d - (x - a) * d / a and y < 2 * d + below - (x - a) * d / a)
-            .east
+            .right
         else if (x < a and y > d + x * d / a and y < d + below + x * d / a)
-            .south
+            .left
         else
             .none;
     };
@@ -386,20 +508,20 @@ const faces: [blockWidth][blockWidth]Face = faces: {
 };
 
 test faces {
-    // The top face fills the middle of the top half, the south face the left of the bottom
-    // half and the east face its right; the corners are empty.
+    // The top face fills the middle of the top half, and the other two the left and right of the
+    // bottom half; the corners are empty.
     const w = blockWidth;
     try std.testing.expectEqual(Face.top, faces[w / 4][w / 2]);
     try std.testing.expectEqual(Face.none, faces[0][0]);
-    try std.testing.expectEqual(Face.south, faces[w * 5 / 8][w / 4]);
-    try std.testing.expectEqual(Face.east, faces[w * 5 / 8][w * 3 / 4]);
+    try std.testing.expectEqual(Face.left, faces[w * 5 / 8][w / 4]);
+    try std.testing.expectEqual(Face.right, faces[w * 5 / 8][w * 3 / 4]);
     try std.testing.expectEqual(Face.none, faces[w - 1][0]);
     // Each face is a quarter of the square.
     var counts: std.EnumArray(Face, usize) = .initFill(0);
     for (faces) |row| for (row) |face| {
         counts.getPtr(face).* += 1;
     };
-    for ([_]Face{ .top, .south, .east }) |face| try std.testing.expectEqual(blockWidth * blockWidth / 4, counts.get(face));
+    for ([_]Face{ .top, .left, .right }) |face| try std.testing.expectEqual(blockWidth * blockWidth / 4, counts.get(face));
     // Blocks at the same depth, x + y + z, never cover the same pixel, so the depth buffer can
     // draw blocks in any order.
     var drawn: [6 * blockWidth][6 * blockWidth]bool = @splat(@splat(false));
@@ -416,10 +538,10 @@ test faces {
 }
 
 /// Each face's light, in 256ths.
-const light = std.EnumArray(Face, u16).init(.{ .none = 0, .top = 256, .south = 208, .east = 176 });
+const light = std.EnumArray(Face, u16).init(.{ .none = 0, .top = 256, .left = 208, .right = 176 });
 
 /// What a tile's depth buffer counts in: `depthSteps`ths of a block, of x + y + z of the point
-/// each pixel shows, larger nearer.
+/// each pixel shows in the view's coordinates, larger nearer.
 const depthSteps = 256;
 
 /// How far into its block each pixel of a cube's square shows the cube: x + y + z of the point
@@ -439,8 +561,8 @@ const cubeDepths: [blockWidth][blockWidth]i16 = depths: {
         const depth: f32 = switch (faces[row][column]) {
             .none => 0,
             .top => y / d + 1,
-            .south => x / a + (1 - (y - d * x / a - d) / b) + 1,
-            .east => 1 + (1 - (y - d - d * (2 - x / a)) / b) + (2 - x / a),
+            .left => x / a + (1 - (y - d * x / a - d) / b) + 1,
+            .right => 1 + (1 - (y - d - d * (2 - x / a)) / b) + (2 - x / a),
         };
         out[row][column] = @intFromFloat(@round(depth * depthSteps));
     };
@@ -460,7 +582,7 @@ test cubeDepths {
 }
 
 /// Each map type's three face colours at each height in the relief style:
-/// `(mapType * heights.world + y) * 3`, top, south, east.
+/// `(mapType * heights.world + y) * 3`, top, left, right.
 fn reliefColours(allocator: std.mem.Allocator, palette: *const world.Palette, heights: world.Heights) ![]u32 {
     const types = std.enums.values(world.MapType);
     const colours = try allocator.alloc(u32, types.len * heights.world * 3);
@@ -470,31 +592,32 @@ fn reliefColours(allocator: std.mem.Allocator, palette: *const world.Palette, he
         const colour = if (mapType.isLiquid()) relief.liquidColour(base, 0) else relief.groundColour(palette, base, @intCast(y), shades, 0);
         const at = (@backingInt(mapType) * heights.world + y) * 3;
         colours[at] = lit(colour, light.get(.top));
-        colours[at + 1] = lit(colour, light.get(.south));
-        colours[at + 2] = lit(colour, light.get(.east));
+        colours[at + 1] = lit(colour, light.get(.left));
+        colours[at + 2] = lit(colour, light.get(.right));
     };
     return colours;
 }
 
-/// A colour's top, south and east faces, lit.
+/// A colour's top, left and right faces, lit.
 fn faceColours(colour: world.Rgb) [3]u32 {
     const pixel = tiles.rgba(colour[0], colour[1], colour[2], 255);
-    return .{ lit(pixel, light.get(.top)), lit(pixel, light.get(.south)), lit(pixel, light.get(.east)) };
+    return .{ lit(pixel, light.get(.top)), lit(pixel, light.get(.left)), lit(pixel, light.get(.right)) };
 }
 
 const Sprite = Sprites.Sprite;
 const SpriteLayers = Sprites.SpriteLayers;
 
-/// Draws `cube`'s sprite in its variant `variant` into `sections`.
-fn cubeSprite(sections: *Sprites.Sections, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) !void {
+/// Draws `cube`'s sprite in its variant `variant`, as `rotation` shows it, into `sections`.
+fn cubeSprite(sections: *Sprites.Sections, cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb, rotation: Rotation) !void {
+    const left, const right = rotation.sides(cube);
     const room = try sections.add(.{
         .left = 0,
         .top = 0,
         .width = blockWidth,
         .height = blockWidth,
-        .flags = .{ .tinted = cube.up.tinted.len > 0 or cube.south.tinted.len > 0 or cube.east.tinted.len > 0, .fills = true },
+        .flags = .{ .tinted = cube.up.tinted.len > 0 or left.tinted.len > 0 or right.tinted.len > 0, .fills = true },
     });
-    cubeLayers(cube, variant, fallback, room.plain, room.tinted);
+    cubeLayers(cube, variant, fallback, rotation, room.plain, room.tinted);
     @memcpy(room.depths, @as(*const [blockWidth * blockWidth]i16, @ptrCast(&cubeDepths)));
 }
 
@@ -508,12 +631,14 @@ fn variantCount(cube: *const world.CubeFaces) usize {
     return count;
 }
 
-/// Draws `cube` in its textures, each layer in its variant `variant` (counting round again for
-/// a layer with fewer): each pixel of a layer is the average of its texels under it. A plain
-/// pixel over only transparent texels is `fallback`. `plain` takes the faces' plain layers, opaque
-/// on every face and transparent where none is, and `tinted`, where any face has one, their
-/// tinted layers, lit but not yet tinted, each pixel's alpha how much of it the layer covers.
-fn cubeLayers(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb, plain: []u32, tinted: ?[]u32) void {
+/// Draws `cube` in its textures, as `rotation` shows it, each layer in its variant `variant`
+/// (counting round again for a layer with fewer): each pixel of a layer is the average of its
+/// texels under it. A plain pixel over only transparent texels is `fallback`. `plain` takes the
+/// faces' plain layers, opaque on every face and transparent where none is, and `tinted`, where
+/// any face has one, their tinted layers, lit but not yet tinted, each pixel's alpha how much of
+/// it the layer covers.
+fn cubeLayers(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb, rotation: Rotation, plain: []u32, tinted: ?[]u32) void {
+    const left, const right = rotation.sides(cube);
     for (0..blockWidth) |row| for (0..blockWidth) |column| {
         const p = row * blockWidth + column;
         const face = faces[row][column];
@@ -524,14 +649,14 @@ fn cubeLayers(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb,
                 continue;
             },
             .top => cube.up,
-            .south => cube.south,
-            .east => cube.east,
+            .left => left,
+            .right => right,
         };
-        const texel = average(face, column, row, pick(layers.plain, variant));
+        const texel = average(face, rotation, column, row, pick(layers.plain, variant));
         const colour = if (texel[3] == 0) fallback else texel[0..3].*;
         plain[p] = lit(tiles.rgba(colour[0], colour[1], colour[2], 255), light.get(face));
         const out = tinted orelse continue;
-        var layer = average(face, column, row, pick(layers.tinted, variant));
+        var layer = average(face, rotation, column, row, pick(layers.tinted, variant));
         // A face that's all tinted, as leaves are, has its holes filled with `fallback` to be
         // tinted too, rather than showing what's under it untinted.
         if (layers.plain.len == 0 and layers.tinted.len > 0) layer = if (layer[3] == 0) fallback ++ [1]u8{255} else layer[0..3].* ++ [1]u8{255};
@@ -546,13 +671,13 @@ fn pick(variants: []const *const world.Image, variant: usize) ?*const world.Imag
 
 /// The average of `image`'s texels under a pixel of a face, by their opacity, and how opaque
 /// they are on average; transparent without an image.
-fn average(face: Face, column: usize, row: usize, image: ?*const world.Image) [4]u8 {
+fn average(face: Face, rotation: Rotation, column: usize, row: usize, image: ?*const world.Image) [4]u8 {
     const texture = image orelse return @splat(0);
     var sum: [4]u32 = @splat(0);
     for (0..samples) |sy| for (0..samples) |sx| {
         const x = @as(f32, @floatFromInt(column)) + (@as(f32, @floatFromInt(sx)) + 0.5) / samples;
         const y = @as(f32, @floatFromInt(row)) + (@as(f32, @floatFromInt(sy)) + 0.5) / samples;
-        const u, const v = textureCoordinates(face, x, y);
+        const u, const v = textureCoordinates(face, rotation, x, y);
         const texel = texelAt(texture, u, v);
         for (0..3) |c| sum[c] += @as(u32, texel[c]) * texel[3];
         sum[3] += texel[3];
@@ -589,20 +714,22 @@ fn multiply(colour: world.Rgb, tint: world.Rgb) world.Rgb {
 }
 
 /// Where a point in a block's square falls on the texture of the face it's on: across and down
-/// it, each from 0 to 1. A point at (x, y, z) in the world, block (0, 0, 0) being the cube from 0
+/// it, each from 0 to 1. A point at (x, y, z) in the view, block (0, 0, 0) being the cube from 0
 /// to 1, is drawn at ((x − z + 1) · `across`, (x + z) · `down` − (y − 1) · `below`) in its square.
-fn textureCoordinates(face: Face, x: f32, y: f32) [2]f32 {
+/// Seen from outside, a side's texture reads the same way round in every rotation, and a top's
+/// turns with the view, as its north stays north.
+fn textureCoordinates(face: Face, rotation: Rotation, x: f32, y: f32) [2]f32 {
     const a: f32 = across;
     const d: f32 = down;
     const b: f32 = below;
     const coordinates: [2]f32 = switch (face) {
         .none => unreachable,
-        // At height 1, with north up.
-        .top => .{ (x / a - 1 + y / d) / 2, (y / d - x / a + 1) / 2 },
-        // At z = 1, with west on the left.
-        .south => .{ x / a, 1 - ((x / a + 1) * d + b - y) / b },
-        // At x = 1, with south on the left.
-        .east => .{ x / a - 1, 1 - ((3 - x / a) * d + b - y) / b },
+        // At height 1.
+        .top => rotation.pointToWorld((x / a - 1 + y / d) / 2, (y / d - x / a + 1) / 2),
+        // At the view's z = 1.
+        .left => .{ x / a, 1 - ((x / a + 1) * d + b - y) / b },
+        // At the view's x = 1.
+        .right => .{ x / a - 1, 1 - ((3 - x / a) * d + b - y) / b },
     };
     return .{ std.math.clamp(coordinates[0], 0, 1), std.math.clamp(coordinates[1], 0, 1) };
 }
@@ -611,13 +738,20 @@ test textureCoordinates {
     const w: f32 = blockWidth;
     // Each face's corners: the top's highest is its texture's top left (north-west), and its
     // leftmost the bottom left (south-west).
-    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.top, w / 2, 0));
-    try std.testing.expectEqual([2]f32{ 0, 1 }, textureCoordinates(.top, 0, w / 4));
-    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.top, w / 2, w / 2));
-    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.south, 0, w / 4));
-    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.south, w / 2, w));
-    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.east, w / 2, w / 2));
-    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.east, w, w * 3 / 4));
+    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.top, .deg0, w / 2, 0));
+    try std.testing.expectEqual([2]f32{ 0, 1 }, textureCoordinates(.top, .deg0, 0, w / 4));
+    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.top, .deg0, w / 2, w / 2));
+    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.left, .deg0, 0, w / 4));
+    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.left, .deg0, w / 2, w));
+    try std.testing.expectEqual([2]f32{ 0, 0 }, textureCoordinates(.right, .deg0, w / 2, w / 2));
+    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.right, .deg0, w, w * 3 / 4));
+    // The top's highest corner is the far one: north-east at 90°, south-east at 180° and
+    // south-west at 270°.
+    try std.testing.expectEqual([2]f32{ 1, 0 }, textureCoordinates(.top, .deg90, w / 2, 0));
+    try std.testing.expectEqual([2]f32{ 1, 1 }, textureCoordinates(.top, .deg180, w / 2, 0));
+    try std.testing.expectEqual([2]f32{ 0, 1 }, textureCoordinates(.top, .deg270, w / 2, 0));
+    // The sides are the same whichever faces they are.
+    try std.testing.expectEqual(textureCoordinates(.left, .deg0, 3, w / 2), textureCoordinates(.left, .deg180, 3, w / 2));
 }
 
 const texelAt = rasterizer.texelAt;
@@ -653,12 +787,13 @@ fn shapeTarget(allocator: std.mem.Allocator) !ShapeTarget {
 /// `TesselationMetaData.randomRotations` lists them, from east towards north.
 pub const turns = 8;
 
-/// Draws `shape` in its textures, each in its variant `variant` (counting round again for one
-/// with fewer), in turn `turn` of `turns`, or unturned for null, its faces lit by the way they
-/// face. Each of its pixels is drawn at `samples` × `samples` points: it shows if at least half
-/// of them are covered, the average of their colours, the depth of the nearest. Added to
-/// `sections`, trimmed to the pixels it shows, and returned with its layers there.
-fn shapeSprite(sections: *Sprites.Sections, shape: *const world.Shape, variant: usize, turn: ?usize, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
+/// Draws `shape` in its textures, as `rotation` shows it, each in its variant `variant` (counting
+/// round again for one with fewer), in turn `turn` of `turns`, or unturned for null, its faces lit
+/// by the way they face in the view. Each of its pixels is drawn at `samples` × `samples` points:
+/// it shows if at least half of them are covered, the average of their colours, the depth of the
+/// nearest. Added to `sections`, trimmed to the pixels it shows, and returned with its layers
+/// there.
+fn shapeSprite(sections: *Sprites.Sections, shape: *const world.Shape, variant: usize, turn: ?usize, rotation: Rotation, target: *ShapeTarget) !struct { Sprite, SpriteLayers } {
     std.debug.assert(target.width == shapeSide * samples and target.height == shapeSide * samples);
     target.clear();
     const scale: f32 = samples;
@@ -679,6 +814,7 @@ fn shapeSprite(sections: *Sprites.Sections, shape: *const world.Shape, variant: 
             const south = point[2] - 0.5;
             point[0] = cos * east + sin * south + 0.5;
             point[2] = cos * south - sin * east + 0.5;
+            point[0], point[2] = rotation.pointToView(point[0], point[2]);
             corner.* = .{
                 .x = ((point[0] - point[2] + 1) * across + reach) * scale,
                 .y = ((point[0] + point[2]) * down - (point[1] - 1) * below + reach) * scale,
@@ -775,12 +911,29 @@ pub const Drawable = struct {
 };
 
 /// Which sprites every block has, before any is drawn, so `sprite_layers` has its place in the
-/// file (`Sprites.Sections`) ahead of the `sprites` section, whose length depends on `count`.
+/// file (`Sprites.Sections`) ahead of the `sprites` section, whose length depends on `count`. The
+/// same in every rotation.
 pub const SpritePlan = struct {
-    /// By the block's index in the `Drawable`s. Whether they're tinted isn't known yet.
+    /// By the block's index in the `Drawable`s.
     blocks: []world.BlockSprites,
     count: usize,
 };
+
+/// Whether any face of `cube` has a tinted layer, as whichever faces a rotation shows might.
+fn hasTintedFace(cube: *const world.CubeFaces) bool {
+    for ([_]world.CubeFaces.Face{ cube.up, cube.south, cube.east, cube.north, cube.west }) |face| {
+        if (face.tinted.len > 0) return true;
+    }
+    return false;
+}
+
+/// Whether any texture of `shapes` has a tinted layer.
+fn hasTintedTexture(shapes: []const world.Shape) bool {
+    for (shapes) |shape| for (shape.textures) |texture| {
+        if (texture.tinted.len > 0) return true;
+    };
+    return false;
+}
 
 /// One run of sprites for each variant of a block's textures, in each of its shapes, in each of
 /// its turns. Blocks with the same faces, or the same shapes and textures turned alike, share
@@ -796,7 +949,7 @@ pub fn planSprites(arena: std.mem.Allocator, drawables: []const Drawable) !Sprit
         if (drawable.cube) |cube| {
             const found = try byFaces.getOrPut(arena, cube.*);
             if (!found.found_existing) {
-                found.value_ptr.* = .{ .first = @intCast(count), .variants = @intCast(variantCount(cube)) };
+                found.value_ptr.* = .{ .first = @intCast(count), .variants = @intCast(variantCount(cube)), .tinted = hasTintedFace(cube) };
                 count += found.value_ptr.count();
             }
             block.* = found.value_ptr.*;
@@ -811,6 +964,7 @@ pub fn planSprites(arena: std.mem.Allocator, drawables: []const Drawable) !Sprit
                     .alternates = @intCast(drawable.shapes.len),
                     .turns = if (drawable.turned) turns else 1,
                     .shape = true,
+                    .tinted = hasTintedTexture(drawable.shapes),
                 };
                 count += found.value_ptr.count();
             }
@@ -820,30 +974,31 @@ pub fn planSprites(arena: std.mem.Allocator, drawables: []const Drawable) !Sprit
     return .{ .blocks = blocks, .count = count };
 }
 
-/// Draws the sprites `plan` lists into `sections`, one at a time, each run by the first block
-/// that has it. Returns each block's sprites, by its index in `drawables`.
-pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: SpritePlan, sections: *Sprites.Sections) ![]const world.BlockSprites {
+/// Draws the sprites `plan` lists into `sections`, in every rotation, one rotation after another
+/// and one sprite at a time, each run by the first block that has it. Sprites that come out the
+/// same share their layers, as most of a rotation's are another's: a turned plant's every eighth
+/// of a circle, for one.
+pub fn drawSprites(arena: std.mem.Allocator, drawables: []const Drawable, plan: SpritePlan, sections: *Sprites.Sections) !void {
     var target = try shapeTarget(arena);
-    // By each run's first sprite.
-    const tinted = try arena.alloc(bool, plan.count);
-    @memset(tinted, false);
-    for (plan.blocks, drawables) |block, drawable| {
-        if (block.variants == 0 or block.first != sections.count) continue;
-        if (drawable.cube) |cube| {
-            for (0..block.variants) |variant| try cubeSprite(sections, cube, variant, drawable.colour);
-            tinted[block.first] = sections.entries[block.first].flags.tinted;
-        } else {
-            target.keepsOpacity = drawable.seeThrough;
-            for (0..block.turns) |turn| for (drawable.shapes) |*shape| for (0..block.variants) |variant| {
-                const sprite, _ = try shapeSprite(sections, shape, variant, if (drawable.turned) turn else null, &target);
-                if (sprite.flags.tinted) tinted[block.first] = true;
-            };
+    try sections.ensureCapacity(arena);
+    for (std.enums.values(Rotation), 0..) |rotation, quarter| {
+        const earlier = quarter * plan.count;
+        for (plan.blocks, drawables) |block, drawable| {
+            if (block.variants == 0 or block.first + earlier != sections.count) continue;
+            if (drawable.cube) |cube| {
+                for (0..block.variants) |variant| {
+                    try cubeSprite(sections, cube, variant, drawable.colour, rotation);
+                    try sections.shareLast(arena);
+                }
+            } else {
+                target.keepsOpacity = drawable.seeThrough;
+                for (0..block.turns) |turn| for (drawable.shapes) |*shape| for (0..block.variants) |variant| {
+                    _ = try shapeSprite(sections, shape, variant, if (drawable.turned) turn else null, rotation, &target);
+                    try sections.shareLast(arena);
+                };
+            }
         }
     }
-    for (plan.blocks) |*block| {
-        if (block.variants > 0) block.tinted = tinted[block.first];
-    }
-    return plan.blocks;
 }
 
 /// Cube faces by their variants' slices, which a game's reader shares between blocks with the
@@ -887,9 +1042,9 @@ const ShapeContext = struct {
     }
 };
 
-/// How a face with corners at `points` is lit, in 256ths: as a cube's top, south and east faces
-/// are, by how much it faces up, south and east, and a face turned away from the viewer as
-/// though turned towards it, as a plant's leaf is seen from either side.
+/// How a face with corners at `points`, in the view's coordinates, is lit, in 256ths: as a cube's
+/// top, left and right faces are, by how much it faces up, +z and +x, and a face turned away from
+/// the viewer as though turned towards it, as a plant's leaf is seen from either side.
 fn lightOf(points: [4][3]f32) u16 {
     const a = sub(points[1], points[0]);
     const b = sub(points[3], points[0]);
@@ -900,8 +1055,8 @@ fn lightOf(points: [4][3]f32) u16 {
     const x = normal[0] / length;
     const y = normal[1] / length;
     const z = normal[2] / length;
-    const top: f32 = @floatFromInt(if (y >= 0) light.get(.top) else light.get(.east));
-    const sum = x * x * @as(f32, @floatFromInt(light.get(.east))) + y * y * top + z * z * @as(f32, @floatFromInt(light.get(.south)));
+    const top: f32 = @floatFromInt(if (y >= 0) light.get(.top) else light.get(.right));
+    const sum = x * x * @as(f32, @floatFromInt(light.get(.right))) + y * y * top + z * z * @as(f32, @floatFromInt(light.get(.left)));
     return @intFromFloat(@round(sum));
 }
 
@@ -917,7 +1072,7 @@ const CubeLayers = struct {
     fn of(cube: *const world.CubeFaces, variant: usize, fallback: world.Rgb) CubeLayers {
         var out: CubeLayers = .{ .plain = undefined, .tinted = undefined };
         out.tinted = if (cube.up.tinted.len > 0 or cube.south.tinted.len > 0 or cube.east.tinted.len > 0) out.plain else null;
-        cubeLayers(cube, variant, fallback, &out.plain, if (out.tinted) |*tinted| tinted else null);
+        cubeLayers(cube, variant, fallback, .deg0, &out.plain, if (out.tinted) |*tinted| tinted else null);
         return out;
     }
 };
@@ -957,8 +1112,38 @@ test cubeLayers {
     // Leaves, all tinted: the holes in the bottom half take the fallback, and are tinted too.
     const leafy: world.CubeFaces.Face = .{ .tinted = &.{&fringe} };
     const leaves: CubeLayers = .of(&.{ .up = leafy, .south = leafy, .east = leafy, .north = leafy, .west = leafy }, 0, .{ 100, 100, 100 });
-    // Grey 100 lit as an east face is 68, then tinted by 127 of 255, 33.
+    // Grey 100 lit as a right face is 68, then tinted by 127 of 255, 33.
     try std.testing.expectEqual(tiles.rgba(0, 33, 0, 255), blend(leaves.plain[bare], leaves.tinted.?[bare], .{ 0, 127, 0 }));
+
+    // Each rotation shows the two sides towards the viewer, each lit by where it is on the
+    // screen, and a top turned with the view.
+    const sideColours = [4][1][4]u8{ .{.{ 10, 0, 0, 255 }}, .{.{ 20, 0, 0, 255 }}, .{.{ 30, 0, 0, 255 }}, .{.{ 40, 0, 0, 255 }} };
+    const southImage: world.Image = .{ .width = 1, .height = 1, .pixels = &sideColours[0] };
+    const eastImage: world.Image = .{ .width = 1, .height = 1, .pixels = &sideColours[1] };
+    const northImage: world.Image = .{ .width = 1, .height = 1, .pixels = &sideColours[2] };
+    const westImage: world.Image = .{ .width = 1, .height = 1, .pixels = &sideColours[3] };
+    const cornered: [4][4]u8 = .{ .{ 50, 0, 0, 255 }, .{ 60, 0, 0, 255 }, .{ 70, 0, 0, 255 }, .{ 80, 0, 0, 255 } };
+    const topImage: world.Image = .{ .width = 2, .height = 2, .pixels = &cornered };
+    const sided: world.CubeFaces = .{
+        .up = .{ .plain = &.{&topImage} },
+        .south = .{ .plain = &.{&southImage} },
+        .east = .{ .plain = &.{&eastImage} },
+        .north = .{ .plain = &.{&northImage} },
+        .west = .{ .plain = &.{&westImage} },
+    };
+    const expected = [4]struct { left: u8, right: u8, far: u8 }{
+        .{ .left = 10, .right = 20, .far = 50 },
+        .{ .left = 40, .right = 10, .far = 60 },
+        .{ .left = 30, .right = 40, .far = 80 },
+        .{ .left = 20, .right = 30, .far = 70 },
+    };
+    for (std.enums.values(Rotation), expected) |rotation, want| {
+        var pixels: [w * w]u32 = undefined;
+        cubeLayers(&sided, 0, .{ 0, 0, 0 }, rotation, &pixels, null);
+        try std.testing.expectEqual(faceColours(.{ want.left, 0, 0 })[1], pixels[(w * 5 / 8) * w + w / 4]);
+        try std.testing.expectEqual(faceColours(.{ want.right, 0, 0 })[2], pixels[(w * 5 / 8) * w + w * 3 / 4]);
+        try std.testing.expectEqual(faceColours(.{ want.far, 0, 0 })[0], pixels[1 * w + w / 2]);
+    }
 }
 
 /// A box from (0, 0, 0) to `size`, unturned, each face showing the whole of texture 0.
@@ -999,7 +1184,7 @@ test shapeSprite {
 
     // A whole block's box is the cube, filling the square, its faces lit as a cube's and each
     // pixel as deep as a cube's.
-    const cube, const cubePixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, &target);
+    const cube, const cubePixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expectEqual([4]i64{ 0, 0, w, w }, [4]i64{ cube.left, cube.top, cube.width, cube.height });
     try std.testing.expect(cube.flags.fills);
     try std.testing.expect(!cube.flags.tinted);
@@ -1013,7 +1198,7 @@ test shapeSprite {
     try std.testing.expect(!cubePixels.shows(pixelAt(&cube, 0, 0).?));
 
     // A slab leaves the top of the square empty, for what's behind it to show.
-    const slab, const slabPixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, &target);
+    const slab, const slabPixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 0.5, 1 })}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expect(!slab.flags.fills);
     try std.testing.expectEqual(w / 4, slab.top);
     try std.testing.expectEqual(null, pixelAt(&slab, w / 8, w / 2));
@@ -1022,13 +1207,13 @@ test shapeSprite {
     // A plank twice as long as the block reaches out of its square both ways, drawn whole.
     var plank = testBox(.{ 2, 1.0 / 16.0, 1 });
     plank.transform[0][3] = -0.5;
-    const long, _ = try shapeSprite(&sections, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, &target);
+    const long, _ = try shapeSprite(&sections, &.{ .boxes = &.{plank}, .textures = &textures }, 0, null, .deg0, &target);
     try std.testing.expectEqual(-w / 4, long.left);
     try std.testing.expectEqual(w + w / 2, long.width);
 
     // A tinted texture goes into the tinted layer, covering the plain one.
     const tinted = [_]world.CubeFaces.Face{.{ .tinted = &.{&image} }};
-    const grass, const grassPixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, &target);
+    const grass, const grassPixels = try shapeSprite(&sections, &.{ .boxes = &.{testBox(.{ 1, 1, 1 })}, .textures = &tinted }, 0, null, .deg0, &target);
     try std.testing.expect(grass.flags.tinted);
     const p = pixelAt(&grass, top[0], top[1]).?;
     try std.testing.expectEqual(colours[0], grassPixels.tinted.?[p]);
@@ -1040,9 +1225,9 @@ test shapeSprite {
     wall.transform[0][3] = 0.75;
     const shape: world.Shape = .{ .boxes = &.{wall}, .textures = &textures };
     const middle = [2]i64{ w / 2, w * 5 / 16 };
-    const unturned, _ = try shapeSprite(&sections, &shape, 0, null, &target);
+    const unturned, _ = try shapeSprite(&sections, &shape, 0, null, .deg0, &target);
     try std.testing.expectEqual(null, pixelAt(&unturned, middle[0], middle[1]));
-    const turned, const turnedPixels = try shapeSprite(&sections, &shape, 0, turns / 2, &target);
+    const turned, const turnedPixels = try shapeSprite(&sections, &shape, 0, turns / 2, .deg0, &target);
     try std.testing.expect(turnedPixels.shows(pixelAt(&turned, middle[0], middle[1]).?));
 
     // Turns 0 and 7, −22.5° and −67.5°, are as far either side of south-east, where the view
@@ -1052,24 +1237,37 @@ test shapeSprite {
     post.transform[0][3] = 0.8125;
     post.transform[2][3] = 0.4375;
     const postShape: world.Shape = .{ .boxes = &.{post}, .textures = &textures };
-    const right, _ = try shapeSprite(&sections, &postShape, 0, 0, &target);
-    const left, _ = try shapeSprite(&sections, &postShape, 0, 7, &target);
+    const right, _ = try shapeSprite(&sections, &postShape, 0, 0, .deg0, &target);
+    const left, _ = try shapeSprite(&sections, &postShape, 0, 7, .deg0, &target);
     try std.testing.expect(right.left > w / 2);
     try std.testing.expectEqual(@as(i32, w) - right.left - right.width, left.left);
     try std.testing.expectEqual(right.top, left.top);
+
+    // At 90° a wall along the east of its place is at the back, as one along the north is at 0°.
+    var northWall = testBox(.{ 1, 1, 0.25 });
+    northWall.transform[2][3] = 0;
+    const atBack, const atBackPixels = try shapeSprite(&sections, &.{ .boxes = &.{northWall}, .textures = &textures }, 0, null, .deg0, &target);
+    const fromEast, const fromEastPixels = try shapeSprite(&sections, &shape, 0, null, .deg90, &target);
+    try std.testing.expectEqual(atBack.left, fromEast.left);
+    try std.testing.expectEqual(atBack.top, fromEast.top);
+    try std.testing.expectEqual(atBack.width, fromEast.width);
+    try std.testing.expectEqual(atBack.height, fromEast.height);
+    const count = @as(usize, atBack.width) * atBack.height;
+    try std.testing.expectEqualSlices(u32, atBackPixels.plain[0..count], fromEastPixels.plain[0..count]);
+    try std.testing.expectEqualSlices(i16, atBackPixels.depths[0..count], fromEastPixels.depths[0..count]);
 }
 
 test lightOf {
-    // A face lit as it faces: up, south and east as a cube's, and halfway between up and south,
-    // halfway between their lights. Seen from behind, it's lit as from the front.
+    // A face lit as it faces: up, +z and +x as a cube's, and halfway between up and +z, halfway
+    // between their lights. Seen from behind, it's lit as from the front.
     const up = [4][3]f32{ .{ 0, 1, 0 }, .{ 0, 1, 1 }, .{ 1, 1, 1 }, .{ 1, 1, 0 } };
     const south = [4][3]f32{ .{ 0, 0, 1 }, .{ 1, 0, 1 }, .{ 1, 1, 1 }, .{ 0, 1, 1 } };
     try std.testing.expectEqual(light.get(.top), lightOf(up));
-    try std.testing.expectEqual(light.get(.south), lightOf(south));
-    try std.testing.expectEqual(light.get(.south), lightOf(.{ south[0], south[3], south[2], south[1] }));
-    try std.testing.expectEqual(light.get(.east), lightOf(.{ .{ 1, 0, 0 }, .{ 1, 1, 0 }, .{ 1, 1, 1 }, .{ 1, 0, 1 } }));
+    try std.testing.expectEqual(light.get(.left), lightOf(south));
+    try std.testing.expectEqual(light.get(.left), lightOf(.{ south[0], south[3], south[2], south[1] }));
+    try std.testing.expectEqual(light.get(.right), lightOf(.{ .{ 1, 0, 0 }, .{ 1, 1, 0 }, .{ 1, 1, 1 }, .{ 1, 0, 1 } }));
     const slope = [4][3]f32{ .{ 0, 0, 1 }, .{ 0, 1, 0 }, .{ 1, 1, 0 }, .{ 1, 0, 1 } };
-    try std.testing.expectEqual((light.get(.top) + light.get(.south)) / 2, lightOf(slope));
+    try std.testing.expectEqual((light.get(.top) + light.get(.left)) / 2, lightOf(slope));
 }
 
 test drawSprites {
@@ -1104,12 +1302,18 @@ test drawSprites {
     var buffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
     const entries = try allocator.alignedAlloc(u8, .@"4", Sprites.Sections.entriesLength(plan.count));
     var sections: Sprites.Sections = .init(io, file, 0, &buffer, entries, blockWidth);
-    const blocks = try drawSprites(allocator, &drawables, plan, &sections);
+    try drawSprites(allocator, &drawables, plan, &sections);
     try sections.flush();
+    const blocks = plan.blocks;
 
     const sprites = try Sprites.parse(entries, try sections.readLayers(allocator));
-    try std.testing.expectEqual(plan.count, sprites.entries.len);
+    try std.testing.expectEqual(plan.count, sprites.count);
+    try std.testing.expectEqual(plan.count * Sprites.rotationCount, sprites.entries.len);
     try std.testing.expectEqual(blockWidth, sprites.blockWidth);
+    // A cube of one colour is the same from every side, in the same layers.
+    for (1..Sprites.rotationCount) |quarter| {
+        try std.testing.expectEqual(sprites.entries[0].offset, sprites.entries[quarter * plan.count].offset);
+    }
     try std.testing.expectEqual(world.BlockSprites{ .first = 3, .variants = 1, .turns = turns, .shape = true, .tinted = true }, blocks[4]);
     // Each of its shapes in as many variants as the most any has, the slab's one counting
     // round again.
@@ -1135,6 +1339,128 @@ test drawSprites {
     try std.testing.expect(!sprites.entries[2].flags.fills);
 }
 
+/// A world of a few blocks, each its own colour, for following lines of sight.
+const TestSource = struct {
+    const Place = struct { x: i64, y: i64, z: i64, id: i32 };
+
+    places: []const Place,
+    chunkColumns: []const world.ChunkColumn = &.{},
+
+    pub fn heights(_: *const TestSource) world.Heights {
+        return .{ .world = 64, .sea = 0 };
+    }
+
+    pub fn blockCount(_: *const TestSource) usize {
+        return 3;
+    }
+
+    pub fn mapType(_: *const TestSource, _: i32) world.MapType {
+        return .land;
+    }
+
+    pub fn isVisible(_: *const TestSource, id: i32) bool {
+        return id != 0;
+    }
+
+    pub fn isLow(_: *const TestSource, _: i32) bool {
+        return false;
+    }
+
+    pub fn colour(_: *const TestSource, id: i32) world.Rgb {
+        return .{ @intCast(id * 100), 0, 0 };
+    }
+
+    pub fn spritesOf(_: *const TestSource, _: i32) ?world.BlockSprites {
+        return null;
+    }
+
+    pub fn isTinted(_: *const TestSource, _: i32) bool {
+        return false;
+    }
+
+    pub fn isLiquid(_: *const TestSource, _: i32) bool {
+        return false;
+    }
+
+    pub fn isSeeThrough(_: *const TestSource, _: i32) bool {
+        return false;
+    }
+
+    pub fn variant(_: *const TestSource, _: i32, _: i64, _: i64, _: i64, _: u32) u32 {
+        return 0;
+    }
+
+    pub fn drawOffset(_: *const TestSource, _: i32, _: i64, _: i64, _: i64) ?[2]f32 {
+        return null;
+    }
+
+    pub fn isPlacedByPosition(_: *const TestSource, _: i32) bool {
+        return false;
+    }
+
+    pub const Reader = struct {
+        source: *const TestSource,
+        chunksRead: usize = 0,
+
+        pub fn init(source: *const TestSource, _: std.mem.Allocator, _: ?*anyopaque) !Reader {
+            return .{ .source = source };
+        }
+
+        pub fn deinit(_: *Reader, _: std.mem.Allocator) void {}
+
+        pub fn readChunk(self: *Reader, x: i32, y: i32, z: i32, chunk: *world.Chunk) !bool {
+            @memset(&chunk.solid, 0);
+            @memset(&chunk.liquid, -1);
+            var any = false;
+            for (self.source.places) |place| {
+                if (@divFloor(place.x, side) != x or @divFloor(place.y, side) != y or @divFloor(place.z, side) != z) continue;
+                const at: usize = @intCast((@mod(place.y, side) * side + @mod(place.z, side)) * side + @mod(place.x, side));
+                chunk.solid[at] = place.id;
+                any = true;
+            }
+            return any;
+        }
+
+        pub fn tint(_: *Reader, _: i32, _: i64, _: i64, _: i64) !world.Rgb {
+            return @splat(255);
+        }
+    };
+};
+
+test "lines of sight in every rotation" {
+    const allocator = std.testing.allocator;
+    const pixels = try allocator.create(tiles.Pixels);
+    defer allocator.destroy(pixels);
+
+    for (std.enums.values(Rotation)) |rotation| {
+        // A block just inside a corner of a chunk, and one nearer on its line of sight, across
+        // the chunk's edge whichever way the view looks.
+        const far = [3]i64{ 31, 20, -33 };
+        const step = rotation.lineStep();
+        const near = [3]i64{ far[0] - step[0], far[1] + 1, far[2] - step[1] };
+        const places = [_]TestSource.Place{ .{ .x = far[0], .y = far[1], .z = far[2], .id = 1 }, .{ .x = near[0], .y = near[1], .z = near[2], .id = 2 } };
+        const onlyFar = [_]TestSource.Place{places[0]};
+
+        for ([_][]const TestSource.Place{ &onlyFar, &places }, [_]u8{ 100, 200 }) |list, red| {
+            const source: TestSource = .{ .places = list };
+            var view: View(TestSource) = try .init(allocator, &source, .{ .game = null }, null, rotation);
+            defer view.deinit(allocator);
+            var worker: View(TestSource).Worker = try .init(&view, allocator);
+            defer worker.deinit(allocator);
+
+            // The middle of the top of the far block's square, and of its two sides.
+            const x, const z = rotation.toView(far[0], far[2]);
+            const square = Box.of(x, far[1], z, x, far[1], z);
+            const row = square.top + blockWidth / 4;
+            const column = square.left + blockWidth / 2;
+            const tile: tiles.Tile = .{ .x = @intCast(@divFloor(column, tiles.size)), .y = @intCast(@divFloor(row, tiles.size)) };
+            try std.testing.expect(try worker.draw(tile, pixels));
+            const at: usize = @intCast(@mod(row, tiles.size) * tiles.size + @mod(column, tiles.size));
+            try std.testing.expectEqual(faceColours(.{ red, 0, 0 })[0], pixels[at]);
+        }
+    }
+}
+
 /// What every worker shares, read-only while they draw, and their totals once they're done.
 fn View(comptime Source: type) type {
     return struct {
@@ -1146,11 +1472,12 @@ fn View(comptime Source: type) type {
         blockLooks: []u16,
         looks: []Look,
         /// In the `relief` style, each map type's three face colours at each height:
-        /// `(mapType * height + y) * 3`, top, south, east.
+        /// `(mapType * height + y) * 3`, top, left, right.
         colours: []u32,
         /// In the `game` style, the blocks' sprites; with none, every block is drawn in its
         /// colour.
         sprites: ?*const Sprites,
+        rotation: Rotation,
         /// How far beyond its square a block's sprite can reach: `reach` with shapes, and
         /// `shift` more with blocks moved off the middle of their place.
         reach: i64,
@@ -1161,7 +1488,7 @@ fn View(comptime Source: type) type {
         const Look = union(enum) {
             /// In its map type's relief colours, which change with height (`colours`).
             relief: world.MapType,
-            /// Each face in one colour: top, south and east.
+            /// Each face in one colour: top, left and right.
             colours: [3]u32,
             /// Each face in a colour times the tint of a block where it is.
             tintedColour: struct { colour: world.Rgb, block: i32 },
@@ -1172,7 +1499,7 @@ fn View(comptime Source: type) type {
             const SpriteLook = struct { sprites: world.BlockSprites, block: i32, tinted: bool = false, seeThrough: bool = false };
         };
 
-        fn init(allocator: std.mem.Allocator, source: *const Source, style: Style, sprites: ?*const Sprites) !Self {
+        fn init(allocator: std.mem.Allocator, source: *const Source, style: Style, sprites: ?*const Sprites, rotation: Rotation) !Self {
             const heights = source.heights();
             const blockLooks = try allocator.alloc(u16, source.blockCount());
             errdefer allocator.free(blockLooks);
@@ -1243,6 +1570,7 @@ fn View(comptime Source: type) type {
                 .looks = try looks.toOwnedSlice(allocator),
                 .colours = colours,
                 .sprites = sprites,
+                .rotation = rotation,
                 .reach = @as(i64, if (anyShape) reach else 0) + @as(i64, if (anyPlaced) shift else 0),
                 .height = heights.world,
             };
@@ -1380,7 +1708,7 @@ fn View(comptime Source: type) type {
             /// faces touch its own material, so a stack of it is one thick surface.
             fn listSeeThrough(self: *Worker, line: Line, look: Look.SpriteLook, block: Block, x0: i64, y0: i64) !void {
                 const inShape = look.sprites.shape;
-                const exposed: std.EnumSet(Face) = if (inShape) .{} else try self.exposedFaces(block, look.sprites.first);
+                const exposed: std.EnumSet(Face) = if (inShape) .{} else try self.exposedFaces(line, block, look.sprites.first);
                 if ((!inShape and exposed.count() == 0) or self.seeThroughCount == self.seeThrough.len) return;
                 const picked = try self.pickSprite(look, block);
                 const square = line.square();
@@ -1388,7 +1716,7 @@ fn View(comptime Source: type) type {
                     .sprite = picked.index,
                     .left = @intCast(square.left - x0),
                     .top = @intCast(square.top - y0),
-                    .depth = @intCast(block.x + block.y + block.z),
+                    .depth = @intCast(line.depth(block.y)),
                     .tint = picked.tint,
                     .inShape = inShape,
                     .exposed = exposed,
@@ -1396,12 +1724,16 @@ fn View(comptime Source: type) type {
                 self.seeThroughCount += 1;
             }
 
-            /// The faces of `block` the view sees that don't touch `material`.
-            fn exposedFaces(self: *Worker, block: Block, material: u32) !std.EnumSet(Face) {
+            /// The faces of `block`, on `line`, the view sees that don't touch `material`.
+            fn exposedFaces(self: *Worker, line: Line, block: Block, material: u32) !std.EnumSet(Face) {
+                const rotation = self.view.rotation;
+                const x, const z = line.at(block.y);
+                const leftX, const leftZ = rotation.toWorld(x, z + 1);
+                const rightX, const rightZ = rotation.toWorld(x + 1, z);
                 var exposed: std.EnumSet(Face) = .{};
                 exposed.setPresent(.top, try self.materialAt(block.x, block.y + 1, block.z) != material);
-                exposed.setPresent(.south, try self.materialAt(block.x, block.y, block.z + 1) != material);
-                exposed.setPresent(.east, try self.materialAt(block.x + 1, block.y, block.z) != material);
+                exposed.setPresent(.left, try self.materialAt(leftX, block.y, leftZ) != material);
+                exposed.setPresent(.right, try self.materialAt(rightX, block.y, rightZ) != material);
                 return exposed;
             }
 
@@ -1476,20 +1808,21 @@ fn View(comptime Source: type) type {
                 const square = line.square();
                 var left = square.left - x0;
                 var top = square.top - y0;
-                var depth = (block.x + block.y + block.z) * depthSteps;
+                var depth = line.depth(block.y) * depthSteps;
                 var any = false;
                 if (cover) |index| if (try self.isFilledBelow(block)) {
                     const sprites = self.view.sprites.?;
                     const paintCover: Paint = .{ .sprite = .{ .sprite = sprites.entries[index], .layers = sprites.layersOf(index), .tint = @splat(255) } };
                     any = self.drawBlock(left, top, depth, paintCover, pixels);
                 };
-                // Moved east and south off the middle of its place, its sprite moves across and
-                // down, and nearer, and no longer covers its square.
+                // Moved off the middle of its place, its sprite moves across and down, and nearer,
+                // and no longer covers its square.
                 if (placedBy) |id| if (self.view.source.drawOffset(id, block.x, block.y, block.z)) |by| {
                     fills = false;
-                    left += @intFromFloat(@round((by[0] - by[1]) * across));
-                    top += @intFromFloat(@round((by[0] + by[1]) * down));
-                    depth += @intFromFloat(@round((by[0] + by[1]) * depthSteps));
+                    const x, const z = self.view.rotation.distanceToView(by[0], by[1]);
+                    left += @intFromFloat(@round((x - z) * across));
+                    top += @intFromFloat(@round((x + z) * down));
+                    depth += @intFromFloat(@round((x + z) * depthSteps));
                 };
                 if (self.drawBlock(left, top, depth, paint, pixels)) any = true;
                 return .{ .any = any, .fills = fills };
@@ -1515,10 +1848,10 @@ fn View(comptime Source: type) type {
                 };
             }
 
-            /// `liquid` is the look of a liquid in its place; 0 for none.
+            /// Where it is in the world. `liquid` is the look of a liquid in its place; 0 for none.
             const Block = struct { x: i64, y: i64, z: i64, look: u16, liquid: u16 };
 
-            /// What a block's pixels come from: a colour for each face, top, south and east, or
+            /// What a block's pixels come from: a colour for each face, top, left and right, or
             /// a sprite.
             const Paint = union(enum) {
                 faces: *const [3]u32,
@@ -1530,8 +1863,11 @@ fn View(comptime Source: type) type {
             /// null if none is; `y.*` is then just below it. A chunk without one is passed in one
             /// step.
             fn nextBlock(self: *Worker, line: Line, y: *i64) !?Block {
+                const rotation = self.view.rotation;
+                const stepX, const stepZ = rotation.lineStep();
                 while (y.* >= 0) {
-                    const x, const z = line.at(y.*);
+                    const viewX, const viewZ = line.at(y.*);
+                    const x, const z = rotation.toWorld(viewX, viewZ);
                     const cx = @divFloor(x, side);
                     const cy = @divFloor(y.*, side);
                     const cz = @divFloor(z, side);
@@ -1539,20 +1875,22 @@ fn View(comptime Source: type) type {
                     var ly: usize = @intCast(y.* - cy * side);
                     var lz: usize = @intCast(z - cz * side);
                     // The line's blocks in this chunk, from here until it leaves it.
-                    const steps = @min(lx, ly, lz) + 1;
+                    const stepsX = if (stepX < 0) lx else side - 1 - lx;
+                    const stepsZ = if (stepZ < 0) lz else side - 1 - lz;
+                    const steps = @min(stepsX, ly, stepsZ) + 1;
                     if (try self.chunkLooks(cx, cy, cz)) |slot| {
                         for (0..steps) |step| {
                             const place = (ly * side + lz) * side + lx;
                             const look = slot.looks[place];
                             if (look != 0) {
-                                const back: i64 = @intCast(step);
-                                const found: Block = .{ .x = x - back, .y = y.* - back, .z = z - back, .look = look, .liquid = slot.liquidAt(place) };
+                                const along: i64 = @intCast(step);
+                                const found: Block = .{ .x = x + stepX * along, .y = y.* - along, .z = z + stepZ * along, .look = look, .liquid = slot.liquidAt(place) };
                                 y.* = found.y - 1;
                                 return found;
                             }
-                            lx -%= 1;
+                            lx +%= @bitCast(stepX);
                             ly -%= 1;
-                            lz -%= 1;
+                            lz +%= @bitCast(stepZ);
                         }
                     }
                     y.* -= @intCast(steps);
@@ -1722,7 +2060,7 @@ test paintBlock {
     const ice: [blockWidth * blockWidth]u32 = @splat(tiles.rgba(200, 200, 200, 255));
     const waterLayers: SpriteLayers = .{ .plain = &water, .tinted = null, .depths = opaqueDepths };
     const iceLayers: SpriteLayers = .{ .plain = &ice, .tinted = null, .depths = opaqueDepths };
-    const all: std.EnumSet(Face) = .initMany(&.{ .top, .south, .east });
+    const all: std.EnumSet(Face) = .initMany(&.{ .top, .left, .right });
     const square: Sprite = .{ .left = 0, .top = 0, .width = blockWidth, .height = blockWidth, .flags = .{} };
     const w = blockWidth;
     const top = (w / 4) * tiles.size + w / 2;
@@ -1730,7 +2068,7 @@ test paintBlock {
     const topDepth = opaqueDepths[(w / 4) * w + w / 2];
 
     // Nothing behind it: as it is, and it says where it is.
-    var cube: SeeThroughBlock = .{ .sprite = 0, .left = 0, .top = 0, .depth = 10, .tint = @splat(255), .exposed = .initMany(&.{.south}) };
+    var cube: SeeThroughBlock = .{ .sprite = 0, .left = 0, .top = 0, .depth = 10, .tint = @splat(255), .exposed = .initMany(&.{.left}) };
     try std.testing.expect(paintBlock(&cube, square, waterLayers, pixels, depths));
     try std.testing.expectEqual(tiles.rgba(0, 0, 200, 255), pixels[south]);
     // Only the faces it shows.

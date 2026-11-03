@@ -1,8 +1,8 @@
-//! The isometric view's sprites of a game's blocks, every one drawn once when the game's
+//! The isometric view's sprites of a game's blocks, in every rotation, each drawn when the game's
 //! blocks are prepared (`isometric.drawSprites`), in two sections of the prepared blocks file
-//! (docs/storyblk/spec.md): `sprites`, a `Sprite` for each, and `sprite_layers`, their pixels.
-//! Everything in them lies at a multiple of its own size, so a render reads them where the file
-//! is mapped.
+//! (docs/storyblk/spec.md): `sprites`, a `Sprite` for each, and `sprite_layers`, their pixels,
+//! which sprites that look the same share. Everything in them lies at a multiple of its own size,
+//! so a render reads them where the file is mapped.
 const Sprites = @This();
 
 const std = @import("std");
@@ -18,21 +18,26 @@ comptime {
 /// How the sprites are drawn: raise it when that changes, so files drawn before are drawn again.
 pub const generatorVersion: u16 = 5;
 /// The layout of both sections (spec §7).
-pub const layoutVersion: u8 = 1;
+pub const layoutVersion: u8 = 2;
 
 pub const entriesSection = "sprites";
 pub const layersSection = "sprite_layers";
-/// The sections of the other rotations, which a file's table keeps room for from the start.
-pub const rotatedSections = [_][]const u8{ "sprites@90", "sprite_layers@90", "sprites@180", "sprite_layers@180", "sprites@270", "sprite_layers@270" };
+
+/// How many rotations of the view the sprites are drawn in.
+pub const rotationCount = 4;
 
 /// The width of a cube's square the sprites were drawn for, in pixels.
 blockWidth: u16,
+/// The sprites in each rotation.
+count: u32,
+/// `count` for each rotation, one rotation after another.
 entries: []const Sprite,
 /// The `sprite_layers` section.
 layers: []align(4) const u8,
 
 /// The `sprites` section's fields before its entries.
 const Header = extern struct {
+    /// The sprites in each rotation.
     count: u32,
     blockWidth: u16,
     reserved: u16 = 0,
@@ -40,7 +45,7 @@ const Header = extern struct {
 
 /// Where a sprite's layers are in `sprite_layers`, and what it covers.
 pub const Sprite = extern struct {
-    /// From the start of `sprite_layers`, a multiple of 4; `write` sets it.
+    /// From the start of `sprite_layers`, a multiple of 4; `Sections.add` sets it.
     offset: u32 = 0,
     /// Where its top left pixel is, from the top left of the cube's square.
     left: i16,
@@ -95,13 +100,15 @@ pub const Sections = struct {
     entries: []Sprite,
     count: usize = 0,
     layers: FileBuffer,
+    /// Where each different sprite's layers are, by their hash (`shareLast`).
+    offsets: std.AutoHashMapUnmanaged([16]u8, u32) = .empty,
 
     /// How long a buffer to give `init`: enough for many sprites, the largest about 92 KB.
     pub const bufferLength = 1 << 20;
 
-    /// The bytes of a `sprites` section of `count` sprites.
+    /// The bytes of a `sprites` section of `count` sprites in each rotation.
     pub fn entriesLength(count: usize) usize {
-        return @sizeOf(Header) + count * @sizeOf(Sprite);
+        return @sizeOf(Header) + count * rotationCount * @sizeOf(Sprite);
     }
 
     /// With `sprite_layers` at `start` in `file`, which must be open for writing, and the `sprites`
@@ -109,8 +116,29 @@ pub const Sections = struct {
     pub fn init(io: std.Io, file: std.Io.File, start: u64, buffer: *align(4) [bufferLength]u8, entries: []align(4) u8, blockWidth: u16) Sections {
         const records: []Sprite = @alignCast(std.mem.bytesAsSlice(Sprite, entries[@sizeOf(Header)..]));
         const header: *Header = @ptrCast(entries.ptr);
-        header.* = .{ .count = @intCast(records.len), .blockWidth = blockWidth };
+        header.* = .{ .count = @intCast(records.len / rotationCount), .blockWidth = blockWidth };
         return .{ .entries = records, .layers = .init(io, file, start, std.math.maxInt(u32), buffer) };
+    }
+
+    /// Makes room for every sprite's hash, so `offsets` is never moved.
+    pub fn ensureCapacity(self: *Sections, allocator: std.mem.Allocator) !void {
+        try self.offsets.ensureTotalCapacity(allocator, @intCast(self.entries.len));
+    }
+
+    /// With the sprite last added filled in: if a sprite before it has the same layers, points
+    /// it at those instead and takes its own back.
+    pub fn shareLast(self: *Sections, allocator: std.mem.Allocator) !void {
+        const sprite = &self.entries[self.count - 1];
+        const length = sprite.layersLength();
+        var hash: [16]u8 = undefined;
+        std.crypto.hash.Blake3.hash(self.layers.buffer[self.layers.held - length .. self.layers.held], &hash, .{});
+        const found = try self.offsets.getOrPut(allocator, hash);
+        if (found.found_existing) {
+            sprite.offset = found.value_ptr.*;
+            self.layers.drop(length);
+        } else {
+            found.value_ptr.* = sprite.offset;
+        }
     }
 
     /// `sprite_layers` is done, and all of it in the file.
@@ -160,9 +188,10 @@ pub const Sections = struct {
 pub fn parse(entries: []align(4) const u8, layers: []align(4) const u8) error{NotPreparedBlocks}!Sprites {
     if (entries.len < @sizeOf(Header)) return error.NotPreparedBlocks;
     const header: *const Header = @ptrCast(entries.ptr);
-    if (entries.len != @sizeOf(Header) + @as(usize, header.count) * @sizeOf(Sprite)) return error.NotPreparedBlocks;
+    if (entries.len != Sections.entriesLength(header.count)) return error.NotPreparedBlocks;
     const self: Sprites = .{
         .blockWidth = header.blockWidth,
+        .count = header.count,
         .entries = @alignCast(std.mem.bytesAsSlice(Sprite, entries[@sizeOf(Header)..])),
         .layers = layers,
     };
@@ -208,20 +237,21 @@ test "add and parse" {
     var section: [Sections.entriesLength(2)]u8 align(4) = undefined;
     const entries: []align(4) u8 = &section;
     var sections: Sections = .init(io, file, 8, &buffer, entries, 32);
-    for (sprites, layers) |sprite, each| {
+    for (0..rotationCount) |_| for (sprites, layers) |sprite, each| {
         const room = try sections.add(sprite);
         @memcpy(room.plain, each.plain);
         if (room.tinted) |tinted| @memcpy(tinted, each.tinted.?);
         @memcpy(room.depths, each.depths);
-    }
+    };
     try sections.flush();
-    try std.testing.expectEqual(8 + 2 * 16, entries.len);
+    try std.testing.expectEqual(8 + 2 * rotationCount * 16, entries.len);
     const pixels = try sections.readLayers(allocator);
     defer allocator.free(pixels);
 
     const read = try parse(entries, pixels);
     try std.testing.expectEqual(32, read.blockWidth);
-    try std.testing.expectEqual(2, read.entries.len);
+    try std.testing.expectEqual(2, read.count);
+    try std.testing.expectEqual(2 * rotationCount, read.entries.len);
     const plant = read.entries[1];
     try std.testing.expectEqual(@as(i16, -3), plant.left);
     try std.testing.expect(plant.flags.tinted and !plant.flags.fills);
@@ -244,4 +274,37 @@ test "add and parse" {
     const second: *Sprite = @ptrCast(@alignCast(entries[8 + 16 ..][0..16]));
     second.offset += 2;
     try std.testing.expectError(error.NotPreparedBlocks, parse(entries, pixels));
+}
+
+test "Sections.shareLast" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const file = try tmp.dir.createFile(io, "sprites", .{ .read = true });
+    defer file.close(io);
+    var buffer: [Sections.bufferLength]u8 align(4) = undefined;
+    var section: [Sections.entriesLength(1)]u8 align(4) = undefined;
+    var sections: Sections = .init(io, file, 0, &buffer, &section, 32);
+    defer sections.offsets.deinit(allocator);
+    try sections.ensureCapacity(allocator);
+
+    // The same pixels twice, a different one, and the same again where another sprite is.
+    const sprite: Sprite = .{ .left = 0, .top = 0, .width = 1, .height = 1, .flags = .{} };
+    const moved: Sprite = .{ .left = 5, .top = 6, .width = 1, .height = 1, .flags = .{} };
+    for ([_]Sprite{ sprite, sprite, sprite, moved }, [_]u32{ 1, 1, 2, 1 }) |each, colour| {
+        (try sections.add(each)).plain[0] = colour;
+        try sections.shareLast(allocator);
+    }
+    try sections.flush();
+    const pixels = try sections.readLayers(allocator);
+    defer allocator.free(pixels);
+
+    const entries = sections.entries;
+    try std.testing.expectEqual(2 * 8, pixels.len);
+    try std.testing.expectEqual(2, sections.offsets.count());
+    try std.testing.expectEqual(entries[0].offset, entries[1].offset);
+    try std.testing.expectEqual(8, entries[2].offset);
+    try std.testing.expectEqual(entries[0].offset, entries[3].offset);
+    try std.testing.expectEqual(5, entries[3].left);
 }

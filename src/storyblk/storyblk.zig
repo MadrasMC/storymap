@@ -10,7 +10,7 @@ const Io = std.Io;
 const Dir = Io.Dir;
 
 /// The container's version, `header.version` (spec §7).
-pub const version: u8 = 2;
+pub const version: u8 = 3;
 
 const magic = "STORYBLK";
 
@@ -49,8 +49,6 @@ pub const Section = struct {
     /// Without the zeros after it. In a parsed file, where the file is, on a multiple of 8 from
     /// its start.
     bytes: []const u8,
-    /// Listed but not there yet, for `Appender` to add. It has no bytes.
-    reserved: bool = false,
 };
 
 /// A parsed file, read in place.
@@ -60,10 +58,10 @@ pub const File = struct {
     /// In the order of `section_table`, each name once.
     sections: []const Section,
 
-    /// The section `name`, if it's there and has layout version `layoutVersion`.
+    /// The section `name`, if it has layout version `layoutVersion`.
     pub fn section(self: *const File, name: []const u8, layoutVersion: u8) error{NotPreparedBlocks}!Section {
         for (self.sections) |each| {
-            if (std.mem.eql(u8, each.name, name)) return if (each.layoutVersion == layoutVersion and !each.reserved) each else error.NotPreparedBlocks;
+            if (std.mem.eql(u8, each.name, name)) return if (each.layoutVersion == layoutVersion) each else error.NotPreparedBlocks;
         }
         return error.NotPreparedBlocks;
     }
@@ -146,7 +144,7 @@ fn write(w: *Io.Writer, hash: u64, info: Info, sections: []const Section, placed
     var offset = std.mem.alignForward(u64, lengths.beforeSections, 8);
     for (sections, 0..) |section, i| {
         const length: u32 = if (i + 1 == sections.len) placedLength orelse @intCast(section.bytes.len) else @intCast(section.bytes.len);
-        try w.writeInt(u64, if (section.reserved) 0 else offset, .little);
+        try w.writeInt(u64, offset, .little);
         try w.writeInt(u32, length, .little);
         try w.writeByte(section.layoutVersion);
         try w.writeInt(u16, section.generatorVersion, .little);
@@ -227,14 +225,12 @@ pub fn parse(arena: std.mem.Allocator, bytes: []align(8) const u8) error{ NotPre
             .name = try table.string(),
             .bytes = &.{},
         };
-        section.reserved = offset.* == 0;
-        if (section.reserved and length != 0) return error.NotPreparedBlocks;
         if (offset.* > bytes.len or length > bytes.len - offset.*) return error.NotPreparedBlocks;
         section.bytes = bytes[@intCast(offset.*)..][0..length];
     }
     const tableEnd = infoEnd + table.at;
     for (sections, offsets, 0..) |section, offset, i| {
-        if (!section.reserved and (offset % 8 != 0 or offset < tableEnd)) return error.NotPreparedBlocks;
+        if (offset % 8 != 0 or offset < tableEnd) return error.NotPreparedBlocks;
         for (sections[0..i]) |earlier| if (std.mem.eql(u8, earlier.name, section.name)) return error.NotPreparedBlocks;
     }
     return .{ .header = header, .info = info, .sections = sections };
@@ -289,101 +285,9 @@ pub const PartialFile = struct {
         if (placedLength) |length| {
             try self.file.setLength(self.io, std.mem.alignForward(u64, try lastOffset(info, sections) + length, 8));
         }
-        try self.swap();
-    }
-
-    fn swap(self: *PartialFile) !void {
         self.file.close(self.io);
         self.isOpen = false;
         try self.dir.rename(self.name(), self.dir, self.path, self.io);
-    }
-};
-
-/// A prepared blocks file having reserved sections added (spec §1): a copy of it in a
-/// `PartialFile`, with the new sections past its end, so the rest stay as they are. The section
-/// placed first can be written into the partial file before the others, at `start`.
-pub const Appender = struct {
-    partial: PartialFile,
-    /// The end of the copy, on a multiple of 8.
-    start: u64,
-    /// Where `section_table` starts, and its entries.
-    table: u64,
-    sectionCount: u16,
-
-    /// The most bytes in a section's name.
-    const maxName = 64;
-
-    pub fn create(io: Io, dir: Dir, path: []const u8) !Appender {
-        var partial: PartialFile = try .create(io, dir, path);
-        errdefer partial.discard();
-        const source = try dir.openFile(io, path, .{});
-        defer source.close(io);
-        var reader = source.reader(io, &.{});
-        var buffer: [1 << 16]u8 = undefined;
-        var writer = partial.file.writer(io, &buffer);
-        const length = writer.interface.sendFileAll(&reader, .unlimited) catch |err| return switch (err) {
-            error.ReadFailed => reader.err.?,
-            error.WriteFailed => writer.err.?,
-        };
-        writer.interface.flush() catch return writer.err.?;
-
-        var start: [headerLength]u8 = undefined;
-        if (try partial.file.readPositionalAll(io, &start, 0) != start.len) return error.NotPreparedBlocks;
-        const header = try parseHeader(&start);
-        return .{
-            .partial = partial,
-            .start = std.mem.alignForward(u64, length, 8),
-            .table = headerLength + header.infoLength,
-            .sectionCount = header.sectionCount,
-        };
-    }
-
-    /// Removes the partial file, after a failure.
-    pub fn discard(self: *Appender) void {
-        self.partial.discard();
-    }
-
-    /// Adds `sections`, which the table must list, and renames the file over its path. With
-    /// `placedLength`, the last is that long and in the file already, at `start`, and its own
-    /// `bytes` aren't used.
-    pub fn finish(self: *Appender, sections: []const Section, placedLength: ?u32) !void {
-        const given = if (placedLength != null) sections[0 .. sections.len - 1] else sections;
-        var offset = std.mem.alignForward(u64, self.start + (placedLength orelse 0), 8);
-        for (given) |section| {
-            if (section.bytes.len > std.math.maxInt(u32)) return error.SectionTooLong;
-            try self.partial.file.writePositionalAll(self.partial.io, section.bytes, offset);
-            try self.fill(section.name, offset, @intCast(section.bytes.len));
-            offset = std.mem.alignForward(u64, offset + section.bytes.len, 8);
-        }
-        if (placedLength) |length| try self.fill(sections[sections.len - 1].name, self.start, length);
-        try self.partial.file.setLength(self.partial.io, offset);
-        try self.partial.swap();
-    }
-
-    /// Names section `name`'s `offset` and `length` in the table.
-    fn fill(self: *Appender, name: []const u8, offset: u64, length: u32) !void {
-        const io = self.partial.io;
-        const file = self.partial.file;
-        var at = self.table;
-        for (0..self.sectionCount) |_| {
-            // Offset, length, layout version, generator version and the name's length.
-            var entry: [8 + 4 + 1 + 2 + 2]u8 = undefined;
-            if (try file.readPositionalAll(io, &entry, at) != entry.len) return error.NotPreparedBlocks;
-            const nameLength = std.mem.readInt(u16, entry[entry.len - 2 ..], .little);
-            if (nameLength == name.len) {
-                var buffer: [maxName]u8 = undefined;
-                const found = buffer[0..nameLength];
-                if (try file.readPositionalAll(io, found, at + entry.len) != found.len) return error.NotPreparedBlocks;
-                if (std.mem.eql(u8, found, name)) {
-                    var fields: [8 + 4]u8 = undefined;
-                    std.mem.writeInt(u64, fields[0..8], offset, .little);
-                    std.mem.writeInt(u32, fields[8..12], length, .little);
-                    return file.writePositionalAll(io, &fields, at);
-                }
-            }
-            at += entry.len + nameLength;
-        }
-        return error.NotPreparedBlocks;
     }
 };
 
@@ -532,7 +436,7 @@ test "invalid files" {
     const changes = [_]Change{
         // Not STORYBLK, or another container version.
         .{ .at = 0, .value = 'X' },
-        .{ .at = 8, .value = 9 },
+        .{ .at = 8, .value = 2 },
         // More sections than the table holds.
         .{ .at = 10, .value = 200 },
         // `info` past the end of the file, or its fields past `info_length`.
@@ -594,79 +498,6 @@ test "a last section placed before the rest" {
     defer allocator.free(whole);
     // The same but for the hash.
     try std.testing.expectEqualSlices(u8, whole[headerLength..], bytes[headerLength..]);
-}
-
-test Appender {
-    const io = std.testing.io;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const allocator = std.testing.allocator;
-    var arena: std.heap.ArenaAllocator = .init(allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const reserved = [_]Section{
-        .{ .name = "sprites", .layoutVersion = 1, .generatorVersion = 4, .bytes = "sixteen bytes..." },
-        .{ .name = "sprites@90", .layoutVersion = 1, .generatorVersion = 4, .bytes = "", .reserved = true },
-        .{ .name = "layers@90", .layoutVersion = 1, .generatorVersion = 4, .bytes = "", .reserved = true },
-        .{ .name = "layers", .layoutVersion = 1, .generatorVersion = 4, .bytes = "eight by" },
-    };
-    try writeFile(io, tmp.dir, "prepared.storyblk", 7, testInfo, &reserved);
-    const read = struct {
-        fn file(arenaAllocator: std.mem.Allocator, dir: Dir) !File {
-            return parse(arenaAllocator, try dir.readFileAllocOptions(std.testing.io, "prepared.storyblk", arenaAllocator, .unlimited, .@"8", null));
-        }
-    }.file;
-
-    // Listed, but not there yet.
-    const before = try read(a, tmp.dir);
-    try std.testing.expect(before.sections[1].reserved);
-    try std.testing.expectError(error.NotPreparedBlocks, before.section("sprites@90", 1));
-    try std.testing.expectEqualStrings("eight by", (try before.section("layers", 1)).bytes);
-
-    // Given up on, the file is as it was and the copy is gone.
-    const original = try tmp.dir.readFileAlloc(io, "prepared.storyblk", a, .unlimited);
-    var stopped: Appender = try .create(io, tmp.dir, "prepared.storyblk");
-    try stopped.partial.file.writePositionalAll(io, "pixels left unnamed", stopped.start);
-    try stopped.fill("sprites@90", stopped.start, 19);
-    stopped.discard();
-    try std.testing.expectEqualSlices(u8, original, try tmp.dir.readFileAlloc(io, "prepared.storyblk", a, .unlimited));
-    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, stopped.partial.name(), .{}));
-
-    // A reader with the file mapped goes on reading what it mapped.
-    const held = try tmp.dir.openFile(io, "prepared.storyblk", .{});
-    defer held.close(io);
-    var map: Io.File.MemoryMap = try .create(io, held, .{ .len = original.len, .protection = .{ .read = true }, .populate = false });
-    defer map.destroy(io);
-
-    // One written first, as pixels too large to hold are, and one given.
-    var appender: Appender = try .create(io, tmp.dir, "prepared.storyblk");
-    errdefer appender.discard();
-    try std.testing.expectEqual(original.len, appender.start);
-    try appender.partial.file.writePositionalAll(io, "placed!", appender.start);
-    try appender.finish(&.{
-        .{ .name = "sprites@90", .layoutVersion = 1, .generatorVersion = 4, .bytes = "entries" },
-        .{ .name = "layers@90", .layoutVersion = 1, .generatorVersion = 4, .bytes = "" },
-    }, 7);
-    try std.testing.expectEqualSlices(u8, original, map.memory);
-
-    const after = try read(a, tmp.dir);
-    try std.testing.expectEqual(7, after.header.hash);
-    try std.testing.expectEqualStrings("entries", (try after.section("sprites@90", 1)).bytes);
-    try std.testing.expectEqualStrings("placed!", (try after.section("layers@90", 1)).bytes);
-    try std.testing.expectEqualStrings("sixteen bytes...", (try after.section("sprites", 1)).bytes);
-    try std.testing.expectEqualStrings("eight by", (try after.section("layers", 1)).bytes);
-
-    // Not in the table.
-    var unknown: Appender = try .create(io, tmp.dir, "prepared.storyblk");
-    defer unknown.discard();
-    try std.testing.expectError(error.NotPreparedBlocks, unknown.finish(&.{.{ .name = "sprites@45", .layoutVersion = 1, .generatorVersion = 4, .bytes = "x" }}, null));
-
-    // A reserved section with bytes isn't one.
-    const bytes = try tmp.dir.readFileAllocOptions(io, "prepared.storyblk", a, .unlimited, .@"8", null);
-    const firstOffset = headerLength + (try parseHeader(bytes)).infoLength;
-    @memset(bytes[firstOffset..][0..8], 0);
-    try std.testing.expectError(error.NotPreparedBlocks, parse(a, bytes));
 }
 
 test writeFile {

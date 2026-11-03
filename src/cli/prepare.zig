@@ -159,9 +159,10 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
 
     var layersBuffer: [Sprites.Sections.bufferLength]u8 align(4) = undefined;
     var sprites: Sprites.Sections = .init(io, partial.file, try storyblk.lastOffset(info, &layout), &layersBuffer, entries, isometric.blockWidth);
-    contents.useSprites(try isometric.drawSprites(arena, drawables, plan, &sprites));
+    try isometric.drawSprites(arena, drawables, plan, &sprites);
+    contents.useSprites(plan.blocks);
     try sprites.flush();
-    console.log("sprites: {} drawn in {d:.1} s", .{ sprites.count, secondsSince(io, start) });
+    console.log("sprites: {} drawn in {d:.1} s, {} unique", .{ sprites.count, secondsSince(io, start), sprites.offsets.count() });
 
     const sections = try encodeSections(encoded.allocator(), contents, entries);
     _ = scratch.reset(.free_all);
@@ -182,16 +183,12 @@ fn hashAssets(io: std.Io, assets: *const Assets) u64 {
 }
 
 /// Every section of the file, in the order they're written, with the `sprites` section's bytes
-/// `entries`. The other rotations' are reserved, and `sprite_layers`, last, is in the file already.
-fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, entries: []const u8) ![Prepared.sectionNames.len + Sprites.rotatedSections.len + 2]storyblk.Section {
-    var rotated: [Sprites.rotatedSections.len]storyblk.Section = undefined;
-    for (&rotated, Sprites.rotatedSections) |*section, name| {
-        section.* = .{ .name = name, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "", .reserved = true };
-    }
-    return (try contents.encode(arena)) ++
-        [1]storyblk.Section{.{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries }} ++
-        rotated ++
-        [1]storyblk.Section{.{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "" }};
+/// `entries`. `sprite_layers`, last, is in the file already.
+fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, entries: []const u8) ![Prepared.sectionNames.len + 2]storyblk.Section {
+    return (try contents.encode(arena)) ++ [2]storyblk.Section{
+        .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries },
+        .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "" },
+    };
 }
 
 /// The hash in the header of the file at `path`, which is closed again before it's compared
@@ -238,7 +235,7 @@ fn open(init: std.process.Init, path: []const u8, problem: *Problem) !Blocks {
         problem.* = .{ .blockWidth = sprites.blockWidth };
         return error.OtherVersion;
     }
-    const prepared = try Prepared.load(init.gpa, &parsed, sprites.entries.len);
+    const prepared = try Prepared.load(init.gpa, &parsed, sprites.count);
     return .{ .prepared = prepared, .sprites = sprites, .file = file, .map = map };
 }
 
