@@ -64,13 +64,26 @@ pub const Output = struct {
 pub const Image = struct {
     /// Its path in `Output.folder`.
     path: []const u8,
-    /// Its size in pixels; null for all of the map's tiles at `level`.
+    /// Its size in pixels; null for all of the map, which needs a `Scale.level`.
     frame: ?Frame = null,
     /// The level-0 pixel at its centre; null for the map's centre. Only with a `frame`.
     centre: ?[2]i64 = null,
-    level: u6,
+    scale: Scale,
 
     pub const Frame = struct { width: u32, height: u32 };
+
+    pub const Scale = union(enum) {
+        /// One image pixel to one pixel of this level.
+        level: u6,
+        /// All of the map in the frame, touching it on its tighter side.
+        fit,
+        /// The frame inside the map's bounding box, touching it on its looser side.
+        fill,
+    };
+
+    fn needsBounds(self: Image) bool {
+        return self.frame == null or self.centre == null or self.scale != .level;
+    }
 };
 
 pub const Format = enum {
@@ -155,11 +168,20 @@ pub const transparent = rgba(0, 0, 0, 0);
 pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, list: []const Tile, output: Output, written: *std.ArrayList(Written)) !Stats {
     var stats: Stats = if (output.map) try renderMap(View, allocator, io, view, list, output, written) else .{};
     if (output.images.len == 0 or list.len == 0) return stats;
+
+    var needsBounds = false;
+    for (output.images) |image| needsBounds = needsBounds or image.needsBounds();
+    const bounds: Bounds = if (needsBounds) try findBounds(View, allocator, io, view, list, &stats) else .{};
+    const placements = try allocator.alloc(Placement, output.images.len);
+    defer allocator.free(placements);
     var levels: usize = 1;
-    for (output.images) |image| levels = @max(levels, @as(usize, image.level) + 1);
+    for (placements, output.images) |*placement, image| {
+        placement.* = try .of(image, bounds);
+        levels = @max(levels, @as(usize, placement.level) + 1);
+    }
     var pyramid: Pyramid = try .init(allocator, list, levels);
     defer pyramid.deinit(allocator);
-    for (output.images) |image| try writeImage(View, allocator, io, view, &pyramid, image, output, &stats);
+    for (placements, output.images) |placement, image| try writeImage(View, allocator, io, view, &pyramid, image.path, placement, output, &stats);
     return stats;
 }
 
@@ -245,80 +267,347 @@ fn runAll(comptime Worker: type, jobs: []Worker, threads: []?std.Thread, comptim
     for (jobs) |*job| if (job.err) |err| return err;
 }
 
-/// Writes `image` to its file, or encodes it and drops it without a folder.
-fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, image: Image, output: Output, stats: *Stats) !void {
-    const rect = try Rect.of(image, pyramid.levels[image.level].keys());
-    var encoder: png.RowEncoder = try .init(allocator, rect.width, .level_4);
+/// Writes an image to `path`, or encodes it and drops it without a folder.
+fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, path: []const u8, placement: Placement, output: Output, stats: *Stats) !void {
+    var encoder: png.RowEncoder = try .init(allocator, placement.width, .level_4);
     defer encoder.deinit(allocator);
 
     var buffer: [1 << 16]u8 = undefined;
     var discarding: Io.Writer.Discarding = .init(&buffer);
-    const file = if (output.folder) |folder| try folder.createFile(io, image.path, .{}) else null;
+    const file = if (output.folder) |folder| try folder.createFile(io, path, .{}) else null;
     defer if (file) |opened| opened.close(io);
     var fileWriter = if (file) |opened| opened.writer(io, &buffer) else undefined;
     const out = if (file != null) &fileWriter.interface else &discarding.writer;
 
-    try encoder.begin(out, rect.width, rect.height);
-    try drawRows(View, allocator, io, view, pyramid, image.level, rect, &encoder, !output.map, stats);
+    try encoder.begin(out, placement.width, placement.height);
+    try drawRows(View, allocator, io, view, pyramid, placement, &encoder, !output.map, stats);
     try encoder.finish();
     try out.flush();
 }
 
-/// Where an image falls on its level, in that level's pixels.
-const Rect = struct {
-    left: i64,
-    top: i64,
-    width: u32,
-    height: u32,
+/// The level-0 pixels a map covers: from `left` and `top` up to but not including `right` and
+/// `bottom`.
+const Bounds = struct {
+    left: i64 = 0,
+    top: i64 = 0,
+    right: i64 = 0,
+    bottom: i64 = 0,
 
-    fn of(image: Image, level: []const Tile) error{ImageTooLarge}!Rect {
-        var low = level[0];
-        var high = level[0];
-        for (level) |tile| {
-            low = .{ .x = @min(low.x, tile.x), .y = @min(low.y, tile.y) };
-            high = .{ .x = @max(high.x, tile.x), .y = @max(high.y, tile.y) };
-        }
-        const map: Rect = .{
-            .left = @as(i64, low.x) * size,
-            .top = @as(i64, low.y) * size,
-            .width = std.math.cast(u32, (@as(i64, high.x) - low.x + 1) * size) orelse return error.ImageTooLarge,
-            .height = std.math.cast(u32, (@as(i64, high.y) - low.y + 1) * size) orelse return error.ImageTooLarge,
+    fn add(self: Bounds, other: Bounds) Bounds {
+        return .{
+            .left = @min(self.left, other.left),
+            .top = @min(self.top, other.top),
+            .right = @max(self.right, other.right),
+            .bottom = @max(self.bottom, other.bottom),
         };
-        const frame = image.frame orelse return map;
-        const centreX, const centreY = if (image.centre) |centre|
-            [2]i64{ centre[0] >> image.level, centre[1] >> image.level }
-        else
-            [2]i64{ map.left + map.width / 2, map.top + map.height / 2 };
-        return .{ .left = centreX - frame.width / 2, .top = centreY - frame.height / 2, .width = frame.width, .height = frame.height };
+    }
+
+    fn ofTile(tile: Tile) Bounds {
+        const left = @as(i64, tile.x) * size;
+        const top = @as(i64, tile.y) * size;
+        return .{ .left = left, .top = top, .right = left + size, .bottom = top + size };
+    }
+
+    /// The pixels of `tile` that aren't fully transparent; null if there are none.
+    fn ofPixels(tile: Tile, pixels: *const Pixels) ?Bounds {
+        const tileBounds: Bounds = .ofTile(tile);
+        var bounds: ?Bounds = null;
+        for (0..size) |y| for (0..size) |x| {
+            const channels: [4]u8 = @bitCast(pixels[y * size + x]);
+            if (channels[3] == 0) continue;
+            const left = tileBounds.left + @as(i64, @intCast(x));
+            const top = tileBounds.top + @as(i64, @intCast(y));
+            const pixel: Bounds = .{ .left = left, .top = top, .right = left + 1, .bottom = top + 1 };
+            bounds = if (bounds) |found| found.add(pixel) else pixel;
+        };
+        return bounds;
     }
 };
 
-test Rect {
-    const level: []const Tile = &.{ .{ .x = -1, .y = 2 }, .{ .x = 1, .y = 3 } };
-    try std.testing.expectEqual(Rect{ .left = -512, .top = 1024, .width = 1536, .height = 1024 }, try Rect.of(.{ .path = "", .level = 0 }, level));
-    const frame: Image.Frame = .{ .width = 100, .height = 50 };
-    // In the middle of the map's tiles.
-    try std.testing.expectEqual(Rect{ .left = 206, .top = 1511, .width = 100, .height = 50 }, try Rect.of(.{ .path = "", .frame = frame, .level = 0 }, level));
-    // A centre is in level-0 pixels, and level 2's are 4 of them.
-    try std.testing.expectEqual(Rect{ .left = 200, .top = -25, .width = 100, .height = 50 }, try Rect.of(.{ .path = "", .frame = frame, .centre = .{ 1000, 0 }, .level = 2 }, level));
+test "Bounds.ofPixels" {
+    const pixels = try std.testing.allocator.create(Pixels);
+    defer std.testing.allocator.destroy(pixels);
+    @memset(pixels, rgba(9, 9, 9, 0));
+    try std.testing.expectEqual(null, Bounds.ofPixels(.{ .x = 0, .y = 0 }, pixels));
+    pixels[3 * size + 5] = rgba(0, 0, 0, 1);
+    pixels[7 * size + 2] = rgba(0, 0, 0, 255);
+    const expected: Bounds = .{ .left = -510, .top = 515, .right = -506, .bottom = 520 };
+    try std.testing.expectEqual(expected, Bounds.ofPixels(.{ .x = -1, .y = 1 }, pixels).?);
 }
 
-/// Draws the tiles under `rect`, one row of them at a time, top to bottom, and gives each row of
-/// pixels to `sink.writeRow`. Workers draw a row of tiles together into one buffer, so memory
-/// follows the image's width, not its height. Tiles have no order of their own to be drawn in, as
-/// each is drawn from the world alone.
-fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, level: usize, rect: Rect, sink: anytype, collect: bool, stats: *Stats) !void {
-    const firstColumn = @divFloor(rect.left, size);
-    const columns: usize = @intCast(@divFloor(rect.left + rect.width - 1, size) - firstColumn + 1);
+/// A way in from one side of the map.
+const Side = enum {
+    top,
+    bottom,
+    left,
+    right,
+
+    /// Tiles with the same key are in one row or column, and lower keys are nearer this side.
+    fn key(self: Side, tile: Tile) i32 {
+        return switch (self) {
+            .top => tile.y,
+            .bottom => -tile.y,
+            .left => tile.x,
+            .right => -tile.x,
+        };
+    }
+
+    fn isNearer(self: Side, a: Tile, b: Tile) bool {
+        return self.key(a) < self.key(b);
+    }
+};
+
+/// Finds what the map really covers, which only drawing can tell: a view's tile list has tiles
+/// that may have something on them. From each side it draws one row or column of tiles after
+/// another, until one has something on it, so it draws few of the map's tiles. A map with nothing
+/// on it covers all of its tiles.
+fn findBounds(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *const View, list: []const Tile, stats: *Stats) !Bounds {
+    const order = try allocator.dupe(Tile, list);
+    defer allocator.free(order);
+
+    var next: std.atomic.Value(usize) = .init(0);
+    var found: std.atomic.Value(bool) = .init(false);
+    const cores = std.Thread.getCpuCount() catch 1;
+    const jobs = try allocator.alloc(BoundsJob(View), @max(1, @min(cores, list.len)));
+    defer allocator.free(jobs);
+    var ready: usize = 0;
+    defer for (jobs[0..ready]) |*job| job.deinit(allocator);
+    for (jobs) |*job| {
+        job.* = try .init(view, allocator, io, &next, &found);
+        ready += 1;
+    }
+    const threads = try allocator.alloc(?std.Thread, jobs.len);
+    defer allocator.free(threads);
+
+    for (std.enums.values(Side)) |side| {
+        std.mem.sort(Tile, order, side, Side.isNearer);
+        found.store(false, .monotonic);
+        var start: usize = 0;
+        while (start < order.len and !found.load(.monotonic)) {
+            var end = start + 1;
+            while (end < order.len and side.key(order[end]) == side.key(order[start])) end += 1;
+            for (jobs) |*job| job.tiles = order[start..end];
+            next.store(0, .monotonic);
+            try runAll(BoundsJob(View), jobs, threads, BoundsJob(View).run);
+            start = end;
+        }
+    }
+
+    var bounds: ?Bounds = null;
+    for (jobs) |*job| {
+        stats.add(job.stats);
+        const drawn = job.bounds orelse continue;
+        bounds = if (bounds) |sofar| sofar.add(drawn) else drawn;
+    }
+    if (bounds) |covered| return covered;
+    var all: Bounds = .ofTile(list[0]);
+    for (list) |tile| all = all.add(.ofTile(tile));
+    return all;
+}
+
+/// One thread's view worker and buffer, finding what tiles have on them.
+fn BoundsJob(comptime View: type) type {
+    return struct {
+        const Self = @This();
+
+        io: Io,
+        worker: View.Worker,
+        pixels: *Pixels,
+        /// The tiles to draw, shared by all workers, and the next to take.
+        tiles: []const Tile = &.{},
+        next: *std.atomic.Value(usize),
+        /// Whether any worker found something in `tiles`.
+        found: *std.atomic.Value(bool),
+        bounds: ?Bounds = null,
+        stats: Stats = .{},
+        err: ?anyerror = null,
+
+        fn init(view: *const View, allocator: std.mem.Allocator, io: Io, next: *std.atomic.Value(usize), found: *std.atomic.Value(bool)) !Self {
+            const pixels = try allocator.create(Pixels);
+            errdefer allocator.destroy(pixels);
+            return .{ .io = io, .worker = try .init(view, allocator), .pixels = pixels, .next = next, .found = found };
+        }
+
+        fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            self.worker.deinit(allocator);
+            allocator.destroy(self.pixels);
+        }
+
+        fn run(self: *Self) void {
+            self.runOrFail() catch |err| {
+                self.err = err;
+            };
+        }
+
+        fn runOrFail(self: *Self) !void {
+            while (true) {
+                const i = self.next.fetchAdd(1, .monotonic);
+                if (i >= self.tiles.len) return;
+                const start: Io.Timestamp = .now(self.io, .awake);
+                const drawn = try self.worker.draw(self.tiles[i], self.pixels);
+                timeSince(self.io, &self.stats.draw, start);
+                if (!drawn) continue;
+                const covered = Bounds.ofPixels(self.tiles[i], self.pixels) orelse continue;
+                self.bounds = if (self.bounds) |sofar| sofar.add(covered) else covered;
+                self.found.store(true, .monotonic);
+            }
+        }
+    };
+}
+
+/// Where an image's pixels fall on the level it's taken from: each is the pixel of that level
+/// nearest its middle, so a level with more or fewer pixels than the image is resampled with
+/// nearest neighbour.
+const Placement = struct {
+    level: u6,
+    width: u32,
+    height: u32,
+    /// Where the image's top left corner falls, in the level's pixels.
+    left: f64,
+    top: f64,
+    /// How many of the level's pixels one of the image's is across.
+    step: f64,
+
+    /// The level whose pixels are closest to the image's without being fewer, for a scale in
+    /// image pixels per level-0 pixel, or level 0 for a scale above 1.
+    fn levelOf(scale: f64) u6 {
+        if (scale >= 1) return 0;
+        return @intFromFloat(@min(63, @floor(-@log2(scale))));
+    }
+
+    fn of(image: Image, bounds: Bounds) error{ImageTooLarge}!Placement {
+        const frame = image.frame orelse {
+            const level = image.scale.level;
+            const left = bounds.left >> level;
+            const top = bounds.top >> level;
+            const right = -(-bounds.right >> level);
+            const bottom = -(-bounds.bottom >> level);
+            return .{
+                .level = level,
+                .width = std.math.cast(u32, right - left) orelse return error.ImageTooLarge,
+                .height = std.math.cast(u32, bottom - top) orelse return error.ImageTooLarge,
+                .left = @floatFromInt(left),
+                .top = @floatFromInt(top),
+                .step = 1,
+            };
+        };
+        const width: f64 = @floatFromInt(frame.width);
+        const height: f64 = @floatFromInt(frame.height);
+        const left: f64 = @floatFromInt(bounds.left);
+        const top: f64 = @floatFromInt(bounds.top);
+        const right: f64 = @floatFromInt(bounds.right);
+        const bottom: f64 = @floatFromInt(bounds.bottom);
+        const across = width / (right - left);
+        const down = height / (bottom - top);
+        const scale: f64 = switch (image.scale) {
+            .level => |level| std.math.ldexp(@as(f64, 1), -@as(i32, level)),
+            .fit => @min(across, down),
+            .fill => @max(across, down),
+        };
+        const level = switch (image.scale) {
+            .level => |level| level,
+            .fit, .fill => levelOf(scale),
+        };
+        const pixelsPerLevel = std.math.ldexp(@as(f64, 1), level);
+        const centreX: f64 = if (image.centre) |centre| @floatFromInt(centre[0]) else (left + right) / 2;
+        const centreY: f64 = if (image.centre) |centre| @floatFromInt(centre[1]) else (top + bottom) / 2;
+        const step = 1 / (scale * pixelsPerLevel);
+        return .{
+            .level = level,
+            .width = frame.width,
+            .height = frame.height,
+            .left = centreX / pixelsPerLevel - width / 2 * step,
+            .top = centreY / pixelsPerLevel - height / 2 * step,
+            .step = step,
+        };
+    }
+
+    fn sourceX(self: Placement, x: usize) i64 {
+        return @intFromFloat(@floor(self.left + (@as(f64, @floatFromInt(x)) + 0.5) * self.step));
+    }
+
+    fn sourceY(self: Placement, y: usize) i64 {
+        return @intFromFloat(@floor(self.top + (@as(f64, @floatFromInt(y)) + 0.5) * self.step));
+    }
+};
+
+test Placement {
+    const bounds: Bounds = .{ .left = -512, .top = 1024, .right = 1024, .bottom = 2048 };
+    // All of the map, by whole pixels of level 2, past the map's edges where they fall between.
+    const whole: Placement = try .of(.{ .path = "", .scale = .{ .level = 2 } }, .{ .left = -5, .top = 8, .right = 5, .bottom = 9 });
+    try std.testing.expectEqual(Placement{ .level = 2, .width = 4, .height = 1, .left = -2, .top = 2, .step = 1 }, whole);
+
+    const frame: Image.Frame = .{ .width = 100, .height = 50 };
+    // In the middle of the map.
+    try std.testing.expectEqual(
+        Placement{ .level = 0, .width = 100, .height = 50, .left = 206, .top = 1511, .step = 1 },
+        try Placement.of(.{ .path = "", .frame = frame, .scale = .{ .level = 0 } }, bounds),
+    );
+    // A centre is in level-0 pixels, and level 2's are 4 of them.
+    try std.testing.expectEqual(
+        Placement{ .level = 2, .width = 100, .height = 50, .left = 200, .top = -25, .step = 1 },
+        try Placement.of(.{ .path = "", .frame = frame, .centre = .{ 1000, 0 }, .scale = .{ .level = 2 } }, bounds),
+    );
+}
+
+test "fit touches the frame on its tighter side and fill on its looser one" {
+    const bounds: Bounds = .{ .left = 0, .top = 0, .right = 1000, .bottom = 500 };
+    const frame: Image.Frame = .{ .width = 300, .height = 300 };
+    // 0.3 image pixels per map pixel, between levels 1 and 2: taken from level 1, every
+    // 1000 / 2 / 300 of its pixels.
+    const fit: Placement = try .of(.{ .path = "", .frame = frame, .scale = .fit }, bounds);
+    try std.testing.expectEqual(1, fit.level);
+    try std.testing.expectApproxEqAbs(@as(f64, 500) / 300, fit.step, 1e-9);
+    try std.testing.expectEqual(0, fit.sourceX(0));
+    try std.testing.expectEqual(499, fit.sourceX(299));
+    // 500 map pixels high fills 300 image pixels, and the map runs off left and right.
+    const fill: Placement = try .of(.{ .path = "", .frame = frame, .scale = .fill }, bounds);
+    try std.testing.expectEqual(0, fill.level);
+    try std.testing.expectApproxEqAbs(@as(f64, 500) / 300, fill.step, 1e-9);
+    try std.testing.expectEqual(0, fill.sourceY(0));
+    try std.testing.expectEqual(499, fill.sourceY(299));
+    try std.testing.expectEqual(250, fill.sourceX(0));
+    try std.testing.expectEqual(749, fill.sourceX(299));
+    // A frame larger than the map draws level 0's pixels larger.
+    const large: Placement = try .of(.{ .path = "", .frame = .{ .width = 2000, .height = 1000 }, .scale = .fit }, bounds);
+    try std.testing.expectEqual(0, large.level);
+    try std.testing.expectEqual(0.5, large.step);
+    try std.testing.expectEqual(999, large.sourceX(1999));
+}
+
+test "Placement.levelOf" {
+    try std.testing.expectEqual(0, Placement.levelOf(3));
+    try std.testing.expectEqual(0, Placement.levelOf(1));
+    try std.testing.expectEqual(0, Placement.levelOf(0.75));
+    try std.testing.expectEqual(1, Placement.levelOf(0.5));
+    try std.testing.expectEqual(1, Placement.levelOf(0.3));
+    try std.testing.expectEqual(2, Placement.levelOf(0.25));
+}
+
+/// Draws the tiles under `placement`, one row of them at a time, top to bottom, and gives each
+/// row of pixels to `sink.writeRow`. Workers draw a row of tiles together into one buffer, so
+/// memory follows the image's width, not its height. Tiles have no order of their own to be drawn
+/// in, as each is drawn from the world alone.
+fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, placement: Placement, sink: anytype, collect: bool, stats: *Stats) !void {
+    const firstColumn = @divFloor(placement.sourceX(0), size);
+    const columns: usize = @intCast(@divFloor(placement.sourceX(placement.width - 1), size) - firstColumn + 1);
     var band: Band = .{
         .tiles = try allocator.alloc(Pixels, columns),
         .firstColumn = @intCast(firstColumn),
-        .level = level,
-        .steps = Band.stepsFor(columns, level),
+        .level = placement.level,
+        .steps = Band.stepsFor(columns, placement.level),
     };
     defer allocator.free(band.tiles);
-    const row = try allocator.alloc(u32, rect.width);
+    const row = try allocator.alloc(u32, placement.width);
     defer allocator.free(row);
+    // Where each of the image's columns is in the top row of the tiles' pixels.
+    const offsets = try allocator.alloc(usize, placement.width);
+    defer allocator.free(offsets);
+    for (offsets, 0..) |*offset, x| {
+        const source = placement.sourceX(x);
+        const column: usize = @intCast(@divFloor(source, size) - firstColumn);
+        offset.* = column * size * size + @as(usize, @intCast(@mod(source, size)));
+    }
 
     const cores = std.Thread.getCpuCount() catch 1;
     const count = @max(1, @min(cores, band.itemCount()));
@@ -333,21 +622,22 @@ fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *Vi
     const threads = try allocator.alloc(?std.Thread, count);
     defer allocator.free(threads);
 
-    const bottom = rect.top + rect.height;
-    var y = rect.top;
-    while (y < bottom) {
-        const tileRow = @divFloor(y, size);
-        for (band.tiles) |*tile| @memset(tile, transparent);
-        for (jobs) |*job| job.row = @intCast(tileRow);
-        band.next.store(0, .monotonic);
-        try runAll(ImageJob(View), jobs, threads, ImageJob(View).run);
-
-        const encoding: Io.Timestamp = .now(io, .awake);
-        const rowsEnd = @min(bottom, (tileRow + 1) * size);
-        while (y < rowsEnd) : (y += 1) {
-            band.copyRow(row, rect, y - tileRow * size);
-            try sink.writeRow(std.mem.sliceAsBytes(row));
+    const drawn: []const u32 = @ptrCast(band.tiles);
+    var drawnRow: ?i64 = null;
+    for (0..placement.height) |y| {
+        const source = placement.sourceY(y);
+        const tileRow = @divFloor(source, size);
+        if (tileRow != drawnRow) {
+            for (band.tiles) |*tile| @memset(tile, transparent);
+            for (jobs) |*job| job.row = @intCast(tileRow);
+            band.next.store(0, .monotonic);
+            try runAll(ImageJob(View), jobs, threads, ImageJob(View).run);
+            drawnRow = tileRow;
         }
+        const encoding: Io.Timestamp = .now(io, .awake);
+        const down: usize = @intCast(@mod(source, size) * size);
+        for (row, offsets) |*pixel, offset| pixel.* = drawn[offset + down];
+        try sink.writeRow(std.mem.sliceAsBytes(row));
         timeSince(io, &stats.compress, encoding);
     }
     for (jobs) |*job| {
@@ -380,19 +670,6 @@ const Band = struct {
 
     fn itemCount(self: *const Band) usize {
         return self.tiles.len << (2 * @as(u6, self.steps));
-    }
-
-    /// Copies the row of pixels `tileY` rows down the band, as much of it as is in `rect`, into
-    /// `row`.
-    fn copyRow(self: *const Band, row: []u32, rect: Rect, tileY: i64) void {
-        const right = rect.left + rect.width;
-        for (self.tiles, 0..) |*tile, i| {
-            const tileLeft = (@as(i64, self.firstColumn) + @as(i64, @intCast(i))) * size;
-            const from = @max(rect.left, tileLeft);
-            const to = @min(right, tileLeft + size);
-            const at: usize = @intCast(tileY * size + from - tileLeft);
-            @memcpy(row[@intCast(from - rect.left)..@intCast(to - rect.left)], tile[at..][0..@intCast(to - from)]);
-        }
     }
 };
 
@@ -882,20 +1159,20 @@ const RowSink = struct {
     }
 };
 
-fn expectRows(list: []const Tile, level: usize, rect: Rect, expected: fn (x: usize, y: usize) u32, drawnTiles: usize) !void {
+fn expectRows(list: []const Tile, placement: Placement, expected: fn (x: usize, y: usize) u32, drawnTiles: usize) !void {
     const allocator = std.testing.allocator;
-    var pyramid: Pyramid = try .init(allocator, list, level + 1);
+    var pyramid: Pyramid = try .init(allocator, list, @as(usize, placement.level) + 1);
     defer pyramid.deinit(allocator);
-    const pixels = try allocator.alloc(u32, @as(usize, rect.width) * rect.height);
+    const pixels = try allocator.alloc(u32, @as(usize, placement.width) * placement.height);
     defer allocator.free(pixels);
     var view: SolidView = .{};
-    var sink: RowSink = .{ .pixels = pixels, .width = rect.width };
+    var sink: RowSink = .{ .pixels = pixels, .width = placement.width };
     var stats: Stats = .{};
-    try drawRows(SolidView, allocator, std.testing.io, &view, &pyramid, level, rect, &sink, true, &stats);
-    try std.testing.expectEqual(rect.height, sink.rows);
+    try drawRows(SolidView, allocator, std.testing.io, &view, &pyramid, placement, &sink, true, &stats);
+    try std.testing.expectEqual(placement.height, sink.rows);
     try std.testing.expectEqual(drawnTiles, view.drawnTiles);
-    for (0..rect.height) |y| for (0..rect.width) |x| {
-        try std.testing.expectEqual(expected(x, y), pixels[y * rect.width + x]);
+    for (0..placement.height) |y| for (0..placement.width) |x| {
+        try std.testing.expectEqual(expected(x, y), pixels[y * placement.width + x]);
     };
 }
 
@@ -911,11 +1188,71 @@ test "an image crosses tiles, and is transparent where the map has none" {
     }.at;
     try expectRows(
         &.{ .{ .x = -1, .y = 0 }, .{ .x = 0, .y = 0 }, .{ .x = 5, .y = 5 } },
-        0,
-        .{ .left = -10, .top = -20, .width = size + 30, .height = size + 21 - 1 },
+        .{ .level = 0, .left = -10, .top = -20, .width = size + 30, .height = size + 21 - 1, .step = 1 },
         expected,
         2,
     );
+}
+
+test "an image is resampled from its level with nearest neighbour" {
+    const expected = struct {
+        // Each of the level's pixels is 2 of the image's, so tile 1 starts at x 2 × 2 = 4.
+        fn at(x: usize, _: usize) u32 {
+            return SolidView.colour(.{ .x = if (x < 4) 0 else 1, .y = 0 });
+        }
+    }.at;
+    const left: f64 = size - 2;
+    try expectRows(
+        &.{ .{ .x = 0, .y = 0 }, .{ .x = 1, .y = 0 } },
+        .{ .level = 0, .left = left, .top = 0, .width = 8, .height = 6, .step = 0.5 },
+        expected,
+        2,
+    );
+}
+
+/// A view with a little in tile 0, 0 and in tile 1, 2, and nothing on its other tiles.
+const SparseView = struct {
+    name: []const u8 = "sparse",
+
+    pub fn collect(_: *SparseView, _: *const Worker) void {}
+
+    pub const Worker = struct {
+        pub fn init(_: *const SparseView, _: std.mem.Allocator) !Worker {
+            return .{};
+        }
+
+        pub fn deinit(_: *Worker, _: std.mem.Allocator) void {}
+
+        pub fn draw(_: *Worker, tile: Tile, pixels: *Pixels) !bool {
+            @memset(pixels, transparent);
+            if (tile.x == 0 and tile.y == 0) {
+                pixels[300 * size + 200] = rgba(1, 1, 1, 255);
+                return true;
+            }
+            if (tile.x == 1 and tile.y == 2) {
+                pixels[40 * size + 60] = rgba(1, 1, 1, 255);
+                return true;
+            }
+            return false;
+        }
+    };
+};
+
+test "findBounds finds what a map's tiles really have on them" {
+    var list: [12]Tile = undefined;
+    for (&list, 0..) |*tile, i| tile.* = .{ .x = @intCast(i % 3), .y = @as(i32, @intCast(i / 3)) - 1 };
+    var view: SparseView = .{};
+    var stats: Stats = .{};
+    const bounds = try findBounds(SparseView, std.testing.allocator, std.testing.io, &view, &list, &stats);
+    try std.testing.expectEqual(Bounds{ .left = 200, .top = 300, .right = size + 61, .bottom = 2 * size + 41 }, bounds);
+}
+
+test "a map with nothing on it covers all of its tiles" {
+    const list: []const Tile = &.{ .{ .x = 4, .y = 4 }, .{ .x = 5, .y = 6 } };
+    var view: SparseView = .{};
+    var stats: Stats = .{};
+    const bounds = try findBounds(SparseView, std.testing.allocator, std.testing.io, &view, list, &stats);
+    try std.testing.expectEqual(Bounds{ .left = 4 * size, .top = 4 * size, .right = 6 * size, .bottom = 7 * size }, bounds);
 }
 
 test "an image at level 2 averages the tiles under it" {
@@ -927,5 +1264,5 @@ test "an image at level 2 averages the tiles under it" {
     }.at;
     var list: [16]Tile = undefined;
     for (&list, 0..) |*tile, i| tile.* = .{ .x = @intCast(i % 4), .y = @intCast(i / 4) };
-    try expectRows(&list, 2, .{ .left = 0, .top = 0, .width = size, .height = size }, expected, 16);
+    try expectRows(&list, .{ .level = 2, .left = 0, .top = 0, .width = size, .height = size, .step = 1 }, expected, 16);
 }
