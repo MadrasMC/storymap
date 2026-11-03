@@ -95,6 +95,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const nbt_mod = b.createModule(.{
+        .root_source_file = b.path("lib/nbt/nbt.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const png_mod = b.createModule(.{
         .root_source_file = b.path("lib/png/png.zig"),
         .target = target,
@@ -322,7 +328,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     const tested = [_]*std.Build.Module{
         args_mod,    sqlite_mod,   protobuf_mod, png_mod, jxl_mod, webp_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
-        console_mod, storyblk_mod, renderer_mod, vs_mod,  cli_mod,
+        console_mod, storyblk_mod, renderer_mod, vs_mod,  cli_mod, nbt_mod,
     };
     for (tested) |module| {
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = module })).step);
