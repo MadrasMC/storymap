@@ -20,7 +20,7 @@ pub const spec: args.Spec = .{
         .{ .name = "theme", .value = "theme", .description = "What draws the page around the map, and the map's style: printed (the default), plain, or a theme's folder (docs/themes.md)." },
         .{ .name = "style", .value = "style", .description = "How to draw the map, instead of the theme's style: " ++ styleNames ++ " (docs/themes.md#map-style)." },
         .{ .name = "views", .value = "views", .description = "Which views to draw, joined by +: topdown (the default), isometric, or isometric@rotations, of 0, 90, 180 and 270 joined by commas." },
-        .{ .name = "mode", .value = "mode", .description = "What to write, joined by +: map (the default), or image[:widthxheight][@[x,z,]scale], a PNG of each view, 4096x4096 by default, around a position as the game shows it; scale is fit (the default) or 1:n, a power of two, of all of the map without a size or a position." },
+        .{ .name = "mode", .value = "mode", .description = "What to write, joined by +: map (the default), or image[:widthxheight][@[x,z,]scale], a PNG of each view, 4096x4096 by default, around a position as the game shows it; scale is fit (the default), 1:n or n:1, n any decimal, of all of the map without a size or a position." },
         .{ .name = "clip", .value = "shape", .description = "Draw only part of the world, around a position as the game shows it: circle:radius@x,z, square:side@x,z or rect:widthxheight@x,z, in blocks, or between two corners, rect:x,z..x,z." },
         .{ .name = "name", .value = "name", .description = "The world's name on the page, instead of the save's." },
         .{ .name = "season", .value = "season", .description = "Tint grass and leaves for spring, summer, fall or winter, instead of the season on the save's date." },
@@ -68,7 +68,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .{ .topdown = true };
     const arena = init.arena.allocator();
     const mode: Mode = if (parsed.value("mode")) |text|
-        try parseMode(arena, text) orelse console.fail("`--mode`: invalid mode {s}. expected: map or image[:widthxheight][@[x,z,]scale], with scale fit or 1:n, n a power of two, joined by +", .{text})
+        try parseMode(arena, text) orelse console.fail("`--mode`: invalid mode {s}. expected: map or image[:widthxheight][@[x,z,]scale], with scale fit, 1:n or n:1, joined by +", .{text})
     else
         .{ .map = true };
     const paths: prepare.Paths = .{
@@ -436,7 +436,7 @@ fn parseImageMode(text: []const u8) ?ImageMode {
             else => return null,
         }
     }
-    if (mode.frame == null and (mode.position != null or mode.scale != .level)) mode.frame = ImageMode.defaultFrame;
+    if (mode.frame == null and (mode.position != null or mode.scale != .ratio)) mode.frame = ImageMode.defaultFrame;
     return mode;
 }
 
@@ -446,13 +446,21 @@ fn parseImagePosition(text: []const u8) ?[2]i32 {
     return .{ std.math.cast(i32, x) orelse return null, std.math.cast(i32, z) orelse return null };
 }
 
-/// The scale `text` names: fit, or 1:n, n a power of two; null if it isn't one.
+/// The scale `text` names, fit, 1:n or n:1, as the page writes them; null if it isn't one.
 fn parseScale(text: []const u8) ?tiles.Image.Scale {
     if (std.mem.eql(u8, text, "fit")) return .fit;
-    if (!std.mem.startsWith(u8, text, "1:")) return null;
-    const n = std.fmt.parseInt(u64, text[2..], 10) catch return null;
-    if (n == 0 or !std.math.isPowerOfTwo(n)) return null;
-    return .{ .level = std.math.log2_int(u64, n) };
+    const colon = std.mem.indexOfScalar(u8, text, ':') orelse return null;
+    const pixels = parseDecimal(text[0..colon]) orelse return null;
+    const levelPixels = parseDecimal(text[colon + 1 ..]) orelse return null;
+    if (pixels != 1 and levelPixels != 1) return null;
+    return .{ .ratio = pixels / levelPixels };
+}
+
+/// The number above 0 that `text` writes in digits and a point, or null if it isn't one.
+fn parseDecimal(text: []const u8) ?f64 {
+    for (text) |character| if (!std.ascii.isDigit(character) and character != '.') return null;
+    const value = std.fmt.parseFloat(f64, text) catch return null;
+    return if (value > 0 and std.math.isFinite(value)) value else null;
 }
 
 test parseMode {
@@ -465,12 +473,17 @@ test parseMode {
 
     const both = (try parseMode(arena, "map+image:1920x1080@256,-5888,1:2+image@1:8")).?;
     try std.testing.expect(both.map);
-    try std.testing.expectEqual(ImageMode{ .frame = .{ .width = 1920, .height = 1080 }, .position = .{ 256, -5888 }, .scale = .{ .level = 1 } }, both.images[0]);
-    try std.testing.expectEqual(ImageMode{ .scale = .{ .level = 3 } }, both.images[1]);
+    try std.testing.expectEqual(ImageMode{ .frame = .{ .width = 1920, .height = 1080 }, .position = .{ 256, -5888 }, .scale = .{ .ratio = 0.5 } }, both.images[0]);
+    try std.testing.expectEqual(ImageMode{ .scale = .{ .ratio = 0.125 } }, both.images[1]);
 
-    try std.testing.expectEqual(ImageMode{ .frame = .{ .width = 2, .height = 3 }, .scale = .{ .level = 0 } }, (try parseMode(arena, "image:2x3@1:1")).?.images[0]);
-    try std.testing.expectEqual(ImageMode{ .frame = ImageMode.defaultFrame, .position = .{ 1, 2 }, .scale = .{ .level = 2 } }, (try parseMode(arena, "image@1,2,1:4")).?.images[0]);
+    try std.testing.expectEqual(ImageMode{ .frame = .{ .width = 2, .height = 3 }, .scale = .{ .ratio = 1 } }, (try parseMode(arena, "image:2x3@1:1")).?.images[0]);
+    try std.testing.expectEqual(ImageMode{ .frame = ImageMode.defaultFrame, .position = .{ 1, 2 }, .scale = .{ .ratio = 0.25 } }, (try parseMode(arena, "image@1,2,1:4")).?.images[0]);
     try std.testing.expect(!(try parseMode(arena, "image@1:1")).?.map);
+
+    try std.testing.expectEqual(ImageMode{ .scale = .{ .ratio = 2 } }, (try parseMode(arena, "image@2:1")).?.images[0]);
+    try std.testing.expectEqual(ImageMode{ .scale = .{ .ratio = 2.5 } }, (try parseMode(arena, "image@2.5:1")).?.images[0]);
+    try std.testing.expectEqual(ImageMode{ .scale = .{ .ratio = 1.0 / 3.0 } }, (try parseMode(arena, "image@1:3")).?.images[0]);
+    try std.testing.expectEqual(ImageMode{ .scale = .{ .ratio = 1.0 / 1.5 } }, (try parseMode(arena, "image@1:1.5")).?.images[0]);
 
     const defaulted: ImageMode = .{ .frame = ImageMode.defaultFrame };
     try std.testing.expectEqual(defaulted, (try parseMode(arena, "image")).?.images[0]);
@@ -479,7 +492,7 @@ test parseMode {
     try std.testing.expectEqual(ImageMode{ .frame = ImageMode.defaultFrame, .position = .{ 1, 2 } }, (try parseMode(arena, "image@1,2")).?.images[0]);
     try std.testing.expectEqual(ImageMode{ .frame = .{ .width = 2, .height = 3 }, .position = .{ 1, 2 } }, (try parseMode(arena, "image:2x3@1,2,fit")).?.images[0]);
 
-    for ([_][]const u8{ "", "+", "map+", "tiles", "image@", "image:", "image:2x3@", "image@1:3", "image@1:0", "image@2:1", "image@1,1:2", "image@1,2,", "image@1,2,3,1:2", "image:0x3@1:1", "image:2@1:1", "imagery@1:1", "image@9999999999,0,1:1", "image@Fit", "image@fill" }) |text| {
+    for ([_][]const u8{ "", "+", "map+", "tiles", "image@", "image:", "image:2x3@", "image@1:0", "image@0:1", "image@2:3", "image@1:", "image@:1", "image@1", "image@1:-2", "image@1:1e3", "image@1:inf", "image@1:nan", "image@1:.", "image@1,1:2", "image@1,2,", "image@1,2,3,1:2", "image:0x3@1:1", "image:2@1:1", "imagery@1:1", "image@9999999999,0,1:1", "image@Fit", "image@fill" }) |text| {
         try std.testing.expectEqual(null, try parseMode(arena, text));
     }
 }

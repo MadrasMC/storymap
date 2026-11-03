@@ -44,12 +44,12 @@ image[:<width>x<height>][@[<x>,<z>,]<scale>]
 | --- | --- |
 | `<width>x<height>` | the image's size in pixels, 4096x4096 by default |
 | `<x>,<z>` | the block at its centre, as the game shows it; without it, the map's centre |
-| `<scale>` | `fit` or `1:<n>`, `fit` by default |
+| `<scale>` | `fit`, `1:<n>` or `<n>:1`, `fit` by default |
 
 | scale | image |
 | --- | --- |
 | `fit` | all of the map, touching the image's edges on its tighter side |
-| `1:<n>` | `n` a power of two: `1:1` is full detail, `1:2` half of that; without a size or a position, all of the map |
+| `1:<n>`, `<n>:1` | `n` any decimal: `1:1` is full detail, `1:2` half of that, `2:1` twice that; without a size or a position, all of the map |
 
 | form | images |
 | --- | --- |
@@ -61,7 +61,8 @@ image[:<width>x<height>][@[<x>,<z>,]<scale>]
 
 An image is named after its view, as `topdown.png`, or `topdown-1.png` and `topdown-2.png` for two.
 It's transparent where the map has nothing.
-Between levels, `fit` takes the nearest pixel of the level with at least as many.
+Between levels, an image takes the nearest pixel of the level with at least as many, and above `1:1` it repeats full detail's.
+The position and scale in the page's address can be pasted here.
 In the isometric view, a position is taken at sea level, as on the page.
 `--webp` and `--jpegxl` apply to tiles only: images are always PNG.
 

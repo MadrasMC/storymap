@@ -64,7 +64,7 @@ pub const Output = struct {
 pub const Image = struct {
     /// Its path in `Output.folder`.
     path: []const u8,
-    /// Its size in pixels; null for all of the map, which needs a `Scale.level`.
+    /// Its size in pixels; null for all of the map, which needs a `Scale.ratio`.
     frame: ?Frame = null,
     /// The level-0 pixel at its centre; null for the map's centre. Only with a `frame`.
     centre: ?[2]i64 = null,
@@ -73,14 +73,14 @@ pub const Image = struct {
     pub const Frame = struct { width: u32, height: u32 };
 
     pub const Scale = union(enum) {
-        /// One image pixel to one pixel of this level.
-        level: u6,
-        /// All of the map in the frame, touching it on its tighter side.
+        /// Image pixels per level-0 pixel.
+        ratio: f64,
+        /// All of the map in the frame, touching it on its tighter side. Needs a frame.
         fit,
     };
 
     fn needsBounds(self: Image) bool {
-        return self.frame == null or self.centre == null or self.scale != .level;
+        return self.frame == null or self.centre == null or self.scale != .ratio;
     }
 };
 
@@ -474,39 +474,33 @@ const Placement = struct {
     }
 
     fn of(image: Image, bounds: Bounds) error{ImageTooLarge}!Placement {
-        const frame = image.frame orelse {
-            const level = image.scale.level;
-            const left = bounds.left >> level;
-            const top = bounds.top >> level;
-            const right = -(-bounds.right >> level);
-            const bottom = -(-bounds.bottom >> level);
-            return .{
-                .level = level,
-                .width = std.math.cast(u32, right - left) orelse return error.ImageTooLarge,
-                .height = std.math.cast(u32, bottom - top) orelse return error.ImageTooLarge,
-                .left = @floatFromInt(left),
-                .top = @floatFromInt(top),
-                .step = 1,
-            };
-        };
-        const width: f64 = @floatFromInt(frame.width);
-        const height: f64 = @floatFromInt(frame.height);
         const left: f64 = @floatFromInt(bounds.left);
         const top: f64 = @floatFromInt(bounds.top);
         const right: f64 = @floatFromInt(bounds.right);
         const bottom: f64 = @floatFromInt(bounds.bottom);
         const scale: f64 = switch (image.scale) {
-            .level => |level| std.math.ldexp(@as(f64, 1), -@as(i32, level)),
-            .fit => @min(width / (right - left), height / (bottom - top)),
+            .ratio => |ratio| ratio,
+            .fit => @min(@as(f64, @floatFromInt(image.frame.?.width)) / (right - left), @as(f64, @floatFromInt(image.frame.?.height)) / (bottom - top)),
         };
-        const level = switch (image.scale) {
-            .level => |level| level,
-            .fit => levelOf(scale),
-        };
+        const level = levelOf(scale);
         const pixelsPerLevel = std.math.ldexp(@as(f64, 1), level);
+        const step = 1 / (scale * pixelsPerLevel);
+        const frame = image.frame orelse {
+            const firstColumn = pixelFrom(@floor(left / pixelsPerLevel), step);
+            const firstRow = pixelFrom(@floor(top / pixelsPerLevel), step);
+            return .{
+                .level = level,
+                .width = try pixelCount(pixelFrom(@ceil(right / pixelsPerLevel), step) - firstColumn),
+                .height = try pixelCount(pixelFrom(@ceil(bottom / pixelsPerLevel), step) - firstRow),
+                .left = firstColumn * step,
+                .top = firstRow * step,
+                .step = step,
+            };
+        };
+        const width: f64 = @floatFromInt(frame.width);
+        const height: f64 = @floatFromInt(frame.height);
         const centreX: f64 = if (image.centre) |centre| @floatFromInt(centre[0]) else (left + right) / 2;
         const centreY: f64 = if (image.centre) |centre| @floatFromInt(centre[1]) else (top + bottom) / 2;
-        const step = 1 / (scale * pixelsPerLevel);
         return .{
             .level = level,
             .width = frame.width,
@@ -515,6 +509,16 @@ const Placement = struct {
             .top = centreY / pixelsPerLevel - height / 2 * step,
             .step = step,
         };
+    }
+
+    /// The first image pixel whose middle is at or past `levelPixel`.
+    fn pixelFrom(levelPixel: f64, step: f64) f64 {
+        return @ceil(levelPixel / step - 0.5);
+    }
+
+    fn pixelCount(length: f64) error{ImageTooLarge}!u32 {
+        if (length >= std.math.maxInt(u32)) return error.ImageTooLarge;
+        return @intFromFloat(@max(length, 1));
     }
 
     fn sourceX(self: Placement, x: usize) i64 {
@@ -529,19 +533,29 @@ const Placement = struct {
 test Placement {
     const bounds: Bounds = .{ .left = -512, .top = 1024, .right = 1024, .bottom = 2048 };
     // All of the map, by whole pixels of level 2, past the map's edges where they fall between.
-    const whole: Placement = try .of(.{ .path = "", .scale = .{ .level = 2 } }, .{ .left = -5, .top = 8, .right = 5, .bottom = 9 });
+    const whole: Placement = try .of(.{ .path = "", .scale = .{ .ratio = 0.25 } }, .{ .left = -5, .top = 8, .right = 5, .bottom = 9 });
     try std.testing.expectEqual(Placement{ .level = 2, .width = 4, .height = 1, .left = -2, .top = 2, .step = 1 }, whole);
+    // All of the map at 2:1, taken from level 0, whose pixels are 2 of the image's.
+    const large: Placement = try .of(.{ .path = "", .scale = .{ .ratio = 2 } }, .{ .left = -5, .top = 8, .right = 5, .bottom = 9 });
+    try std.testing.expectEqual(Placement{ .level = 0, .width = 20, .height = 2, .left = -5, .top = 8, .step = 0.5 }, large);
+    // All of the map at 1:3, taken from level 1, each image pixel 1.5 of its pixels across.
+    const small: Placement = try .of(.{ .path = "", .scale = .{ .ratio = 1.0 / 3.0 } }, .{ .left = 0, .top = 0, .right = 1000, .bottom = 300 });
+    try std.testing.expectEqual(1, small.level);
+    try std.testing.expectEqual(333, small.width);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5), small.step, 1e-9);
+    try std.testing.expectEqual(498, small.sourceX(332));
+    try std.testing.expectError(error.ImageTooLarge, Placement.of(.{ .path = "", .scale = .{ .ratio = 1 << 24 } }, .{ .right = 1 << 10, .bottom = 1 }));
 
     const frame: Image.Frame = .{ .width = 100, .height = 50 };
     // In the middle of the map.
     try std.testing.expectEqual(
         Placement{ .level = 0, .width = 100, .height = 50, .left = 206, .top = 1511, .step = 1 },
-        try Placement.of(.{ .path = "", .frame = frame, .scale = .{ .level = 0 } }, bounds),
+        try Placement.of(.{ .path = "", .frame = frame, .scale = .{ .ratio = 1 } }, bounds),
     );
     // A centre is in level-0 pixels, and level 2's are 4 of them.
     try std.testing.expectEqual(
         Placement{ .level = 2, .width = 100, .height = 50, .left = 200, .top = -25, .step = 1 },
-        try Placement.of(.{ .path = "", .frame = frame, .centre = .{ 1000, 0 }, .scale = .{ .level = 2 } }, bounds),
+        try Placement.of(.{ .path = "", .frame = frame, .centre = .{ 1000, 0 }, .scale = .{ .ratio = 0.25 } }, bounds),
     );
 }
 
