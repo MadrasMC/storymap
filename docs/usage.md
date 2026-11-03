@@ -18,6 +18,17 @@ Join views with `+`, and the page lets you switch between them.
 | `--views topdown` | the top-down map |
 | `--views isometric` | the isometric view, the same as `isometric@0` |
 | `--views topdown+isometric` | both |
+| `--views isometric@90` | the isometric view, turned |
+| `--views isometric@0,90,180,270` | the isometric view from all four sides |
+
+A rotation moves the viewer clockwise around the world:
+
+| rotation | facing |
+| --- | --- |
+| 0 | north-west |
+| 90 | north-east |
+| 180 | south-east |
+| 270 | south-west |
 
 ## Appearance
 
@@ -42,6 +53,7 @@ Tiles are lossless PNG by default.
 
 A render needs the game's and mods' assets, prepared once into a file, `prepared.storyblk` by default.
 The first render that needs it prepares it.
+The file has every rotation, so one copied to a machine without the game can draw any of them.
 
 | option | use |
 | --- | --- |

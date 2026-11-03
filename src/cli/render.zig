@@ -123,7 +123,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         written.* = list;
         rotationStats.* = stats;
         console.log("{s}: {} tiles in {} levels in {d:.2} s, {} chunks read", .{ rotation.folder(), stats.tiles, stats.levels, seconds(stats.duration), stats.chunksRead });
-        try views.append(allocator, .{ .name = rotation.folder(), .title = rotation.title(), .projection = isometric.projection, .blockWidth = isometric.blockWidth, .format = output.format, .written = list });
+        try views.append(allocator, .{ .name = rotation.folder(), .title = rotation.title(), .projection = isometric.projection, .blockWidth = isometric.blockWidth, .rotation = rotation.degrees(), .format = output.format, .written = list });
     }
 
     if (out) |dir| {

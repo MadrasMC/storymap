@@ -67,7 +67,13 @@ function start(makeTheme) {
 	// to keep blocks the same size when switching views. Top-down, a pixel is a block, x east and
 	// y south. Isometric, a pixel stands for a whole line of blocks, so positions are taken on the
 	// top of the blocks at sea level; `positions` says whether the view has a position at each
-	// pixel to show.
+	// pixel to show. A rotated view is the same with x and z turned to the way it faces.
+	const turns = {
+		0: { toView: (x, z) => [x, z], toWorld: (x, z) => [x, z] },
+		90: { toView: (x, z) => [z, -x], toWorld: (x, z) => [-z, x] },
+		180: { toView: (x, z) => [-x, -z], toWorld: (x, z) => [-x, -z] },
+		270: { toView: (x, z) => [-z, x], toWorld: (x, z) => [z, -x] },
+	};
 	const projections = {
 		topdown: () => ({
 			toPixels: (x, z) => ({ x: x + offsetX, y: z + offsetZ }),
@@ -79,12 +85,17 @@ function start(makeTheme) {
 			const across = v.blockWidth / 2;
 			const down = v.blockWidth / 4;
 			const raised = (seaLevel + 1) * (v.blockWidth / 2);
+			const turn = turns[v.rotation ?? 0];
 			return {
-				toPixels: (x, z) => ({ x: (x - z + offsetX - offsetZ) * across, y: (x + z + offsetX + offsetZ) * down - raised }),
+				toPixels: (x, z) => {
+					const [viewX, viewZ] = turn.toView(x + offsetX, z + offsetZ);
+					return { x: (viewX - viewZ) * across, y: (viewX + viewZ) * down - raised };
+				},
 				toGame: (px, py) => {
 					const difference = px / across;
 					const sum = (py + raised) / down;
-					return { x: (sum + difference) / 2 - offsetX, z: (sum - difference) / 2 - offsetZ };
+					const [x, z] = turn.toWorld((sum + difference) / 2, (sum - difference) / 2);
+					return { x: x - offsetX, z: z - offsetZ };
 				},
 				span: v.blockWidth / Math.SQRT2,
 				positions: false,

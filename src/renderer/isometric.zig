@@ -68,6 +68,10 @@ pub const Rotation = enum(u2) {
     deg180,
     deg270,
 
+    pub fn degrees(self: Rotation) u16 {
+        return @as(u16, @backingInt(self)) * 90;
+    }
+
     /// Its tiles' folder in the output.
     pub fn folder(self: Rotation) []const u8 {
         return switch (self) {
