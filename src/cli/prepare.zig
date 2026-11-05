@@ -44,14 +44,33 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     prepareFile(init, &assets, paths.blocks, hashAssets(init.io, &assets));
 }
 
-/// Opens Minecraft's client jar. Preparing its blocks isn't implemented yet.
+/// Reads the block states and models in Minecraft's client jar. Writing them to the prepared
+/// blocks file isn't implemented yet.
 fn prepareMinecraft(init: std.process.Init, jarPath: []const u8) noreturn {
-    var jar = mc.Jar.open(init.arena.allocator(), init.io, jarPath) catch |err| switch (err) {
+    const io = init.io;
+    var scratch: std.heap.ArenaAllocator = .init(init.gpa);
+    defer scratch.deinit();
+    const arena = scratch.allocator();
+    var jar = mc.Jar.open(arena, io, jarPath) catch |err| switch (err) {
         error.NotAClientJar => console.fail("{s}: not a Minecraft client jar (no block assets)", .{jarPath}),
         else => console.fail("{s}: could not read ({s})", .{ jarPath, @errorName(err) }),
     };
-    defer jar.close(init.io);
-    console.log("blocks: Minecraft {s}, {} files ({s})", .{ versionText(jar.version), jar.entries.count(), jarPath });
+    defer jar.close(io);
+    const start: std.Io.Timestamp = .now(io, .awake);
+    var problems: mc.Blocks.Problems = .{};
+    const read = mc.Blocks.read(arena, io, &jar, &problems) catch |err|
+        console.fail("{s}: could not read the blocks ({s})", .{ jarPath, @errorName(err) });
+    for (problems.blockStates.items) |path| console.warn("{s}: could not read; its block is left out", .{path});
+    for (problems.models.keys()) |model| console.warn("{s}: could not read; left out of the blocks that use it", .{model});
+    var boxes: usize = 0;
+    var empty: usize = 0;
+    for (read.states) |state| for (state.alternates) |shape| {
+        boxes += shape.boxes.len;
+        if (shape.boxes.len == 0) empty += 1;
+    };
+    console.log("blocks: {} block states of {} blocks read from Minecraft {s} in {d:.1} s, {} boxes, {} shapes without any ({s})", .{
+        read.states.len, read.blockCount, versionText(jar.version), secondsSince(io, start), boxes, empty, jarPath,
+    });
     console.fail("preparing Minecraft's blocks: not implemented", .{});
 }
 
