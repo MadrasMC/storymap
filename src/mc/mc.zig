@@ -1,6 +1,7 @@
-//! Reads Minecraft: its saves, for now.
+//! Reads Minecraft: its saves, and its client jar.
 const std = @import("std");
 
+pub const Jar = @import("Jar.zig");
 pub const Region = @import("Region.zig");
 pub const Chunk = @import("Chunk.zig");
 pub const World = @import("World.zig");

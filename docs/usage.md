@@ -104,7 +104,7 @@ The file has every rotation, so one copied to a machine without the game can dra
 | --- | --- |
 | `--prepare` | prepare the blocks again before rendering |
 | `--blocks <file>` | the prepared blocks file to use |
-| `--game <game>` | the game's install folder, or `vintagestory` for a `vintagestory` folder in the current folder if there is one, or else the standard place |
+| `--game <game>` | the game's install folder or Minecraft's client jar; or the game, `vintagestory`, `minecraft` or `minecraft-<version>`, from a folder of that name in the current folder if there is one, or else the standard place |
 | `--data <folder>` | the game's data folder, if it isn't in the standard place |
 
 `storymap prepare [file]` prepares the file without rendering, and takes `--game` and `--data` too.

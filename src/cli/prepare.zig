@@ -13,7 +13,7 @@ const storyblk = @import("storyblk");
 const console = @import("console");
 const args = @import("args");
 
-pub const gameOption: args.Option = .{ .name = "game", .value = "game", .description = "The game's install folder, or " ++ Prepared.game ++ " for ./" ++ Prepared.game ++ " if it's there, or else the standard place." };
+pub const gameOption: args.Option = .{ .name = "game", .value = "game", .description = "The game's install folder or Minecraft's client jar; or the game: " ++ Prepared.game ++ ", " ++ mc.game ++ " or " ++ mc.game ++ "-<version>, from a folder of that name here if there is one, or else the standard place." };
 pub const dataOption: args.Option = .{ .name = "data", .value = "folder", .description = "The game's data folder, if it isn't in the standard place." };
 
 pub const spec: args.Spec = .{
@@ -35,10 +35,24 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .data = parsed.value("data"),
         .blocks = parsed.positional("file") orelse Prepared.defaultPath,
     };
-    const gamePath = findGame(init, paths) orelse noGame();
+    const gamePath = switch (findGame(init, paths) orelse noGame()) {
+        .vintagestory => |folder| folder,
+        .minecraft => |jarPath| prepareMinecraft(init, jarPath),
+    };
     var assets = openAssets(init, gamePath, paths.data);
     defer assets.close(init.io);
     prepareFile(init, &assets, paths.blocks, hashAssets(init.io, &assets));
+}
+
+/// Opens Minecraft's client jar. Preparing its blocks isn't implemented yet.
+fn prepareMinecraft(init: std.process.Init, jarPath: []const u8) noreturn {
+    var jar = mc.Jar.open(init.arena.allocator(), init.io, jarPath) catch |err| switch (err) {
+        error.NotAClientJar => console.fail("{s}: not a Minecraft client jar (no block assets)", .{jarPath}),
+        else => console.fail("{s}: could not read ({s})", .{ jarPath, @errorName(err) }),
+    };
+    defer jar.close(init.io);
+    console.log("blocks: Minecraft {s}, {} files ({s})", .{ versionText(jar.version), jar.entries.count(), jarPath });
+    console.fail("preparing Minecraft's blocks: not implemented", .{});
 }
 
 /// The prepared blocks, and the isometric view's sprites of them, mapped from their file.
@@ -68,7 +82,9 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     const io = init.io;
     const path = paths.blocks;
 
-    const gamePath = findGame(init, paths) orelse {
+    const game = findGame(init, paths);
+    if (game) |found| if (found == .minecraft) console.fail("`--game {s}`: a Vintage Story save needs Vintage Story", .{paths.game.?});
+    const gamePath = if (game) |found| found.vintagestory else {
         if (force) noGame();
         var problem: Problem = .none;
         const found = open(init, path, &problem) catch |err| {
@@ -175,15 +191,54 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
     try partial.finish(hash, info, &sections, @intCast(sprites.layers.length));
 }
 
-/// The game's install folder: the folder `--game` gives, or for the game's name, the folder of
-/// that name here if there is one; otherwise the standard place.
-fn findGame(init: std.process.Init, paths: Paths) ?[]const u8 {
-    if (paths.game) |given| {
-        if (std.mem.eql(u8, given, mc.game) or std.mem.startsWith(u8, given, mc.game ++ "-"))
-            console.fail("`--game {s}`: not implemented for Minecraft", .{given});
-        if (!std.mem.eql(u8, given, Prepared.game) or isFolder(init.io, given)) return given;
+/// A game's install, as `--game` names it.
+const Game = union(enum) {
+    /// The install folder.
+    vintagestory: []const u8,
+    /// The client jar.
+    minecraft: []const u8,
+};
+
+/// The game `--game` names: a Vintage Story install folder, Minecraft's client jar or its game
+/// folder, or a game's name, for a folder of that name here if there is one, or else the
+/// standard place. Without `--game`, Vintage Story in the standard place. A Minecraft that isn't
+/// found stops the program.
+fn findGame(init: std.process.Init, paths: Paths) ?Game {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const given = paths.game orelse return standardVintageStory(init);
+    if (std.mem.eql(u8, given, mc.game) or std.mem.startsWith(u8, given, mc.game ++ "-")) {
+        const version: ?[]const u8 = if (given.len > mc.game.len) given[mc.game.len + 1 ..] else null;
+        return .{ .minecraft = findMinecraft(init, given, version) catch null orelse noMinecraft(given) };
     }
-    return Assets.findFolder(init.arena.allocator(), init.io, init.environ_map, .game);
+    if (std.mem.eql(u8, given, Prepared.game) and !isFolder(io, given)) return standardVintageStory(init);
+    if (std.ascii.endsWithIgnoreCase(given, ".jar")) return .{ .minecraft = given };
+    if (mc.Jar.isGameFolder(io, given))
+        return .{ .minecraft = mc.Jar.inGameFolder(arena, io, given, null) catch null orelse noMinecraft(given) };
+    return .{ .vintagestory = given };
+}
+
+fn standardVintageStory(init: std.process.Init) ?Game {
+    const folder = Assets.findFolder(init.arena.allocator(), init.io, init.environ_map, .game) orelse return null;
+    return .{ .vintagestory = folder };
+}
+
+/// The jar for `--game minecraft` or `minecraft-<version>` (`name`): from a folder of that name
+/// here, a game folder for `minecraft` and a version's folder for `minecraft-<version>`, or else
+/// from the launcher's game folder; without a version, its highest release.
+fn findMinecraft(init: std.process.Init, name: []const u8, version: ?[]const u8) !?[]const u8 {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    if (isFolder(io, name)) {
+        if (version) |wanted| return mc.Jar.inVersionFolder(arena, io, name, wanted);
+        return mc.Jar.inGameFolder(arena, io, name, null);
+    }
+    const folder = mc.Jar.standardFolder(arena, io, init.environ_map) orelse return null;
+    return mc.Jar.inGameFolder(arena, io, folder, version);
+}
+
+fn noMinecraft(given: []const u8) noreturn {
+    console.fail("`--game {s}`: could not locate Minecraft's client jar; pass `--game <jar>`", .{given});
 }
 
 pub fn isFolder(io: std.Io, path: []const u8) bool {
