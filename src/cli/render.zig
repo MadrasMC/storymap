@@ -54,6 +54,11 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const start: std.Io.Timestamp = .now(init.io, .awake);
     const allocator = init.gpa;
     const savePath = parsed.positional("world").?;
+    // Before anything is written or prepared.
+    _ = std.Io.Dir.cwd().statFile(init.io, savePath, .{}) catch |err| switch (err) {
+        error.FileNotFound => console.fail("{s}: no such file or folder", .{savePath}),
+        else => console.fail("{s}: could not open ({s})", .{ savePath, @errorName(err) }),
+    };
     const outPath = parsed.positional("folder") orelse "out";
     const themeName = parsed.value("theme") orelse "printed";
     const season: ?SaveFile.Season = if (parsed.value("season")) |name|
@@ -106,37 +111,46 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .yes = parsed.flag("yes"),
     };
 
+    // Read as a Minecraft world if it's a folder, otherwise as a Vintage Story save file.
     if (isFolder(init.io, savePath)) {
-        if (season != null) console.fail("`--season`: only for Vintage Story saves", .{});
-        if (area != null) console.fail("`--clip`: only for Vintage Story saves", .{});
+        if (season != null) console.warn("`--season`: not supported for Minecraft", .{});
+        if (area != null) console.fail("`--clip`: not implemented for Minecraft", .{});
         if (force or parsed.value("blocks") != null or paths.game != null or paths.data != null)
-            console.fail("`--prepare`, `--blocks`, `--game` and `--data`: only for Vintage Story saves", .{});
-        if (chosen.topdown and theme.topdown == .game) console.fail("the game's own top-down styles: only for Vintage Story saves; draw a Minecraft world in another style, such as `--style relief`", .{});
+            console.fail("`--prepare`, `--blocks`, `--game` and `--data`: not implemented for Minecraft", .{});
+        if (chosen.topdown and theme.topdown == .game) console.fail("the game's own top-down style: not supported for Minecraft; try `--style relief`", .{});
+
         const opening: std.Io.Timestamp = .now(init.io, .awake);
+
         var source = mc.World.open(allocator, init.io, savePath) catch |err| switch (err) {
             error.NotAWorld => console.fail("{s}: not a Minecraft world (no finished chunks in its region files)", .{savePath}),
             else => console.fail("{s}: could not read ({s})", .{ savePath, @errorName(err) }),
         };
         defer source.close(allocator);
+
         request.openTime = opening.untilNow(init.io, .awake);
         return draw(mc.World, allocator, init.io, arena, &source, null, request);
-    }
+    } else {
+        // The save is opened first, so one that can't be read stops the program before the blocks
+        // are prepared for it.
+        const opening: std.Io.Timestamp = .now(init.io, .awake);
+        var save = try openSaveFile(allocator, init.io, savePath, area);
+        defer save.close(allocator);
+        if (season) |drawn| save.seasonProgress = drawn.progress();
+        request.openTime = opening.untilNow(init.io, .awake);
 
-    const loading: std.Io.Timestamp = .now(init.io, .awake);
-    var prepared = prepare.blocks(init, paths, force);
-    defer if (prepared) |*blocks| blocks.deinit(init.io);
-    request.blocksTime = loading.untilNow(init.io, .awake);
+        const loading: std.Io.Timestamp = .now(init.io, .awake);
+        var prepared = prepare.blocks(init, paths, force);
+        defer if (prepared) |*blocks| blocks.deinit(init.io);
+        request.blocksTime = loading.untilNow(init.io, .awake);
 
-    const opening: std.Io.Timestamp = .now(init.io, .awake);
-    var save = try openSaveFile(allocator, init.io, savePath, area);
-    defer save.close(allocator);
-    if (season) |drawn| save.seasonProgress = drawn.progress();
-    if (prepared) |*blocks| {
-        try warnUnknownBlocks(allocator, &blocks.prepared, &save);
-        save.useBlocks(&blocks.prepared);
+        const using: std.Io.Timestamp = .now(init.io, .awake);
+        if (prepared) |*blocks| {
+            try warnUnknownBlocks(allocator, &blocks.prepared, &save);
+            save.useBlocks(&blocks.prepared);
+        }
+        request.openTime.nanoseconds += using.untilNow(init.io, .awake).nanoseconds;
+        return draw(SaveFile, allocator, init.io, arena, &save, if (prepared) |*blocks| &blocks.sprites else null, request);
     }
-    request.openTime = opening.untilNow(init.io, .awake);
-    return draw(SaveFile, allocator, init.io, arena, &save, if (prepared) |*blocks| &blocks.sprites else null, request);
 }
 
 /// What drawing a world's views needs from the command line, whatever its game.
