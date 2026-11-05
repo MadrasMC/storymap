@@ -10,13 +10,13 @@ A writer writes a new file beside the old one, under the name `<file name>.<proc
 
 ## 2. Conventions
 
-All integers are little-endian. `[n]T` is n values of type T one after another. The types are in §4. Indexes count from 0. `part.field` is a field of one of the parts in §3, e.g. `blocks.count`.
+All integers are little-endian. `[n]T` is n values of type T one after another. The types are in §4. Indexes count from 0. `part.field` is a field of one of the parts in §3, e.g. `block_states.count`.
 
 Bits and fields this document doesn't describe are 0 when written and ignored when read. A new bit or field that readers must understand changes a layout version (§7).
 
-`blocks.entries` has one Block for each block. The other sections are tables a Block points into: `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `sprites` by index, and each Sprite into `sprite_layers` by offset. `domains` stands on its own.
+A block state is a block as a save places it: a block in one of the forms it takes, such as a stair turned one way, which a game may name a block of its own. `block_states.entries` has one BlockState for each block state. The other sections are tables a BlockState points into: `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `sprites` by index, and each Sprite into `sprite_layers` by offset. `domains` stands on its own.
 
-A block's sprites come in variants of its textures ([Cube faces](../blocks.md#cube-faces)), in each of the shapes it picks one of, its own and then its shape's alternates, and in each of its turns if it's turned by where it is ([Shapes](../blocks.md#shapes)). Which variant, alternate and turn a block shows is picked by where it is, as those sections describe.
+A block state's sprites come in variants of its textures ([Cube faces](../blocks.md#cube-faces)), in each of the shapes it picks one of, its own and then its shape's alternates, and in each of its turns if it's turned by where it is ([Shapes](../blocks.md#shapes)). Which variant, alternate and turn a block shows is picked by where it is, as those sections describe.
 
 A cube's square is the square a cube's sprite is drawn in, `sprites.block_width` pixels wide: the cube's top is a diamond as wide as the square and half as tall, and its sides reach down the other half. A block at (x, y, z), with x east, y up and z south, has its square at ((x − z − 1) × w / 2, (x + z) × w / 4 − (y + 1) × w / 2) pixels, w being `sprites.block_width`, moved by its `draw_offset` ([Shapes](../blocks.md#shapes)). A pixel's depth in the world is (x + y + z) × 256 plus its value in `depths`: the larger, the nearer the viewer, who looks north-west from above.
 
@@ -52,12 +52,12 @@ A cube's square is the square a cube's sprite is drawn in, `sprites.block_width`
 | --- | --- | --- |
 | `entries` | \[header.section_count][Section](#section) | – |
 
-### `blocks`
+### `block_states`
 
 | Field | Type | Contents |
 | --- | --- | --- |
 | `count` | u32 | – |
-| `entries` | \[count][Block](#block) | one for each block |
+| `entries` | \[count][BlockState](#blockstate) | one for each block state |
 
 ### `materials`
 
@@ -115,7 +115,7 @@ The section is 8 + 64 × `count` bytes long.
 
 ### Rotations
 
-The file holds the isometric view in 4 rotations. Rotation 0 faces north-west, and 90, 180 and 270 move the viewer clockwise, to face north-east, south-east and south-west. `sprites.entries` holds rotation 0's `count` Sprites, then 90's, 180's and 270's, each in the same order, so a sprite of a rotation is at its index in rotation 0 + rotation / 90 × `count`. A Block's `first_sprite` and `cover_sprite` are indexes in rotation 0.
+The file holds the isometric view in 4 rotations. Rotation 0 faces north-west, and 90, 180 and 270 move the viewer clockwise, to face north-east, south-east and south-west. `sprites.entries` holds rotation 0's `count` Sprites, then 90's, 180's and 270's, each in the same order, so a sprite of a rotation is at its index in rotation 0 + rotation / 90 × `count`. A BlockState's `first_sprite` and `cover_sprite` are indexes in rotation 0.
 
 A rotation's sprites are drawn in the view's coordinates. §2's formulas for a block's square and a pixel's depth hold with x and z replaced by the view's, and a block's `draw_offset` turns the same way. A cube's side on the left of a sprite is the one towards the view's +z, and the one on the right towards its +x. Sides keep their textures the same way round, and a top's texture turns with the view. Faces are lit by where they are on the screen, so the left is always lit as the south is at rotation 0.
 
@@ -154,7 +154,7 @@ A rotation's sprites are drawn in the view's coordinates. §2's formulas for a b
 | `length` | u32 | bytes in the section |
 | `layout_version` | u8 | the version of the section's layout (§7) |
 | `generator_version` | u16 | the version of the code that made the section's contents (§7) |
-| `name` | [String](#string) | one of the section names in §3, e.g. `blocks` |
+| `name` | [String](#string) | one of the section names in §3, e.g. `block_states` |
 
 ### TextureColours
 
@@ -178,11 +178,11 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 | `height` | u16 | taller than twice `padding` |
 | `pixels` | [width × height][3]u8 | red, green and blue, row by row |
 
-### Block
+### BlockState
 
 | Field | Type | Contents |
 | --- | --- | --- |
-| `code` | [String](#string) | its code as a save names it, with its domain unless that's `game`, e.g. `rock-granite`, `primitivesurvival:…` ([Block codes](../blocks.md#block-codes)); each code appears once |
+| `name` | [String](#string) | its name as a save names it: for Vintage Story, its block code, with its domain unless that's `game`, e.g. `rock-granite`, `primitivesurvival:…` ([Block codes](../blocks.md#block-codes)); each name appears once |
 | `material` | u8 | its index in `materials.entries` |
 | `colour_code` | u8 | its index in `colour_codes.entries` |
 | `colour` | u32 | the index in `texture_colours.entries` of the TextureColours whose `average` is its colour; 0xFFFFFFFF for none |
@@ -193,12 +193,12 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 | `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../blocks.md#shapes)) |
 | `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its textures has a tinted layer; bit 4: it's glass, water or ice that shows what's behind it ([See-through blocks](../blocks.md#cube-faces)) |
 | `first_sprite` | u32 | the index of its first Sprite in `sprites.entries` |
-| `variants` | u16 | 0 for a block without sprites |
+| `variants` | u16 | 0 for a block state without sprites |
 | `alternates` | u16 | at least 1 when `variants` isn't 0 |
 | `turns` | u8 | at least 1 when `variants` isn't 0 |
 | `cover_sprite` | u32 | the index in `sprites.entries` of the Sprite drawn at its foot where a solid block under it fills its place ([Shapes](../blocks.md#shapes)), neither moved nor turned with it; 0xFFFFFFFF for none |
 
-A block's sprites are a run of `variants` × `alternates` × `turns` Sprites in `sprites.entries` (§2). The Sprite at index `first_sprite + (turn × alternates + alternate) × variants + variant` is that variant of that alternate, in that turn. Blocks drawn from the same textures, in the same shapes and turns, share their sprites: their `first_sprite`, `variants`, `alternates` and `turns` are the same. Blocks drawn from different textures have sprites of their own, even where those look the same.
+A block state's sprites are a run of `variants` × `alternates` × `turns` Sprites in `sprites.entries` (§2). The Sprite at index `first_sprite + (turn × alternates + alternate) × variants + variant` is that variant of that alternate, in that turn. Block states drawn from the same textures, in the same shapes and turns, share their sprites: their `first_sprite`, `variants`, `alternates` and `turns` are the same. Block states drawn from different textures have sprites of their own, even where those look the same.
 
 ### Sprite
 
@@ -235,8 +235,8 @@ A reader rejects the whole file when:
 - a section the reader needs is missing, appears twice, has a `layout_version` the reader doesn't know, starts before the end of `section_table` or not on a multiple of 8, or doesn't lie wholly within the file
 - a section's fields go past its length
 - a ColourMap isn't wider and taller than twice its `padding`
-- a Block's `material` isn't below `materials.count`, its `colour_code` isn't below `colour_codes.count`, its `colour` or `grain` isn't below `texture_colours.count` and isn't 0xFFFFFFFF, or its `climate_colour_map` or `season_colour_map` isn't below `colour_maps.count` and isn't 0xFF
-- a Block has `variants` but no `alternates` or `turns`, or its sprites or `cover_sprite` go past `sprites.count`
+- a BlockState's `material` isn't below `materials.count`, its `colour_code` isn't below `colour_codes.count`, its `colour` or `grain` isn't below `texture_colours.count` and isn't 0xFFFFFFFF, or its `climate_colour_map` or `season_colour_map` isn't below `colour_maps.count` and isn't 0xFF
+- a BlockState has `variants` but no `alternates` or `turns`, or its sprites or `cover_sprite` go past `sprites.count`
 - the length of `texture_colours` or `sprites` isn't the one §3 gives
 - a Sprite's `offset` isn't a multiple of 4, or its SpriteLayers go past the end of `sprite_layers`
 
@@ -256,7 +256,7 @@ It depends on file times, so the same game and mods give a different hash on ano
 A layout version says how to read something, and a generator version how its contents were made:
 
 - The container's version, `header.version`, changes when `header`, `info` or `section_table` change.
-- A section's `layout_version` changes when that section's layout changes. In container version 3, `blocks`'s `layout_version` is 3, `colour_maps`'s, `sprites`'s and `sprite_layers`'s 2, and every other section's 1.
-- A section's `generator_version` changes when the code that makes its contents changes without the layout changing: a block read differently, or a sprite drawn differently. Storymap gives `blocks`, `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `domains` the version of how it reads the game's assets, and `sprites` and `sprite_layers` the version of how it draws sprites.
+- A section's `layout_version` changes when that section's layout changes. In container version 3, `colour_maps`'s, `sprites`'s and `sprite_layers`'s `layout_version` is 2, and every other section's 1. `block_states` replaced `blocks`, whose last layout version was 3.
+- A section's `generator_version` changes when the code that makes its contents changes without the layout changing: a block read differently, or a sprite drawn differently. Storymap gives `block_states`, `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `domains` the version of how it reads the game's assets, and `sprites` and `sprite_layers` the version of how it draws sprites.
 
 A reader rejects a file with a layout version it doesn't know (§5). A `generator_version` other than the reader's own doesn't make the file invalid: the section was made by other code, and what to do with it is the reader's choice. Readers that only show the file go on reading it. Storymap, with the game, finds the hash different (§6) and prepares the file again; without it, it compares the generator versions themselves (§1).

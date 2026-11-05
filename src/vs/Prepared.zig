@@ -1,6 +1,6 @@
 //! The game's and mods' blocks as rendering needs them, prepared once from their assets so a
 //! render never reads assets itself (docs/blocks.md#preparing-blocks), in six sections of the
-//! prepared blocks file: `blocks`, `materials`, `colour_codes`, `texture_colours`, `colour_maps`
+//! prepared blocks file: `block_states`, `materials`, `colour_codes`, `texture_colours`, `colour_maps`
 //! and `domains` (docs/storyblk/spec.md).
 const Prepared = @This();
 
@@ -25,7 +25,7 @@ domains: std.StringHashMapUnmanaged(void) = .empty,
 blocks: std.StringHashMapUnmanaged(Block) = .empty,
 
 pub const Block = struct {
-    /// Its index in the `blocks` section, from 0.
+    /// Its index in the `block_states` section, from 0.
     index: u32 = 0,
     /// One of `BlockTypes.materials`, e.g. "Stone".
     material: []const u8,
@@ -69,14 +69,13 @@ const Image = world.Image;
 /// so files prepared before are prepared again.
 pub const generatorVersion: u16 = 29;
 /// The layout of the `colour_maps` section, and of each of the other five (spec §7).
-const blocksLayoutVersion: u8 = 3;
 const colourMapsLayoutVersion: u8 = 2;
 const layoutVersion: u8 = 1;
 
 /// The sections this writes and reads, in the order it writes them.
-pub const sectionNames = [_][]const u8{ "blocks", "materials", "colour_codes", "texture_colours", "colour_maps", "domains" };
+pub const sectionNames = [_][]const u8{ "block_states", "materials", "colour_codes", "texture_colours", "colour_maps", "domains" };
 /// Each section's layout, by `sectionNames`.
-pub const sectionLayoutVersions = [sectionNames.len]u8{ blocksLayoutVersion, layoutVersion, layoutVersion, layoutVersion, colourMapsLayoutVersion, layoutVersion };
+pub const sectionLayoutVersions = [sectionNames.len]u8{ layoutVersion, layoutVersion, layoutVersion, layoutVersion, colourMapsLayoutVersion, layoutVersion };
 
 /// The game, as the file's `info` names it.
 pub const game = "vintagestory";
@@ -136,7 +135,7 @@ pub const Contents = struct {
     domains: []const []const u8,
     textures: []const TextureColours,
     colourMaps: []const Tint.ColourMap,
-    /// In the order of the `blocks` section.
+    /// In the order of the `block_states` section.
     blocks: []Entry,
 
     pub const Entry = struct {
@@ -250,7 +249,7 @@ pub const Contents = struct {
     }
 };
 
-/// A Block's `flags` (spec §4).
+/// A BlockState's `flags` (spec §4).
 const BlockFlags = packed struct(u8) {
     /// Its variant, alternate and turn are picked by x and z alone (`randomizeAxes: xz`).
     xz: bool = false,
@@ -265,7 +264,7 @@ const BlockFlags = packed struct(u8) {
     _: u3 = 0,
 };
 
-/// A Block's index of none, in a field of one byte or four.
+/// A BlockState's index of none, in a field of one byte or four.
 const none8 = 0xFF;
 const none32 = 0xFFFFFFFF;
 
@@ -721,7 +720,7 @@ fn domainOf(location: []const u8) []const u8 {
     return location[0..std.mem.indexOfScalar(u8, location, ':').?];
 }
 
-/// The bytes of the smallest Block, with an empty code.
+/// The bytes of the smallest BlockState, with an empty name.
 const blockLength = 2 + 1 + 1 + 4 + 4 + 1 + 1 + 1 + 1 + 1 + 4 + 2 + 2 + 1 + 4;
 /// The bytes of a TextureColours.
 const textureLength = 3 + TextureColours.samples * 3;
@@ -762,7 +761,7 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
         };
     }
 
-    var blocks: storyblk.Reader = .{ .bytes = (try file.section("blocks", blocksLayoutVersion)).bytes };
+    var blocks: storyblk.Reader = .{ .bytes = (try file.section("block_states", layoutVersion)).bytes };
     const count = try blocks.int(u32);
     if (count > blocks.bytes.len / blockLength) return error.NotPreparedBlocks;
     try self.blocks.ensureTotalCapacity(arena, count);

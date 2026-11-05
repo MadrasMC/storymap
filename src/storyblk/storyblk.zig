@@ -369,7 +369,7 @@ const testInfo: Info = .{
 };
 
 const testSections = [_]Section{
-    .{ .name = "blocks", .layoutVersion = 1, .generatorVersion = 18, .bytes = "five!" },
+    .{ .name = "block_states", .layoutVersion = 1, .generatorVersion = 18, .bytes = "five!" },
     .{ .name = "empty", .layoutVersion = 1, .generatorVersion = 18, .bytes = "" },
     .{ .name = "sprites", .layoutVersion = 1, .generatorVersion = 4, .bytes = "sixteen bytes..." },
     // A section from a later Storymap, which a reader that doesn't know it skips.

@@ -7,7 +7,7 @@ const HEADER_LENGTH = 24;
 // The sections this viewer reads, each with the layout version it reads of it (spec §7). It skips
 // any others.
 const SECTIONS = new Map([
-	["blocks", 3],
+	["block_states", 1],
 	["materials", 1],
 	["colour_codes", 1],
 	["texture_colours", 1],
@@ -20,7 +20,7 @@ const SPRITE_LENGTH = 16;
 const ROTATIONS = 4;
 const NONE8 = 0xff;
 const NONE32 = 0xffffffff;
-// Block flags, and Sprite flags (spec §4).
+// BlockState flags, and Sprite flags (spec §4).
 const SHAPE = 4;
 const TINTED = 8;
 const SPRITE_TINTED = 1;
@@ -204,13 +204,13 @@ function parse(buffer) {
 		sprites.flags[i] = flags;
 	}
 
-	const blockFields = openSection("blocks");
+	const blockFields = openSection("block_states");
 	const blocks = [];
 	const isOutside = (value, count, none) => value !== none && value >= count;
 	for (let index = 0, count = blockFields.takeU32(); index < count; index++) {
 		const block = {
 			index,
-			code: blockFields.takeString(),
+			name: blockFields.takeString(),
 			material: blockFields.takeU8(),
 			colourCode: blockFields.takeU8(),
 			colour: blockFields.takeU32(),
@@ -234,12 +234,12 @@ function parse(buffer) {
 			isOutside(block.climateColourMap, colourMaps.length, NONE8) ||
 			isOutside(block.seasonColourMap, colourMaps.length, NONE8)
 		) {
-			rejectFile(`block ${index} names an entry its tables don't have`);
+			rejectFile(`block state ${index} names an entry its tables don't have`);
 		}
-		if (block.variants > 0 && (block.alternates === 0 || block.turns === 0)) rejectFile(`block ${index} has variants but no shapes or turns`);
+		if (block.variants > 0 && (block.alternates === 0 || block.turns === 0)) rejectFile(`block state ${index} has variants but no shapes or turns`);
 		block.count = block.variants * block.alternates * block.turns;
-		if (block.count > 0 && block.first + block.count > spriteCount) rejectFile(`block ${index}'s sprites go past the last sprite`);
-		if (isOutside(block.cover, spriteCount, NONE32)) rejectFile(`block ${index}'s cover sprite goes past the last sprite`);
+		if (block.count > 0 && block.first + block.count > spriteCount) rejectFile(`block state ${index}'s sprites go past the last sprite`);
+		if (isOutside(block.cover, spriteCount, NONE32)) rejectFile(`block state ${index}'s cover sprite goes past the last sprite`);
 		blocks.push(block);
 	}
 
@@ -551,13 +551,13 @@ function describe(contents) {
 	const blocks = [];
 	for (const block of contents.blocks) {
 		if (block.variants === 0) continue;
-		const colon = block.code.indexOf(":");
-		const domain = colon < 0 ? "" : block.code.slice(0, colon + 1);
-		const name = block.code.slice(colon + 1);
+		const colon = block.name.indexOf(":");
+		const domain = colon < 0 ? "" : block.name.slice(0, colon + 1);
+		const name = block.name.slice(colon + 1);
 		const dash = name.indexOf("-");
 		block.group = domain + (dash < 0 ? name : name.slice(0, dash));
 		block.label = dash < 0 ? name : name.slice(dash + 1);
-		block.search = block.code.toLowerCase() + " #" + block.index;
+		block.search = block.name.toLowerCase() + " #" + block.index;
 		blocks.push(block);
 	}
 	return blocks;
@@ -622,7 +622,7 @@ function tileOf(block) {
 	const tile = document.createElement("button");
 	tile.type = "button";
 	tile.className = "tile";
-	tile.title = block.code;
+	tile.title = block.name;
 	const frame = document.createElement("span");
 	frame.className = "frame";
 	block.canvas = document.createElement("canvas");
@@ -679,7 +679,7 @@ function applyFilter() {
 		blockCount += inGroup;
 	}
 	const blocks = document.createElement("span");
-	blocks.textContent = `${blockCount.toLocaleString("en")} blocks`;
+	blocks.textContent = `${blockCount.toLocaleString("en")} block states`;
 	const sprites = document.createElement("span");
 	sprites.textContent = `${spriteCount.toLocaleString("en")} sprites`;
 	$("count").replaceChildren(blocks, sprites);
@@ -708,7 +708,7 @@ function fillDetail(block) {
 	current = block;
 	const contents = shown.contents;
 	const sprites = contents.sprites;
-	$("detail-code").textContent = block.code;
+	$("detail-code").textContent = block.name;
 	const meta = [];
 	const addItem = (text) => {
 		const span = document.createElement("span");
@@ -858,7 +858,7 @@ function fillFileDetails() {
 	$("file-title").textContent = file.name;
 
 	const counts = new Map([
-		["blocks", contents.blocks.length],
+		["block_states", contents.blocks.length],
 		["materials", contents.materials.length],
 		["colour_codes", contents.colourCodes.length],
 		["texture_colours", contents.textureColours.length / TEXTURE_COLOURS_LENGTH],
@@ -894,7 +894,7 @@ function fillFileDetails() {
 		),
 		makeSection("Sections", makeTable(["Section", "Count", "Offset", "Length", "Layout version", "Generator version"], sections, 1)),
 		makeSection(
-			"Blocks",
+			"Block states",
 			makePairs([
 				["With sprites", formatCount(blocks.filter((b) => b.variants > 0).length)],
 				["In shapes", formatCount(blocks.filter((b) => b.flags & SHAPE).length)],
