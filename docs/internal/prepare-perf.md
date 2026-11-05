@@ -351,6 +351,24 @@ The extra 13 MiB hasn't been broken down.
 The table of inputs' hashes is sized for every sprite, 524,288 slots of 13 bytes, 6.5 MiB, in the drawing arena.
 Moving it and the images' hashes to `gpa`, as f501fc5 did the table of pixels' hashes, raised the peak to 113 MiB in three alternating runs, with the file unchanged, and was dropped: the arena seems to have room for the table already, so the rise is elsewhere.
 
+### Bounds while rasterizing
+
+Clearing the drawing area before a shape, and trimming its sprite after, went over all 192 × 192 samples, however little of them the shape reached.
+The drawing area now keeps the box its triangles have reached since it was last cleared: clearing resets only that box, and trimming reads only the pixels over it.
+A shape whose box doesn't cover the cube's square leaves some of it empty, so it doesn't fill its square, as before.
+The file is byte-identical.
+
+| part, with timers, three alternating runs | before | after |
+| --- | --- | --- |
+| clearing the drawing area | 0.58–0.67 s | 0.10 s |
+| trimming and copying | 2.62–3.03 s | 0.83–0.85 s |
+| rasterizing | 6.68–7.98 s | 6.67–6.80 s |
+| drawing | 11.7–13.6 s | 9.4–9.6 s |
+| private | 106 MiB | 106 MiB |
+
+The machine was slower in this sitting than for Shapes keyed before drawing, with rasterizing at 6.7 s instead of 4.9 s, so these times compare only with each other.
+Runs without timers in the same sitting were too uneven to compare, 11.4–13.1 s before and 9.9–14.1 s after.
+
 ## Estimates and measurements
 
 Several estimates made along the way were wrong, and measuring settled each one.
@@ -386,6 +404,6 @@ Several estimates made along the way were wrong, and measuring settled each one.
 ## Remaining
 
 The peak is 106 MiB, 13 MiB above where moving the table of hashes left it, and what takes it hasn't been found: moving the table of inputs' hashes out of the arena made it 113 MiB.
-Drawing takes about 9 s on one core: rasterizing the 73,358 shapes still drawn takes 4.9 s, and clearing and trimming them 2.4 s (`TODO.md`, item 16).
+Drawing should take about 7 s on one core, most of it rasterizing the 73,358 shapes still drawn: about 9 s less the 2.2 s bounds saved, not yet measured in an ordinary sitting (`TODO.md`, item 16).
 
 Only Windows has run this: Linux and macOS have only been compiled, and only one mod has been tried (`TODO.md`, items 13 and 14).

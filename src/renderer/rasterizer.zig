@@ -28,6 +28,12 @@ pub const Target = struct {
     /// as glass needs. Otherwise a texel is drawn or left out, by whether it's at least half
     /// opaque.
     keepsOpacity: bool = false,
+    /// The pixels triangles have reached since the last `clear`, so only those need clearing and
+    /// reading.
+    drawn: Area = .{},
+
+    /// From `left` and `top` up to but not including `right` and `bottom`; empty where they meet.
+    pub const Area = struct { left: usize = 0, top: usize = 0, right: usize = 0, bottom: usize = 0 };
 
     pub fn init(allocator: std.mem.Allocator, width: usize, height: usize) !Target {
         const colours = try allocator.alloc([4]u8, width * height);
@@ -36,6 +42,7 @@ pub const Target = struct {
         errdefer allocator.free(depths);
         const tags = try allocator.alloc(u8, width * height);
         var target: Target = .{ .width = width, .height = height, .colours = colours, .depths = depths, .tags = tags };
+        target.drawn = .{ .right = width, .bottom = height };
         target.clear();
         return target;
     }
@@ -47,9 +54,26 @@ pub const Target = struct {
     }
 
     pub fn clear(self: *Target) void {
-        @memset(self.colours, @splat(0));
-        @memset(self.depths, -std.math.inf(f32));
-        @memset(self.tags, 0);
+        const area = self.drawn;
+        for (area.top..area.bottom) |row| {
+            const start = row * self.width + area.left;
+            const end = row * self.width + area.right;
+            @memset(self.colours[start..end], @splat(0));
+            @memset(self.depths[start..end], -std.math.inf(f32));
+            @memset(self.tags[start..end], 0);
+        }
+        self.drawn = .{};
+    }
+
+    fn include(self: *Target, area: Area) void {
+        if (area.left >= area.right or area.top >= area.bottom) return;
+        const drawn = self.drawn;
+        self.drawn = if (drawn.left >= drawn.right or drawn.top >= drawn.bottom) area else .{
+            .left = @min(drawn.left, area.left),
+            .top = @min(drawn.top, area.top),
+            .right = @max(drawn.right, area.right),
+            .bottom = @max(drawn.bottom, area.bottom),
+        };
     }
 };
 
@@ -68,6 +92,7 @@ pub fn triangle(target: *Target, corners: [3]Corner, texture: *const world.Image
     const right: usize = @intFromFloat(std.math.clamp(@ceil(@max(a.x, b.x, c.x)), 0, width));
     const top: usize = @intFromFloat(std.math.clamp(@floor(@min(a.y, b.y, c.y)), 0, height));
     const bottom: usize = @intFromFloat(std.math.clamp(@ceil(@max(a.y, b.y, c.y)), 0, height));
+    target.include(.{ .left = left, .top = top, .right = right, .bottom = bottom });
     for (top..bottom) |row| for (left..right) |column| {
         const x = @as(f32, @floatFromInt(column)) + 0.5;
         const y = @as(f32, @floatFromInt(row)) + 0.5;
@@ -177,4 +202,27 @@ test triangle {
     alone.keepsOpacity = true;
     triangle(&alone, corners, &glass, 256, 1);
     try std.testing.expectEqual(51, alone.colours[0][3]);
+}
+
+test "Target.clear clears what triangles reached" {
+    var target: Target = try .init(std.testing.allocator, 8, 8);
+    defer target.deinit(std.testing.allocator);
+    try std.testing.expectEqual(Target.Area{}, target.drawn);
+    const pixels = [_][4]u8{.{ 200, 0, 0, 255 }};
+    const texture: world.Image = .{ .width = 1, .height = 1, .pixels = &pixels };
+    // Two triangles apart: what's reached covers both, and what's between them.
+    triangle(&target, .{ .{ .x = 1, .y = 1, .depth = 1, .u = 0, .v = 0 }, .{ .x = 3, .y = 1, .depth = 1, .u = 0, .v = 0 }, .{ .x = 1, .y = 3, .depth = 1, .u = 0, .v = 0 } }, &texture, 256, 1);
+    triangle(&target, .{ .{ .x = 5, .y = 4, .depth = 1, .u = 0, .v = 0 }, .{ .x = 7, .y = 4, .depth = 1, .u = 0, .v = 0 }, .{ .x = 5, .y = 6, .depth = 1, .u = 0, .v = 0 } }, &texture, 256, 1);
+    try std.testing.expectEqual(Target.Area{ .left = 1, .top = 1, .right = 7, .bottom = 6 }, target.drawn);
+    try std.testing.expectEqual(1, target.tags[1 * 8 + 1]);
+    try std.testing.expectEqual(1, target.tags[4 * 8 + 5]);
+
+    // Cleared, the target is as new.
+    target.clear();
+    try std.testing.expectEqual(Target.Area{}, target.drawn);
+    for (target.tags, target.colours, target.depths) |tag, colour, depth| {
+        try std.testing.expectEqual(0, tag);
+        try std.testing.expectEqual([4]u8{ 0, 0, 0, 0 }, colour);
+        try std.testing.expectEqual(-std.math.inf(f32), depth);
+    }
 }

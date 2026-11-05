@@ -931,12 +931,17 @@ fn shapeSprite(sections: *Sprites.Sections, drawn: []const ShapeFace, target: *S
     }
 
     // The pixels it shows, and where they are.
+    // Only those the triangles reached can, and if they don't cover the cube's square, some of it
+    // shows nothing.
+    const area = target.drawn;
+    const rows = [2]usize{ area.top / samples, (area.bottom + samples - 1) / samples };
+    const columns = [2]usize{ area.left / samples, (area.right + samples - 1) / samples };
     var shown: [shapeSide][shapeSide]bool = undefined;
     var first: [2]usize = .{ shapeSide, shapeSide };
     var last: [2]usize = .{ 0, 0 };
-    var fills = true;
+    var fills = rows[0] <= reach and rows[1] >= reach + blockWidth and columns[0] <= reach and columns[1] >= reach + blockWidth;
     var anyTinted = false;
-    for (0..shapeSide) |row| for (0..shapeSide) |column| {
+    for (rows[0]..rows[1]) |row| for (columns[0]..columns[1]) |column| {
         var covered: usize = 0;
         var opaque_: usize = 0;
         for (0..samples) |sy| for (0..samples) |sx| {
