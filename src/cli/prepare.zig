@@ -17,7 +17,7 @@ pub const dataOption: args.Option = .{ .name = "data", .value = "folder", .descr
 
 pub const spec: args.Spec = .{
     .options = &.{ gameOption, dataOption },
-    .positionals = &.{.{ .name = "file", .optional = true, .description = "The prepared blocks file: prepared.storyblk by default." }},
+    .positionals = &.{.{ .name = "file", .optional = true, .description = "The prepared blocks file: " ++ Prepared.defaultPath ++ " by default." }},
     .description = "Prepares what the map needs from the game's and mods' assets into the prepared blocks file, even if it was prepared before.",
 };
 

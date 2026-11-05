@@ -4,7 +4,7 @@ zig-pkg
 content
 /out/
 /blocks/
-prepared.storyblk
+*.storyblk
 *.partial
 /.benchmark/
 CLAUDE.md

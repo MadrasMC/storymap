@@ -32,7 +32,7 @@ pub const spec: args.Spec = .{
         .{ .name = "no-write", .description = "Draw and encode the tiles without writing anything, to time the rest." },
         .{ .name = "json", .description = "Print the render's times and counts on stdout as one line of JSON, for scripts." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
-        .{ .name = "blocks", .value = "file", .description = "The prepared blocks file: prepared.storyblk by default." },
+        .{ .name = "blocks", .value = "file", .description = "The prepared blocks file: " ++ Prepared.defaultPath ++ " by default." },
         prepare.gameOption,
         prepare.dataOption,
     },

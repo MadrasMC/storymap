@@ -81,7 +81,7 @@ pub const sectionLayoutVersions = [sectionNames.len]u8{ layoutVersion, layoutVer
 pub const game = "vintagestory";
 
 /// Where the prepared blocks file goes when no path is given, relative to the current folder.
-pub const defaultPath = "prepared.storyblk";
+pub const defaultPath = game ++ ".storyblk";
 
 /// Blocks the game registers itself rather than from a block type file.
 const builtInBlocks = [_][]const u8{ "air", "mantle" };

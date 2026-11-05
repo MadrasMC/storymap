@@ -4,7 +4,7 @@ A `.storyblk` file holds what a render needs to know about a game's blocks, prep
 
 ## 1. Use
 
-Storymap keeps one file, `prepared.storyblk` in the current folder, or the one given on the command line (`--blocks` when rendering, the argument of `storymap prepare`). Its hash (§6) tells Storymap whether the file was prepared from the game and mods it's running with, by a Storymap that prepares and draws the same way. Without the game, which the hash depends on, each section's `generator_version` (§7) and `sprites.block_width` still tell it whether the file was made the same way. When Storymap prepares the file again is Storymap's choice ([Preparing blocks](../blocks.md#preparing-blocks)), not the format's.
+Storymap keeps one file for each game, named by its `info.game`, `<game>.storyblk` in the current folder, e.g. `vintagestory.storyblk`, or the one given on the command line (`--blocks` when rendering, the argument of `storymap prepare`). Its hash (§6) tells Storymap whether the file was prepared from the game and mods it's running with, by a Storymap that prepares and draws the same way. Without the game, which the hash depends on, each section's `generator_version` (§7) and `sprites.block_width` still tell it whether the file was made the same way. When Storymap prepares the file again is Storymap's choice ([Preparing blocks](../blocks.md#preparing-blocks)), not the format's.
 
 A writer writes a new file beside the old one, under the name `<file name>.<process id>.partial`, and renames it over the old file once it's complete, so an interrupted write leaves the old file whole. It removes the partial file if writing or renaming fails. It never replaces a file that doesn't start with the magic `STORYBLK`.
 
