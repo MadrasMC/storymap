@@ -112,7 +112,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     };
 
     // Read as a Minecraft world if it's a folder, otherwise as a Vintage Story save file.
-    if (isFolder(init.io, savePath)) {
+    if (prepare.isFolder(init.io, savePath)) {
         if (season != null) console.warn("`--season`: not supported for Minecraft", .{});
         if (area != null) console.fail("`--clip`: not implemented for Minecraft", .{});
         if (force or parsed.value("blocks") != null or paths.game != null or paths.data != null)
@@ -170,13 +170,6 @@ const Request = struct {
     blocksTime: std.Io.Duration = .zero,
     openTime: std.Io.Duration = .zero,
 };
-
-/// Whether `path` is a folder, as a Minecraft world is; a Vintage Story save is a file.
-fn isFolder(io: std.Io, path: []const u8) bool {
-    var folder = std.Io.Dir.cwd().openDir(io, path, .{}) catch return false;
-    folder.close(io);
-    return true;
-}
 
 /// Draws the views `request` names of `source`, a game's world (topdown.zig, isometric.zig),
 /// writes the page, and reports.

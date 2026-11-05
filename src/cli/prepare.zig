@@ -6,13 +6,14 @@ const std = @import("std");
 const Assets = @import("vs").Assets;
 const Prepared = @import("vs").Prepared;
 const SaveFile = @import("vs").SaveFile;
+const mc = @import("mc");
 const isometric = @import("renderer").isometric;
 const Sprites = isometric.Sprites;
 const storyblk = @import("storyblk");
 const console = @import("console");
 const args = @import("args");
 
-pub const gameOption: args.Option = .{ .name = "game", .value = "folder", .description = "The game's install folder, if it isn't in the standard place." };
+pub const gameOption: args.Option = .{ .name = "game", .value = "game", .description = "The game's install folder, or " ++ Prepared.game ++ " for ./" ++ Prepared.game ++ " if it's there, or else the standard place." };
 pub const dataOption: args.Option = .{ .name = "data", .value = "folder", .description = "The game's data folder, if it isn't in the standard place." };
 
 pub const spec: args.Spec = .{
@@ -174,9 +175,21 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
     try partial.finish(hash, info, &sections, @intCast(sprites.layers.length));
 }
 
-/// The game's install folder, as given or in the standard place.
+/// The game's install folder: the folder `--game` gives, or for the game's name, the folder of
+/// that name here if there is one; otherwise the standard place.
 fn findGame(init: std.process.Init, paths: Paths) ?[]const u8 {
-    return paths.game orelse Assets.findFolder(init.arena.allocator(), init.io, init.environ_map, .game);
+    if (paths.game) |given| {
+        if (std.mem.eql(u8, given, mc.game) or std.mem.startsWith(u8, given, mc.game ++ "-"))
+            console.fail("`--game {s}`: not implemented for Minecraft", .{given});
+        if (!std.mem.eql(u8, given, Prepared.game) or isFolder(init.io, given)) return given;
+    }
+    return Assets.findFolder(init.arena.allocator(), init.io, init.environ_map, .game);
+}
+
+pub fn isFolder(io: std.Io, path: []const u8) bool {
+    var folder = std.Io.Dir.cwd().openDir(io, path, .{}) catch return false;
+    folder.close(io);
+    return true;
 }
 
 fn noGame() noreturn {
