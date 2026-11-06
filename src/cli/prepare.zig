@@ -18,36 +18,38 @@ pub const dataOption: args.Option = .{ .name = "data", .value = "folder", .descr
 
 pub const spec: args.Spec = .{
     .options = &.{ gameOption, dataOption },
-    .positionals = &.{.{ .name = "file", .optional = true, .description = "The prepared blocks file: " ++ Prepared.defaultPath ++ " by default." }},
+    .positionals = &.{.{ .name = "file", .optional = true, .description = "The prepared blocks file: " ++ Prepared.defaultPath ++ " or " ++ mc.Prepared.defaultPath ++ " by default, by the game." }},
     .description = "Prepares what the map needs from the game's and mods' assets into the prepared blocks file, even if it was prepared before.",
 };
 
-/// Where the game, its mods and the prepared blocks are.
+/// Where the game, its mods and the prepared blocks are; the blocks, where they're given.
 pub const Paths = struct {
     game: ?[]const u8 = null,
     data: ?[]const u8 = null,
-    blocks: []const u8 = Prepared.defaultPath,
+    blocks: ?[]const u8 = null,
 };
 
 pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const paths: Paths = .{
         .game = parsed.value("game"),
         .data = parsed.value("data"),
-        .blocks = parsed.positional("file") orelse Prepared.defaultPath,
+        .blocks = parsed.positional("file"),
     };
-    const gamePath = switch (findGame(init, paths) orelse noGame()) {
-        .vintagestory => |folder| folder,
-        .minecraft => |jarPath| prepareMinecraft(init, jarPath),
-    };
-    var assets = openAssets(init, gamePath, paths.data);
-    defer assets.close(init.io);
-    prepareFile(init, &assets, paths.blocks, hashAssets(init.io, &assets));
+    switch (findGame(init, paths) orelse noGame()) {
+        .vintagestory => |folder| {
+            var assets = openAssets(init, folder, paths.data);
+            defer assets.close(init.io);
+            prepareFile(init, &assets, paths.blocks orelse Prepared.defaultPath, hashAssets(init.io, &assets));
+        },
+        .minecraft => |jarPath| prepareMinecraft(init, jarPath, paths.blocks orelse mc.Prepared.defaultPath),
+    }
 }
 
-/// Reads the block states and models in Minecraft's client jar. Writing them to the prepared
-/// blocks file isn't implemented yet.
-fn prepareMinecraft(init: std.process.Init, jarPath: []const u8) noreturn {
+/// Prepares Minecraft's block states from its client jar, writes their sprites to the partial
+/// file as they're drawn, and finishes the file at `path`. A problem stops the program.
+fn prepareMinecraft(init: std.process.Init, jarPath: []const u8, path: []const u8) void {
     const io = init.io;
+    checkReplaceable(init, path);
     var scratch: std.heap.ArenaAllocator = .init(init.gpa);
     defer scratch.deinit();
     const arena = scratch.allocator();
@@ -56,22 +58,34 @@ fn prepareMinecraft(init: std.process.Init, jarPath: []const u8) noreturn {
         else => console.fail("{s}: could not read ({s})", .{ jarPath, @errorName(err) }),
     };
     defer jar.close(io);
+    const hash = mc.Prepared.hash(io, &jar, spriteFormat) catch |err| console.fail("{s}: could not read ({s})", .{ jarPath, @errorName(err) });
     const start: std.Io.Timestamp = .now(io, .awake);
     var problems: mc.Blocks.Problems = .{};
-    const read = mc.Blocks.read(arena, io, &jar, &problems) catch |err|
-        console.fail("{s}: could not read the blocks ({s})", .{ jarPath, @errorName(err) });
-    for (problems.blockStates.items) |path| console.warn("{s}: could not read; its block is left out", .{path});
+    var contents = mc.Prepared.prepare(arena, io, &jar, &problems) catch |err|
+        console.fail("{s}: could not prepare the blocks ({s})", .{ path, @errorName(err) });
+    for (problems.blockStates.items) |file| console.warn("{s}: could not read; its block is left out", .{file});
     for (problems.models.keys()) |model| console.warn("{s}: could not read; left out of the blocks that use it", .{model});
-    var boxes: usize = 0;
-    var empty: usize = 0;
-    for (read.states) |state| for (state.alternates) |shape| {
-        boxes += shape.boxes.len;
-        if (shape.boxes.len == 0) empty += 1;
-    };
-    console.log("blocks: {} block states of {} blocks read from Minecraft {s} in {d:.1} s, {} boxes, {} shapes without any ({s})", .{
-        read.states.len, read.blockCount, versionText(jar.version), secondsSince(io, start), boxes, empty, jarPath,
+    console.log("blocks: {} block states prepared from Minecraft {s} in {d:.1} s ({s})", .{
+        contents.states.len, versionText(jar.version), secondsSince(io, start), path,
     });
-    console.fail("preparing Minecraft's blocks: not implemented", .{});
+    const drawables = arena.alloc(isometric.Drawable, contents.states.len) catch console.fail("{s}: out of memory", .{path});
+    for (drawables, contents.states) |*drawable, state| drawable.* = .{
+        .shapes = state.shapes,
+        .colour = if (state.colour) |i| contents.textures[i].average else @splat(0x80),
+        .seeThrough = state.seeThrough,
+    };
+    writeFile(mc.Prepared.Contents, init, &scratch, &contents, drawables, path, hash) catch |err| switch (err) {
+        error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
+        else => console.fail("{s}: could not write ({s})", .{ path, @errorName(err) }),
+    };
+}
+
+/// Stops the program if `path` is there and isn't a prepared blocks file.
+fn checkReplaceable(init: std.process.Init, path: []const u8) void {
+    storyblk.checkReplaceable(init.io, std.Io.Dir.cwd(), path) catch |err| switch (err) {
+        error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
+        else => console.fail("{s}: could not read ({s})", .{ path, @errorName(err) }),
+    };
 }
 
 /// The prepared blocks, and the isometric view's sprites of them, mapped from their file.
@@ -88,7 +102,7 @@ pub const Blocks = struct {
     }
 };
 
-const spriteFormat: Prepared.SpriteFormat = .{
+const spriteFormat: storyblk.SpriteFormat = .{
     .generatorVersion = Sprites.generatorVersion,
     .layoutVersion = Sprites.layoutVersion,
     .blockWidth = isometric.blockWidth,
@@ -99,7 +113,7 @@ const spriteFormat: Prepared.SpriteFormat = .{
 /// if this Storymap made it the way it would now, or else null; `force` then stops the program.
 pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     const io = init.io;
-    const path = paths.blocks;
+    const path = paths.blocks orelse Prepared.defaultPath;
 
     const game = findGame(init, paths);
     if (game) |found| if (found == .minecraft) console.fail("`--game {s}`: a Vintage Story save needs Vintage Story", .{paths.game.?});
@@ -150,10 +164,7 @@ fn prepareFile(init: std.process.Init, assets: *const Assets, path: []const u8, 
     const io = init.io;
     const mods = assets.sources.items.len - 1;
     const version = versionText(assets.version orelse "");
-    storyblk.checkReplaceable(io, std.Io.Dir.cwd(), path) catch |err| switch (err) {
-        error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
-        else => console.fail("{s}: could not read ({s})", .{ path, @errorName(err) }),
-    };
+    checkReplaceable(init, path);
     var scratch: std.heap.ArenaAllocator = .init(init.gpa);
     defer scratch.deinit();
     const start: std.Io.Timestamp = .now(io, .awake);
@@ -162,19 +173,7 @@ fn prepareFile(init: std.process.Init, assets: *const Assets, path: []const u8, 
     console.log("blocks: {} prepared from Vintage Story {s} and {} {s} in {d:.1} s ({s})", .{
         contents.blocks.len, version, mods, modText(mods), secondsSince(io, start), path,
     });
-    writeFile(init, &scratch, &contents, path, hash) catch |err| switch (err) {
-        error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
-        else => console.fail("{s}: could not write ({s})", .{ path, @errorName(err) }),
-    };
-}
-
-/// Writes the file: the sprites as they're drawn, then the sections before them, whose lengths
-/// were known all along, once what they're made from can be freed.
-fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents: *Prepared.Contents, path: []const u8, hash: u64) !void {
-    const io = init.io;
-    const arena = scratch.allocator();
-    const start: std.Io.Timestamp = .now(io, .awake);
-    const drawables = try arena.alloc(isometric.Drawable, contents.blocks.len);
+    const drawables = scratch.allocator().alloc(isometric.Drawable, contents.blocks.len) catch console.fail("{s}: out of memory", .{path});
     for (drawables, contents.blocks) |*drawable, *entry| drawable.* = .{
         .cube = if (entry.block.cube) |*cube| cube else null,
         .shapes = entry.block.shapes,
@@ -182,6 +181,19 @@ fn writeFile(init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents
         .turned = entry.block.randomizeRotations,
         .seeThrough = entry.block.seeThrough,
     };
+    writeFile(Prepared.Contents, init, &scratch, &contents, drawables, path, hash) catch |err| switch (err) {
+        error.NotPreparedBlocks => console.fail("{s}: not a prepared blocks file; not replacing it", .{path}),
+        else => console.fail("{s}: could not write ({s})", .{ path, @errorName(err) }),
+    };
+}
+
+/// Writes the file: the sprites of `drawables` as they're drawn, one block state each, then the
+/// sections before them, whose lengths were known all along, once what they're made from can be
+/// freed. `Contents` is a game's: Vintage Story's or Minecraft's `Prepared.Contents`.
+fn writeFile(comptime Contents: type, init: std.process.Init, scratch: *std.heap.ArenaAllocator, contents: *Contents, drawables: []const isometric.Drawable, path: []const u8, hash: u64) !void {
+    const io = init.io;
+    const arena = scratch.allocator();
+    const start: std.Io.Timestamp = .now(io, .awake);
     const plan = try isometric.planSprites(arena, drawables);
 
     var encoded: std.heap.ArenaAllocator = .init(init.gpa);
@@ -276,7 +288,7 @@ fn hashAssets(io: std.Io, assets: *const Assets) u64 {
 
 /// Every section of the file, in the order they're written, with the `sprites` section's bytes
 /// `entries`. `sprite_layers`, last, is in the file already.
-fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, entries: []const u8) ![storyblk.Tables.names.len + 2]storyblk.Section {
+fn encodeSections(arena: std.mem.Allocator, contents: anytype, entries: []const u8) ![storyblk.Tables.names.len + 2]storyblk.Section {
     return (try contents.encode(arena)) ++ [2]storyblk.Section{
         .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries },
         .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "" },

@@ -73,6 +73,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     stb_image_translate_c.defineCMacroRaw("STBI_NO_STDIO");
+    // One module with the decoder's code, for every game reader that decodes PNGs.
+    const stb_image_mod = stb_image_translate_c.createModule();
+    stb_image_mod.link_libc = true;
+    stb_image_mod.addCSourceFile(.{ .file = stb_image_impl });
+    stb_image_mod.addIncludePath(stb.path("."));
 
     const args_mod = b.createModule(.{
         .root_source_file = b.path("lib/args/args.zig"),
@@ -266,6 +271,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "lz4", .module = lz4_mod },
             .{ .name = "world", .module = world_mod },
             .{ .name = "tiles", .module = tiles_mod },
+            .{ .name = "storyblk", .module = storyblk_mod },
+            .{ .name = "stb_image", .module = stb_image_mod },
         },
     });
 
@@ -293,12 +300,10 @@ pub fn build(b: *std.Build) void {
             .{ .name = "console", .module = console_mod },
             .{ .name = "storyblk", .module = storyblk_mod },
             .{ .name = "zstd", .module = zstd_translate_c.createModule() },
-            .{ .name = "stb_image", .module = stb_image_translate_c.createModule() },
+            .{ .name = "stb_image", .module = stb_image_mod },
         },
     });
     vs_mod.linkLibrary(zstd_lib);
-    vs_mod.addCSourceFile(.{ .file = stb_image_impl });
-    vs_mod.addIncludePath(stb.path("."));
 
     const cli_mod = b.createModule(.{
         .root_source_file = b.path("src/cli/cli.zig"),

@@ -4,7 +4,7 @@ A `.storyblk` file holds what a render needs to know about a game's blocks, prep
 
 ## 1. Use
 
-Storymap keeps one file for each game, named by its `info.game`, `<game>.storyblk` in the current folder, e.g. `vintagestory.storyblk`, or the one given on the command line (`--blocks` when rendering, the argument of `storymap prepare`). Its hash (§6) tells Storymap whether the file was prepared from the game and mods it's running with, by a Storymap that prepares and draws the same way. Without the game, which the hash depends on, each section's `generator_version` (§7) and `sprites.block_width` still tell it whether the file was made the same way. When Storymap prepares the file again is Storymap's choice ([Preparing blocks](../blocks.md#preparing-blocks)), not the format's.
+Storymap keeps one file for each game, named by its `info.game`, `<game>.storyblk` in the current folder, `vintagestory.storyblk` or `minecraft.storyblk`, or the one given on the command line (`--blocks` when rendering, the argument of `storymap prepare`). Its hash (§6) tells Storymap whether the file was prepared from the game and mods it's running with, by a Storymap that prepares and draws the same way. Without the game, which the hash depends on, each section's `generator_version` (§7) and `sprites.block_width` still tell it whether the file was made the same way. When Storymap prepares the file again is Storymap's choice ([Preparing blocks](../blocks.md#preparing-blocks)), not the format's.
 
 A writer writes a new file beside the old one, under the name `<file name>.<process id>.partial`, and renames it over the old file once it's complete, so an interrupted write leaves the old file whole. It removes the partial file if writing or renaming fails. It never replaces a file that doesn't start with the magic `STORYBLK`.
 
@@ -41,10 +41,10 @@ A cube's square is the square a cube's sprite is drawn in, `sprites.block_width`
 
 | Field | Type | Contents |
 | --- | --- | --- |
-| `game` | [String](#string) | `vintagestory` |
+| `game` | [String](#string) | `vintagestory` or `minecraft` |
 | `game_version` | [String](#string) | e.g. `1.22.7`; empty if unknown |
 | `mod_count` | u16 | – |
-| `mods` | \[mod_count][Mod](#mod) | every zip in `Mods/` that can be read, and every folder in it with an `assets/` folder, in byte order of their names; a later one's assets replace an earlier one's |
+| `mods` | \[mod_count][Mod](#mod) | every zip in `Mods/` that can be read, and every folder in it with an `assets/` folder, in byte order of their names; a later one's assets replace an earlier one's; none for Minecraft |
 
 ### `section_table`
 
@@ -64,14 +64,14 @@ A cube's square is the square a cube's sprite is drawn in, `sprites.block_width`
 | Field | Type | Contents |
 | --- | --- | --- |
 | `count` | u8 | – |
-| `entries` | \[count][String](#string) | the materials blocks are of, each once, e.g. `Stone`, `Plant` |
+| `entries` | \[count][String](#string) | the materials blocks are of, each once, e.g. `Stone`, `Plant`; for Minecraft, which has none, one empty string |
 
 ### `colour_codes`
 
 | Field | Type | Contents |
 | --- | --- | --- |
 | `count` | u8 | – |
-| `entries` | \[count][String](#string) | the codes that pick a block's colour on the game's map, each once, e.g. `land`, `forest` ([Block colours](../blocks.md#block-colours)) |
+| `entries` | \[count][String](#string) | the codes that pick a block's colour on the game's map, each once, e.g. `land`, `forest` ([Block colours](../blocks.md#block-colours)); for Minecraft, whose assets don't say, Storymap's map types, picked by the block's name |
 
 ### `texture_colours`
 
@@ -94,7 +94,7 @@ The section is 4 + 93 × `count` bytes long.
 | Field | Type | Contents |
 | --- | --- | --- |
 | `count` | u16 | – |
-| `entries` | \[count][String](#string) | the domains the game and mods have assets in ([Mods](../rendering.md#mods)), e.g. `game`, `primitivesurvival` |
+| `entries` | \[count][String](#string) | the domains the game and mods have assets in ([Mods](../rendering.md#mods)), e.g. `game`, `primitivesurvival`; `minecraft` for Minecraft |
 
 ### `sprites`
 
@@ -182,15 +182,15 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 
 | Field | Type | Contents |
 | --- | --- | --- |
-| `name` | [String](#string) | its name as a save names it: for Vintage Story, its block code, with its domain unless that's `game`, e.g. `rock-granite`, `primitivesurvival:…` ([Block codes](../blocks.md#block-codes)); each name appears once |
+| `name` | [String](#string) | its name as a save names it: for Vintage Story, its block code, with its domain unless that's `game`, e.g. `rock-granite`, `primitivesurvival:…` ([Block codes](../blocks.md#block-codes)); for Minecraft, the block and the properties its blockstate file names, in name order, e.g. `minecraft:oak_stairs[facing=east,half=bottom,shape=straight]`, a save's other properties left out, and a property's value empty where it stands for every value a `multipart` file's conditions don't name; each name appears once |
 | `material` | u8 | its index in `materials.entries` |
 | `colour_code` | u8 | its index in `colour_codes.entries` |
 | `colour` | u32 | the index in `texture_colours.entries` of the TextureColours whose `average` is its colour; 0xFFFFFFFF for none |
 | `grain` | u32 | the index in `texture_colours.entries` of the TextureColours whose `grain` is its grain; 0xFFFFFFFF for none |
 | `climate_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
 | `season_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
-| `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../blocks.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block |
-| `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../blocks.md#shapes)) |
+| `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../blocks.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block; for Minecraft, how high its models reach |
+| `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../blocks.md#shapes)); 0 for Minecraft |
 | `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its textures has a tinted layer; bit 4: it's glass, water or ice that shows what's behind it ([See-through blocks](../blocks.md#cube-faces)) |
 | `first_sprite` | u32 | the index of its first Sprite in `sprites.entries` |
 | `variants` | u16 | 0 for a block state without sprites |
@@ -248,6 +248,7 @@ A reader rejects the whole file when:
 - the block width
 - the game and its version
 - each mod, in the order of `info.mods`: its zip or folder name in `Mods/`, and for a zip, its size and modification time, or for a folder, the modification time of each folder in its `assets/`
+- for Minecraft, the client jar's size and modification time
 
 It depends on file times, so the same game and mods give a different hash on another machine: it's for checking, not for naming. Readers other than Storymap don't need it; `info` names the game and mods.
 

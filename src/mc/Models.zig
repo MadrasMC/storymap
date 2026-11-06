@@ -38,6 +38,10 @@ pub const Texture = struct {
 pub const Shape = struct {
     boxes: []const world.Shape.Box,
     textures: []const Texture,
+    /// The texture of the highest face that faces up, which a map seen from above shows.
+    top: ?u16 = null,
+    /// How high its boxes reach, in blocks.
+    height: f32 = 0,
 };
 
 /// A model as its parents make it.
@@ -82,6 +86,9 @@ pub fn init(arena: std.mem.Allocator, files: Files) Models {
 pub fn place(self: *Models, placements: []const BlockStates.Placement, missing: *?[]const u8) !Shape {
     var boxes: std.ArrayList(world.Shape.Box) = .empty;
     var textures: std.ArrayList(Texture) = .empty;
+    var top: ?u16 = null;
+    var topHeight: f32 = -std.math.inf(f32);
+    var height: f32 = 0;
     for (placements) |placement| {
         const model = try self.resolve(placement.model, 0) orelse {
             missing.* = placement.model;
@@ -103,12 +110,30 @@ pub fn place(self: *Models, placements: []const BlockStates.Placement, missing: 
                     lockedUv(box.transform, box.size, side)
                 else
                     faceUv(face, side, element.from, element.to);
-                box.faces[i] = .{ .texture = try indexOf(self.arena, &textures, .{ .name = name, .tinted = face.tinted }), .uv = uv };
+                const texture = try indexOf(self.arena, &textures, .{ .name = name, .tinted = face.tinted });
+                box.faces[i] = .{ .texture = texture, .uv = uv };
+                if (sideFacing(box.transform, side) == .up) {
+                    const y = highest(box.transform, box.size, &side.corners());
+                    if (y > topHeight) {
+                        topHeight = y;
+                        top = texture;
+                    }
+                }
             }
+            const corners = [8][3]f32{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 1, 1, 0 }, .{ 0, 0, 1 }, .{ 1, 0, 1 }, .{ 0, 1, 1 }, .{ 1, 1, 1 } };
+            height = @max(height, highest(box.transform, box.size, &corners));
             try boxes.append(self.arena, box);
         }
     }
-    return .{ .boxes = boxes.items, .textures = textures.items };
+    return .{ .boxes = boxes.items, .textures = textures.items, .top = top, .height = height };
+}
+
+/// How high the highest of `corners`, of a box from (0, 0, 0) to (1, 1, 1), is once the box is
+/// `size` and placed by `transform`.
+fn highest(transform: Transform, size: [3]f32, corners: []const [3]f32) f32 {
+    var result = -std.math.inf(f32);
+    for (corners) |corner| result = @max(result, apply(transform, .{ corner[0] * size[0], corner[1] * size[1], corner[2] * size[2] })[1]);
+    return result;
 }
 
 fn indexOf(arena: std.mem.Allocator, textures: *std.ArrayList(Texture), texture: Texture) !u16 {

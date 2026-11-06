@@ -15,6 +15,13 @@ test {
     _ = Tables;
 }
 
+/// What a game's `header.hash` covers of the sprites, which the renderer draws (spec §6).
+pub const SpriteFormat = struct {
+    generatorVersion: u16,
+    layoutVersion: u8,
+    blockWidth: u16,
+};
+
 /// The container's version, `header.version` (spec §7).
 pub const version: u8 = 3;
 

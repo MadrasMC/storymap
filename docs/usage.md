@@ -96,7 +96,7 @@ Tiles are lossless PNG by default.
 
 ## Prepared blocks
 
-A render needs the game's and mods' assets, prepared once into a file named by the game, `vintagestory.storyblk` by default.
+A render needs the game's and mods' assets, prepared once into a file named by the game, `vintagestory.storyblk` or `minecraft.storyblk` by default.
 The first render that needs it prepares it.
 The file has every rotation, so one copied to a machine without the game can draw any of them.
 
@@ -108,6 +108,7 @@ The file has every rotation, so one copied to a machine without the game can dra
 | `--data <folder>` | the game's data folder, if it isn't in the standard place |
 
 `storymap prepare [file]` prepares the file without rendering, and takes `--game` and `--data` too.
+`storymap prepare --game minecraft` prepares Minecraft's, which a render of a Minecraft world doesn't use yet.
 
 ## Measuring
 

@@ -11,6 +11,7 @@ const world = @import("world");
 const nbt = @import("nbt");
 const Region = @import("Region.zig");
 const Chunk = @import("Chunk.zig");
+const blockNames = @import("names.zig");
 
 comptime {
     std.debug.assert(tiles.size == Region.side * Chunk.side);
@@ -294,46 +295,12 @@ fn idOf(self: *const World, name: []const u8) !i32 {
     const kept = try allocator.dupe(u8, name);
     try names.ids.put(allocator, kept, id);
     if (id != 0) {
-        const short = shortName(kept);
+        const short = blockNames.shortName(kept);
         names.list[@intCast(id)] = kept;
-        names.mapTypes[@intCast(id)] = mapTypeOf(short);
-        names.liquids[@intCast(id)] = isLiquidName(short);
+        names.mapTypes[@intCast(id)] = blockNames.mapTypeOf(short);
+        names.liquids[@intCast(id)] = blockNames.isLiquid(short);
     }
     return id;
-}
-
-/// `name` without its domain, if that's the game's.
-fn shortName(name: []const u8) []const u8 {
-    const prefix = "minecraft:";
-    return if (std.mem.startsWith(u8, name, prefix)) name[prefix.len..] else name;
-}
-
-fn isLiquidName(name: []const u8) bool {
-    return std.mem.eql(u8, name, "water") or std.mem.eql(u8, name, "lava");
-}
-
-fn isAir(name: []const u8) bool {
-    return std.mem.eql(u8, name, "air") or std.mem.eql(u8, name, "cave_air") or std.mem.eql(u8, name, "void_air");
-}
-
-/// What a block is on a map, from its name, until the prepared blocks say.
-fn mapTypeOf(name: []const u8) world.MapType {
-    const has = struct {
-        fn any(text: []const u8, parts: []const []const u8) bool {
-            for (parts) |part| if (std.mem.indexOf(u8, text, part) != null) return true;
-            return false;
-        }
-    }.any;
-    if (std.mem.eql(u8, name, "water")) return .lake;
-    if (std.mem.eql(u8, name, "lava")) return .lava;
-    if (has(name, &.{ "seagrass", "kelp" })) return .lake;
-    if (has(name, &.{ "ice", "snow" })) return .glacier;
-    if (has(name, &.{ "leaves", "_log", "_wood", "mangrove_roots" })) return .forest;
-    if (has(name, &.{ "sand", "terracotta" })) return .desert;
-    if (has(name, &.{ "short_grass", "tall_grass", "fern", "bush", "flower", "tulip", "poppy", "dandelion", "orchid", "allium", "bluet", "daisy", "cornflower", "lily", "vine", "sugar_cane", "bamboo", "cactus", "mushroom", "wheat", "carrots", "potatoes", "beetroots", "melon", "pumpkin" })) return .plant;
-    if (has(name, &.{"dirt_path"})) return .road;
-    if (has(name, &.{ "planks", "bricks", "door", "fence", "stairs", "slab", "glass", "wool", "torch", "bed", "chest", "furnace", "crafting_table" })) return .settlement;
-    return .land;
 }
 
 /// A region file, mapped.
@@ -643,7 +610,7 @@ pub const Reader = struct {
             while (try palette.next()) |item| : (entry += 1) {
                 if (entry >= maxPalette) break;
                 const block: Chunk.Block = try .of(item);
-                column.ids[slot][entry] = if (isAir(shortName(block.id))) -1 else try self.world.idOf(block.id);
+                column.ids[slot][entry] = if (blockNames.isAir(blockNames.shortName(block.id))) -1 else try self.world.idOf(block.id);
                 column.logged[slot][entry] = try isWaterlogged(block);
             }
         }
@@ -666,11 +633,4 @@ test regionOf {
     try std.testing.expectEqual(null, regionOf("r.0.mca"));
     try std.testing.expectEqual(null, regionOf("r.0.0.0.mca"));
     try std.testing.expectEqual(null, regionOf("level.dat"));
-}
-
-test mapTypeOf {
-    try std.testing.expectEqual(world.MapType.lake, mapTypeOf("water"));
-    try std.testing.expectEqual(world.MapType.forest, mapTypeOf("oak_leaves"));
-    try std.testing.expectEqual(world.MapType.desert, mapTypeOf("red_sandstone"));
-    try std.testing.expectEqual(world.MapType.land, mapTypeOf("stone"));
 }

@@ -84,12 +84,7 @@ pub fn deinit(self: *Prepared) void {
     self.arena.deinit();
 }
 
-/// What `hash` covers of the sprites, which the renderer draws.
-pub const SpriteFormat = struct {
-    generatorVersion: u16,
-    layoutVersion: u8,
-    blockWidth: u16,
-};
+const SpriteFormat = storyblk.SpriteFormat;
 
 /// The file's `header.hash` for blocks prepared from `assets`, with sprites drawn as `sprites`
 /// says (spec §6): it changes with the container's and the sections' versions, the block width,
