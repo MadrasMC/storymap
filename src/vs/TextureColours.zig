@@ -1,18 +1,17 @@
 //! A texture's average colour and a few random pixels for grain, as the game's colour-accurate
 //! map takes them from its atlas (docs/rendering.md#how-the-game-draws-its-own-world-map).
-const TextureColours = @This();
-
 const std = @import("std");
 const world = @import("world");
+const storyblk = @import("storyblk");
 const stb = @import("stb_image");
 
 const Rgb = world.Rgb;
+const TextureColours = storyblk.Tables.TextureColours;
 
-/// As many as the game's atlas keeps (vsapi `TextureAtlasPosition.RndColorsLength`).
-pub const samples = 30;
-
-average: Rgb,
-grain: [samples]Rgb,
+comptime {
+    // As many as the game's atlas keeps (vsapi `TextureAtlasPosition.RndColorsLength`).
+    std.debug.assert(TextureColours.samples == 30);
+}
 
 /// Null if `png` can't be decoded or is wholly transparent.
 pub fn ofPng(png: []const u8) ?TextureColours {

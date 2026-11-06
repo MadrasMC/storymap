@@ -1,13 +1,19 @@
 //! The container of a prepared blocks file (`.storyblk`, docs/storyblk/spec.md): its `header`,
-//! `info` and `section_table`, and its sections as bytes, each on a multiple of 8. What the
-//! sections hold is left to whoever writes and reads them; the container knows only their
-//! names and versions.
+//! `info` and `section_table`, and its sections as bytes, each on a multiple of 8, knowing only
+//! their names and versions; and the six sections a game's block states are in (`Tables`). The
+//! sprites' sections are the renderer's.
 //!
 //! Every way a file can be invalid is `error.NotPreparedBlocks` (spec §5).
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const Dir = Io.Dir;
+
+pub const Tables = @import("Tables.zig");
+
+test {
+    _ = Tables;
+}
 
 /// The container's version, `header.version` (spec §7).
 pub const version: u8 = 3;

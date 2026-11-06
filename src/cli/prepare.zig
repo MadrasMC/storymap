@@ -276,7 +276,7 @@ fn hashAssets(io: std.Io, assets: *const Assets) u64 {
 
 /// Every section of the file, in the order they're written, with the `sprites` section's bytes
 /// `entries`. `sprite_layers`, last, is in the file already.
-fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, entries: []const u8) ![Prepared.sectionNames.len + 2]storyblk.Section {
+fn encodeSections(arena: std.mem.Allocator, contents: *const Prepared.Contents, entries: []const u8) ![storyblk.Tables.names.len + 2]storyblk.Section {
     return (try contents.encode(arena)) ++ [2]storyblk.Section{
         .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries },
         .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "" },
@@ -317,7 +317,7 @@ fn open(init: std.process.Init, path: []const u8, problem: *Problem) !Blocks {
     var map: std.Io.File.MemoryMap = try .create(io, file, .{ .len = @intCast(size), .protection = .{ .read = true }, .populate = false });
     errdefer map.destroy(io);
     const parsed = try storyblk.parse(init.arena.allocator(), map.memory);
-    for (Prepared.sectionNames, Prepared.sectionLayoutVersions) |name, layout| try checkVersion(&parsed, name, layout, Prepared.generatorVersion, problem);
+    for (storyblk.Tables.names, storyblk.Tables.layoutVersions) |name, layout| try checkVersion(&parsed, name, layout, Prepared.generatorVersion, problem);
     for ([_][]const u8{ Sprites.entriesSection, Sprites.layersSection }) |name| try checkVersion(&parsed, name, Sprites.layoutVersion, Sprites.generatorVersion, problem);
     // Each section starts on a multiple of 8 in the mapped file.
     const entries = try parsed.section(Sprites.entriesSection, Sprites.layoutVersion);

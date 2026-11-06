@@ -11,7 +11,9 @@ const console = @import("console");
 const storyblk = @import("storyblk");
 const Assets = @import("Assets.zig");
 const BlockTypes = @import("BlockTypes.zig");
-const TextureColours = @import("TextureColours.zig");
+const textureColours = @import("TextureColours.zig");
+const Tables = storyblk.Tables;
+const TextureColours = Tables.TextureColours;
 const Json = @import("Json.zig");
 const Tint = @import("Tint.zig");
 const stb = @import("stb_image");
@@ -68,14 +70,6 @@ const Image = world.Image;
 /// How the six sections' contents are read from the game's assets: raise it when that changes,
 /// so files prepared before are prepared again.
 pub const generatorVersion: u16 = 29;
-/// The layout of the `colour_maps` section, and of each of the other five (spec §7).
-const colourMapsLayoutVersion: u8 = 2;
-const layoutVersion: u8 = 1;
-
-/// The sections this writes and reads, in the order it writes them.
-pub const sectionNames = [_][]const u8{ "block_states", "materials", "colour_codes", "texture_colours", "colour_maps", "domains" };
-/// Each section's layout, by `sectionNames`.
-pub const sectionLayoutVersions = [sectionNames.len]u8{ layoutVersion, layoutVersion, layoutVersion, layoutVersion, colourMapsLayoutVersion, layoutVersion };
 
 /// The game, as the file's `info` names it.
 pub const game = "vintagestory";
@@ -103,7 +97,7 @@ pub const SpriteFormat = struct {
 pub fn hash(io: Io, assets: *const Assets, sprites: SpriteFormat) !u64 {
     var hasher: std.hash.Wyhash = .init(0);
     std.hash.autoHash(&hasher, storyblk.version);
-    std.hash.autoHash(&hasher, sectionLayoutVersions);
+    std.hash.autoHash(&hasher, Tables.layoutVersions);
     std.hash.autoHash(&hasher, generatorVersion);
     std.hash.autoHash(&hasher, sprites);
     hasher.update(game);
@@ -170,9 +164,9 @@ pub const Contents = struct {
         return .{ .game = game, .gameVersion = self.gameVersion, .mods = try arena.dupe(storyblk.Mod, self.mods) };
     }
 
-    /// The six sections, in the order of `sectionNames`, their bytes kept in `arena`. A count or
+    /// The six sections, in the order of `Tables.names`, their bytes kept in `arena`. A count or
     /// string that doesn't fit its field is an error.
-    pub fn encode(self: *const Contents, arena: std.mem.Allocator) ![sectionNames.len]storyblk.Section {
+    pub fn encode(self: *const Contents, arena: std.mem.Allocator) ![Tables.names.len]storyblk.Section {
         // Each material and colour code once, in the order blocks first name them.
         var materials: std.StringArrayHashMapUnmanaged(void) = .empty;
         var colourCodes: std.StringArrayHashMapUnmanaged(void) = .empty;
@@ -180,99 +174,51 @@ pub const Contents = struct {
             try materials.put(arena, entry.block.material, {});
             try colourCodes.put(arena, entry.block.colorCode, {});
         }
-        if (materials.count() > std.math.maxInt(u8)) return error.TooManyMaterials;
-        if (colourCodes.count() > std.math.maxInt(u8)) return error.TooManyColourCodes;
-        if (self.colourMaps.len > std.math.maxInt(u8)) return error.TooManyColourMaps;
-        if (self.domains.len > std.math.maxInt(u16)) return error.TooManyDomains;
-        if (self.blocks.len > std.math.maxInt(u32)) return error.TooManyBlocks;
-        if (self.textures.len >= none32) return error.TooManyTextures;
-
-        var blocks: Io.Writer.Allocating = .init(arena);
-        var materialNames: Io.Writer.Allocating = .init(arena);
-        var colourCodeNames: Io.Writer.Allocating = .init(arena);
-        var textures: Io.Writer.Allocating = .init(arena);
-        var colourMaps: Io.Writer.Allocating = .init(arena);
-        var domains: Io.Writer.Allocating = .init(arena);
-
-        try blocks.writer.writeInt(u32, @intCast(self.blocks.len), .little);
-        for (self.blocks) |entry| try writeBlock(&blocks.writer, entry, &materials, &colourCodes);
-        try writeStrings(&materialNames.writer, u8, materials.keys());
-        try writeStrings(&colourCodeNames.writer, u8, colourCodes.keys());
-        try textures.writer.writeInt(u32, @intCast(self.textures.len), .little);
-        for (self.textures) |texture| {
-            try textures.writer.writeAll(&texture.average);
-            for (texture.grain) |sample| try textures.writer.writeAll(&sample);
-        }
-        try colourMaps.writer.writeByte(@intCast(self.colourMaps.len));
-        for (self.colourMaps) |colourMap| {
-            try storyblk.writeString(&colourMaps.writer, colourMap.code);
-            try colourMaps.writer.writeByte(@intCast(colourMap.padding));
-            try colourMaps.writer.writeByte(@intFromBool(colourMap.tropical));
-            try colourMaps.writer.writeInt(u16, @intCast(colourMap.width), .little);
-            try colourMaps.writer.writeInt(u16, @intCast(colourMap.height), .little);
-            try colourMaps.writer.writeAll(std.mem.sliceAsBytes(colourMap.pixels));
-        }
-        try writeStrings(&domains.writer, u16, self.domains);
-
-        const bytes = [sectionNames.len][]const u8{ blocks.written(), materialNames.written(), colourCodeNames.written(), textures.written(), colourMaps.written(), domains.written() };
-        var sections: [sectionNames.len]storyblk.Section = undefined;
-        for (&sections, sectionNames, sectionLayoutVersions, bytes) |*section, name, layout, written| {
-            section.* = .{ .name = name, .layoutVersion = layout, .generatorVersion = generatorVersion, .bytes = written };
-        }
-        return sections;
-    }
-
-    fn writeBlock(w: *Io.Writer, entry: Entry, materials: *const std.StringArrayHashMapUnmanaged(void), colourCodes: *const std.StringArrayHashMapUnmanaged(void)) !void {
-        const block = entry.block;
-        try storyblk.writeString(w, entry.code);
-        try w.writeByte(@intCast(materials.getIndex(block.material).?));
-        try w.writeByte(@intCast(colourCodes.getIndex(block.colorCode).?));
-        try w.writeInt(u32, entry.colour orelse none32, .little);
-        try w.writeInt(u32, entry.grain orelse none32, .little);
-        try w.writeByte(entry.climateColourMap orelse none8);
-        try w.writeByte(entry.seasonColourMap orelse none8);
-        try w.writeByte(block.height orelse none8);
-        try w.writeByte(block.drawOffset);
-        const flags: BlockFlags = .{
-            .xz = block.randomizeAxes == .xz,
-            .turned = block.randomizeRotations,
-            .shape = block.sprites.shape,
-            .tinted = block.sprites.tinted,
-            .seeThrough = block.seeThrough,
+        const colourMaps = try arena.alloc(Tables.ColourMap, self.colourMaps.len);
+        for (colourMaps, self.colourMaps) |*written, map| written.* = .{
+            .code = map.code,
+            .padding = @intCast(map.padding),
+            .tropical = map.tropical,
+            .width = @intCast(map.width),
+            .height = @intCast(map.height),
+            .pixels = map.pixels,
         };
-        try w.writeByte(@bitCast(flags));
-        try w.writeInt(u32, block.sprites.first, .little);
-        try w.writeInt(u16, block.sprites.variants, .little);
-        try w.writeInt(u16, block.sprites.alternates, .little);
-        try w.writeByte(block.sprites.turns);
-        try w.writeInt(u32, block.sprites.cover orelse none32, .little);
+        var encoder: Tables.Encoder = try .init(arena, .{
+            .materials = materials.keys(),
+            .colourCodes = colourCodes.keys(),
+            .textureColours = self.textures,
+            .colourMaps = colourMaps,
+            .domains = self.domains,
+        }, self.blocks.len);
+        for (self.blocks) |entry| {
+            const block = entry.block;
+            try encoder.add(.{
+                .name = entry.code,
+                .material = @intCast(materials.getIndex(block.material).?),
+                .colourCode = @intCast(colourCodes.getIndex(block.colorCode).?),
+                .colour = entry.colour,
+                .grain = entry.grain,
+                .climateColourMap = entry.climateColourMap,
+                .seasonColourMap = entry.seasonColourMap,
+                .height = block.height,
+                .drawOffset = block.drawOffset,
+                .flags = .{
+                    .xz = block.randomizeAxes == .xz,
+                    .turned = block.randomizeRotations,
+                    .shape = block.sprites.shape,
+                    .tinted = block.sprites.tinted,
+                    .seeThrough = block.seeThrough,
+                },
+                .firstSprite = block.sprites.first,
+                .variants = block.sprites.variants,
+                .alternates = block.sprites.alternates,
+                .turns = block.sprites.turns,
+                .coverSprite = block.sprites.cover,
+            });
+        }
+        return encoder.finish(arena, generatorVersion);
     }
 };
-
-/// A BlockState's `flags` (spec §4).
-const BlockFlags = packed struct(u8) {
-    /// Its variant, alternate and turn are picked by x and z alone (`randomizeAxes: xz`).
-    xz: bool = false,
-    /// It's turned by where it is (`randomizeRotations`).
-    turned: bool = false,
-    /// It's drawn in its shape, rather than as a cube.
-    shape: bool = false,
-    /// Any of its sprites has a tinted layer.
-    tinted: bool = false,
-    /// It shows what's behind it.
-    seeThrough: bool = false,
-    _: u3 = 0,
-};
-
-/// A BlockState's index of none, in a field of one byte or four.
-const none8 = 0xFF;
-const none32 = 0xFFFFFFFF;
-
-/// A list of strings, counted by a `Count`.
-fn writeStrings(w: *Io.Writer, comptime Count: type, strings: []const []const u8) !void {
-    try w.writeInt(Count, @intCast(strings.len), .little);
-    for (strings) |string| try storyblk.writeString(w, string);
-}
 
 /// How much of what one block type file took `prepare` keeps for the next.
 const fileArenaLimit = 4 << 20;
@@ -663,7 +609,7 @@ const Textures = struct {
             const texture = if (current.*) |*texture| texture else continue;
             if (texture.colours != null or !std.mem.eql(u8, texture.path, path)) continue;
             if (!std.mem.eql(u8, domainOf(texture.location), domain)) continue;
-            colours = colours orelse TextureColours.of(pixels);
+            colours = colours orelse textureColours.of(pixels);
             texture.colours = colours;
         }
     }
@@ -686,7 +632,7 @@ const Textures = struct {
             if (texture.colours != null and std.mem.eql(u8, texture.location, location)) return texture.colours;
         };
         const png = try self.readPng(location) orelse return null;
-        return TextureColours.ofPng(png);
+        return textureColours.ofPng(png);
     }
 
     /// The texture's file, or for a location ending in `*`, the first file it starts; null if
@@ -720,118 +666,52 @@ fn domainOf(location: []const u8) []const u8 {
     return location[0..std.mem.indexOfScalar(u8, location, ':').?];
 }
 
-/// The bytes of the smallest BlockState, with an empty name.
-const blockLength = 2 + 1 + 1 + 4 + 4 + 1 + 1 + 1 + 1 + 1 + 4 + 2 + 2 + 1 + 4;
-/// The bytes of a TextureColours.
-const textureLength = 3 + TextureColours.samples * 3;
-
-/// The blocks in the six sections of `file`, each block's sprites checked against
-/// `spriteCount`, the `sprites` section's count. Their codes, materials, colour codes, domains,
-/// grain and colour maps' pixels are where `file` is, which must outlive the result. A section
-/// that's missing, of another layout, or not as the spec has it is error.NotPreparedBlocks.
+/// The blocks in the six sections of `file` (`Tables.read`), each block's sprites checked
+/// against `spriteCount`, the `sprites` section's count. Their codes, materials, colour codes,
+/// domains, grain and colour maps' pixels are where `file` is, which must outlive the result.
 pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCount: usize) !Prepared {
     var self: Prepared = .{ .arena = .init(allocator), .gameVersion = file.info.gameVersion, .mods = file.info.mods };
     errdefer self.deinit();
     const arena = self.arena.allocator();
-    const materials = try readStrings(arena, u8, try file.section("materials", layoutVersion));
-    const colourCodes = try readStrings(arena, u8, try file.section("colour_codes", layoutVersion));
-    const domains = try readStrings(arena, u16, try file.section("domains", layoutVersion));
-    for (domains) |domain| try self.domains.put(arena, domain, {});
+    const tables, var states = try Tables.read(arena, file, spriteCount);
+    for (tables.domains) |domain| try self.domains.put(arena, domain, {});
+    const colourMaps = try arena.alloc(Tint.ColourMap, tables.colourMaps.len);
+    for (colourMaps, tables.colourMaps) |*colourMap, read| colourMap.* = .{
+        .code = read.code,
+        .width = read.width,
+        .height = read.height,
+        .pixels = read.pixels,
+        .padding = read.padding,
+        .tropical = read.tropical,
+    };
 
-    var textures: storyblk.Reader = .{ .bytes = (try file.section("texture_colours", layoutVersion)).bytes };
-    const textureCount = try textures.int(u32);
-    if (textures.bytes.len != 4 + @as(u64, textureCount) * textureLength) return error.NotPreparedBlocks;
-
-    var colourMapsReader: storyblk.Reader = .{ .bytes = (try file.section("colour_maps", colourMapsLayoutVersion)).bytes };
-    const colourMaps = try arena.alloc(Tint.ColourMap, try colourMapsReader.int(u8));
-    for (colourMaps) |*colourMap| {
-        const code = try colourMapsReader.string();
-        const padding: usize = try colourMapsReader.int(u8);
-        const flags = try colourMapsReader.int(u8);
-        const width: usize = try colourMapsReader.int(u16);
-        const height: usize = try colourMapsReader.int(u16);
-        if (width <= 2 * padding or height <= 2 * padding) return error.NotPreparedBlocks;
-        colourMap.* = .{
-            .code = code,
-            .width = width,
-            .height = height,
-            .pixels = std.mem.bytesAsSlice(world.Rgb, try colourMapsReader.take(width * height * @sizeOf(world.Rgb))),
-            .padding = padding,
-            .tropical = flags & 1 != 0,
-        };
-    }
-
-    var blocks: storyblk.Reader = .{ .bytes = (try file.section("block_states", layoutVersion)).bytes };
-    const count = try blocks.int(u32);
-    if (count > blocks.bytes.len / blockLength) return error.NotPreparedBlocks;
-    try self.blocks.ensureTotalCapacity(arena, count);
-    for (0..count) |i| {
-        const code = try blocks.string();
-        const material = try indexed([]const u8, materials, try blocks.int(u8));
-        const colorCode = try indexed([]const u8, colourCodes, try blocks.int(u8));
-        const colour = try textureAt(textures.bytes, textureCount, try blocks.int(u32));
-        const grain = try textureAt(textures.bytes, textureCount, try blocks.int(u32));
-        const climate = try colourMapAt(colourMaps, try blocks.int(u8));
-        const season = try colourMapAt(colourMaps, try blocks.int(u8));
-        const height = try blocks.int(u8);
-        const drawOffset = try blocks.int(u8);
-        const flags: BlockFlags = @bitCast(try blocks.int(u8));
-        var sprites: world.BlockSprites = .{
-            .first = try blocks.int(u32),
-            .variants = try blocks.int(u16),
-            .alternates = try blocks.int(u16),
-            .turns = try blocks.int(u8),
-            .shape = flags.shape,
-            .tinted = flags.tinted,
-        };
-        const cover = try blocks.int(u32);
-        if (sprites.variants > 0 and (sprites.alternates == 0 or sprites.turns == 0)) return error.NotPreparedBlocks;
-        if (sprites.variants > 0 and @as(u64, sprites.first) + sprites.count() > spriteCount) return error.NotPreparedBlocks;
-        if (cover != none32) {
-            if (cover >= spriteCount) return error.NotPreparedBlocks;
-            sprites.cover = cover;
-        }
-        self.blocks.putAssumeCapacity(code, .{
-            .index = @intCast(i),
-            .material = material,
-            .colorCode = colorCode,
-            .colour = if (colour) |texture| texture[0..3].* else null,
-            .grain = if (grain) |texture| std.mem.bytesAsSlice(world.Rgb, texture[3..]) else &.{},
-            .climateColourMap = climate,
-            .seasonColourMap = season,
-            .height = if (height == none8) null else height,
-            .drawOffset = drawOffset,
-            .randomizeAxes = if (flags.xz) .xz else .xyz,
-            .randomizeRotations = flags.turned,
-            .seeThrough = flags.seeThrough,
-            .sprites = sprites,
+    try self.blocks.ensureTotalCapacity(arena, states.count);
+    while (try states.next()) |state| {
+        self.blocks.putAssumeCapacity(state.name, .{
+            .index = states.index - 1,
+            .material = tables.materials[state.material],
+            .colorCode = tables.colourCodes[state.colourCode],
+            .colour = if (state.colour) |i| tables.textureColours[i].average else null,
+            .grain = if (state.grain) |i| &tables.textureColours[i].grain else &.{},
+            .climateColourMap = if (state.climateColourMap) |i| &colourMaps[i] else null,
+            .seasonColourMap = if (state.seasonColourMap) |i| &colourMaps[i] else null,
+            .height = state.height,
+            .drawOffset = state.drawOffset,
+            .randomizeAxes = if (state.flags.xz) .xz else .xyz,
+            .randomizeRotations = state.flags.turned,
+            .seeThrough = state.flags.seeThrough,
+            .sprites = .{
+                .first = state.firstSprite,
+                .variants = state.variants,
+                .alternates = state.alternates,
+                .turns = state.turns,
+                .shape = state.flags.shape,
+                .tinted = state.flags.tinted,
+                .cover = state.coverSprite,
+            },
         });
     }
     return self;
-}
-
-/// A section's list of strings, counted by a `Count`.
-fn readStrings(arena: std.mem.Allocator, comptime Count: type, section: storyblk.Section) ![]const []const u8 {
-    var reader: storyblk.Reader = .{ .bytes = section.bytes };
-    const strings = try arena.alloc([]const u8, try reader.int(Count));
-    for (strings) |*string| string.* = try reader.string();
-    return strings;
-}
-
-fn indexed(comptime T: type, items: []const T, i: usize) error{NotPreparedBlocks}!T {
-    return if (i < items.len) items[i] else error.NotPreparedBlocks;
-}
-
-/// TextureColours `i` in `texture_colours`, `bytes`, or null for none.
-fn textureAt(bytes: []const u8, count: u32, i: u32) error{NotPreparedBlocks}!?*const [textureLength]u8 {
-    if (i == none32) return null;
-    if (i >= count) return error.NotPreparedBlocks;
-    return bytes[4 + @as(usize, i) * textureLength ..][0..textureLength];
-}
-
-fn colourMapAt(maps: []const Tint.ColourMap, i: u8) error{NotPreparedBlocks}!?*const Tint.ColourMap {
-    if (i == none8) return null;
-    return if (i < maps.len) &maps[i] else error.NotPreparedBlocks;
 }
 
 /// What a save's blocks have that the prepared blocks don't: the mods (domains) it lacks, and
