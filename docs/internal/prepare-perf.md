@@ -404,6 +404,7 @@ Several estimates made along the way were wrong, and measuring settled each one.
 ## Remaining
 
 The peak is 106 MiB, 13 MiB above where moving the table of hashes left it, and what takes it hasn't been found: moving the table of inputs' hashes out of the arena made it 113 MiB.
-Drawing should take about 7 s on one core, most of it rasterizing the 73,358 shapes still drawn: about 9 s less the 2.2 s bounds saved, not yet measured in an ordinary sitting (`TODO.md`, item 16).
+Drawing takes 8.8–9.5 s on one core, most of it rasterizing the 73,358 shapes still drawn (`TODO.md`, item 16).
+A cold prepare is mostly reading the assets, about 31 s from a fresh copy of the game (`TODO.md`, item 17).
 
 Only Windows has run this: Linux and macOS have only been compiled, and only one mod has been tried (`TODO.md`, items 13 and 14).
