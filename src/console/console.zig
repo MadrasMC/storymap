@@ -60,6 +60,29 @@ pub fn confirm(io: std.Io, comptime question: []const u8, values: anytype) ?bool
     return std.ascii.eqlIgnoreCase(answer, "y") or std.ascii.eqlIgnoreCase(answer, "yes");
 }
 
+/// Whether there's someone to ask, as stdin is a terminal.
+pub fn canAsk(io: std.Io) bool {
+    return std.Io.File.stdin().isTty(io) catch false;
+}
+
+/// Asks a question on stderr and reads the answer: the index of the option it's one of the
+/// answers of, ignoring case, or null for none, or when there's no one to ask (`canAsk`). Each
+/// option's first answer is listed after the question, e.g. `[v/m/b]`.
+pub fn choose(io: std.Io, comptime question: []const u8, values: anytype, options: []const []const []const u8) ?usize {
+    if (!canAsk(io)) return null;
+    std.debug.print("storymap: " ++ question ++ " [", values);
+    for (options, 0..) |answers, i| std.debug.print("{s}{s}", .{ if (i == 0) "" else "/", answers[0] });
+    std.debug.print("] ", .{});
+    var buffer: [64]u8 = undefined;
+    var reader = std.Io.File.stdin().readerStreaming(io, &buffer);
+    const line = (reader.interface.takeDelimiter('\n') catch return null) orelse return null;
+    const answer = std.mem.trim(u8, line, " \t\r");
+    for (options, 0..) |answers, i| {
+        for (answers) |accepted| if (std.ascii.eqlIgnoreCase(answer, accepted)) return i;
+    }
+    return null;
+}
+
 /// What the program did, such as the tiles it drew.
 pub fn log(comptime format: []const u8, values: anytype) void {
     std.log.info(format, values);

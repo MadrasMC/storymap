@@ -109,6 +109,7 @@ The file has every rotation, so one copied to a machine without the game can dra
 
 `storymap prepare [file]` prepares the file without rendering, and takes `--game` and `--data` too.
 `storymap prepare --game minecraft` prepares Minecraft's, which a render of a Minecraft world doesn't use yet.
+Without `--game`, it prepares whichever of the two it finds in their standard places, and asks which if it finds both; `--yes` prepares both.
 
 ## Measuring
 

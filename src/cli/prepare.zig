@@ -17,7 +17,11 @@ pub const gameOption: args.Option = .{ .name = "game", .value = "game", .descrip
 pub const dataOption: args.Option = .{ .name = "data", .value = "folder", .description = "The game's data folder, if it isn't in the standard place." };
 
 pub const spec: args.Spec = .{
-    .options = &.{ gameOption, dataOption },
+    .options = &.{
+        gameOption,
+        dataOption,
+        .{ .name = "yes", .short = 'y', .description = "Without --game, prepare both games if both are found, without asking." },
+    },
     .positionals = &.{.{ .name = "file", .optional = true, .description = "The prepared blocks file: " ++ Prepared.defaultPath ++ " or " ++ mc.Prepared.defaultPath ++ " by default, by the game." }},
     .description = "Prepares what the map needs from the game's and mods' assets into the prepared blocks file, even if it was prepared before.",
 };
@@ -35,7 +39,29 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .data = parsed.value("data"),
         .blocks = parsed.positional("file"),
     };
-    switch (findGame(init, paths) orelse noGame()) {
+    if (paths.game != null) return prepareGame(init, paths, findGame(init, paths) orelse noGame());
+
+    const found = [2]?Game{ standardVintageStory(init), standardMinecraft(init) };
+    if (found[0] == null and found[1] == null)
+        console.fail("could not locate Vintage Story or Minecraft; pass `--game <game>`", .{});
+    if (found[0] == null or found[1] == null) return prepareGame(init, paths, (found[0] orelse found[1]).?);
+    if (paths.blocks) |path|
+        console.fail("{s}: found both Vintage Story and Minecraft; pass `--game " ++ Prepared.game ++ "` or `--game " ++ mc.game ++ "` to say which this file is for", .{path});
+    // The answers for each game, by `found`, then for both.
+    const answers = [_][]const []const u8{ &.{ "v", Prepared.game }, &.{ "m", mc.game }, &.{ "b", "both", "y", "yes" } };
+    const both = 2;
+    const chosen: usize = if (parsed.flag("yes")) both else choice: {
+        if (!console.canAsk(init.io))
+            console.fail("found both Vintage Story and Minecraft, and no terminal to ask which; pass `--game " ++ Prepared.game ++ "`, `--game " ++ mc.game ++ "`, or `--yes` to prepare both", .{});
+        console.warn("found both Vintage Story and Minecraft; pass `--yes` to prepare both", .{});
+        break :choice console.choose(init.io, "prepare Vintage Story, Minecraft or both?", .{}, &answers) orelse console.exit(1);
+    };
+    if (chosen == both and parsed.flag("yes")) console.warn("found both Vintage Story and Minecraft; preparing both", .{});
+    for (found, 0..) |game, i| if (chosen == both or chosen == i) prepareGame(init, paths, game.?);
+}
+
+fn prepareGame(init: std.process.Init, paths: Paths, game: Game) void {
+    switch (game) {
         .vintagestory => |folder| {
             var assets = openAssets(init, folder, paths.data);
             defer assets.close(init.io);
@@ -43,6 +69,14 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         },
         .minecraft => |jarPath| prepareMinecraft(init, jarPath, paths.blocks orelse mc.Prepared.defaultPath),
     }
+}
+
+/// The highest release in the launcher's game folder, if there's one.
+fn standardMinecraft(init: std.process.Init) ?Game {
+    const arena = init.arena.allocator();
+    const folder = mc.Jar.standardFolder(arena, init.io, init.environ_map) orelse return null;
+    const jar = mc.Jar.inGameFolder(arena, init.io, folder, null) catch return null;
+    return .{ .minecraft = jar orelse return null };
 }
 
 /// Prepares Minecraft's block states from its client jar, writes their sprites to the partial
