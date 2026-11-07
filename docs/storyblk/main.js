@@ -56,6 +56,7 @@ const toastElement = $("toast");
 
 let shown = null; // { contents, file, box, blocks, groups }
 let zoom = 2;
+let rotation = 0; // 0 to 3, in quarter turns clockwise (spec §3, Rotations)
 let current = null; // the block open in its dialog
 
 // Reading a .storyblk
@@ -177,16 +178,18 @@ function parse(buffer) {
 	const blockWidth = spriteFields.takeU16();
 	if (spriteSection.length !== 8 + SPRITE_LENGTH * ROTATIONS * spriteCount) rejectFile("its sprites section isn't the length its count gives");
 	const layerSection = sections.get("sprite_layers");
+	const entryCount = ROTATIONS * spriteCount;
+	// `count` is the sprites in each rotation; the arrays hold every rotation's, one after another.
 	const sprites = {
 		count: spriteCount,
-		offset: new Uint32Array(spriteCount),
-		left: new Int16Array(spriteCount),
-		top: new Int16Array(spriteCount),
-		width: new Uint16Array(spriteCount),
-		height: new Uint16Array(spriteCount),
-		flags: new Uint32Array(spriteCount),
+		offset: new Uint32Array(entryCount),
+		left: new Int16Array(entryCount),
+		top: new Int16Array(entryCount),
+		width: new Uint16Array(entryCount),
+		height: new Uint16Array(entryCount),
+		flags: new Uint32Array(entryCount),
 	};
-	for (let i = 0; i < spriteCount; i++) {
+	for (let i = 0; i < entryCount; i++) {
 		const at = spriteSection.offset + 8 + i * SPRITE_LENGTH;
 		const offset = view.getUint32(at, true);
 		const width = view.getUint16(at + 8, true);
@@ -569,11 +572,16 @@ const tileObserver = new IntersectionObserver(
 			if (!entry.isIntersecting) continue;
 			tileObserver.unobserve(entry.target);
 			const block = entry.target.block;
-			drawSprite(block.canvas, shown.contents, block.first, block.tint);
+			drawSprite(block.canvas, shown.contents, rotate(block.first), block.tint);
 		}
 	},
 	{ rootMargin: "800px 0px" },
 );
+
+// Sprite `index` of rotation 0, in the rotation shown.
+function rotate(index) {
+	return index + rotation * shown.contents.sprites.count;
+}
 
 function fit(width, height) {
 	return Math.max(1, Math.min(zoom, Math.floor((shown.box * zoom) / Math.max(width, height, 1))));
@@ -581,8 +589,8 @@ function fit(width, height) {
 
 function sizeTile(block) {
 	const sprites = shown.contents.sprites;
-	const width = sprites.width[block.first];
-	const height = sprites.height[block.first];
+	const width = sprites.width[rotate(block.first)];
+	const height = sprites.height[rotate(block.first)];
 	const scale = fit(width, height);
 	block.canvas.style.width = width * scale + "px";
 	block.canvas.style.height = height * scale + "px";
@@ -693,6 +701,18 @@ function setZoom(value) {
 	if (blockDialog.open) fillDetail(current);
 }
 
+function setRotation(value) {
+	rotation = value;
+	for (const button of document.querySelectorAll("[data-rotation]")) button.setAttribute("aria-pressed", String(Number(button.dataset.rotation) === rotation));
+	if (!shown) return;
+	// Each tile is drawn again as it comes near the screen.
+	for (const block of shown.blocks) {
+		sizeTile(block);
+		tileObserver.observe(block.tile);
+	}
+	if (blockDialog.open) fillDetail(current);
+}
+
 // Detail
 
 // The blocks the filter shows, in the order the page shows them: group by group, by name.
@@ -730,7 +750,7 @@ function fillDetail(block) {
 		material.prepend(swatch);
 	}
 	addItem(contents.colourCodes[block.colourCode]);
-	addItem(`#${block.first}`);
+	addItem(`#${rotate(block.first)}`);
 	$("detail-meta").replaceChildren(...meta);
 
 	// Every cell the same size, just around all of the block's sprites, each where it lies against
@@ -739,7 +759,7 @@ function fillDetail(block) {
 	let top = Infinity;
 	let right = -Infinity;
 	let bottom = -Infinity;
-	for (let i = block.first; i < block.first + block.count; i++) {
+	for (let i = rotate(block.first); i < rotate(block.first) + block.count; i++) {
 		if (sprites.width[i] === 0 || sprites.height[i] === 0) continue;
 		left = Math.min(left, sprites.left[i]);
 		top = Math.min(top, sprites.top[i]);
@@ -764,7 +784,7 @@ function fillDetail(block) {
 		const cells = document.createElement("div");
 		cells.className = "cells";
 		for (let k = 0; k < perTurn; k++) {
-			const index = block.first + turn * perTurn + k;
+			const index = rotate(block.first) + turn * perTurn + k;
 			const variant = k % block.variants;
 			const alternate = Math.floor(k / block.variants);
 			const cell = document.createElement("div");
@@ -906,6 +926,7 @@ function fillFileDetails() {
 			"Sprites",
 			makePairs([
 				["Block width", `${contents.blockWidth} px`],
+				["Rotations", ROTATIONS],
 				["Tinted", formatCount(tintedSprites)],
 				["Layers", formatBytes(contents.layers.length)],
 			]),
@@ -1104,6 +1125,12 @@ $("zoom").addEventListener("click", (event) => {
 	for (const each of $("zoom").querySelectorAll("button")) each.setAttribute("aria-pressed", String(each === button));
 	setZoom(Number(button.dataset.zoom));
 });
+for (const group of document.querySelectorAll(".rotation")) {
+	group.addEventListener("click", (event) => {
+		const button = event.target.closest("[data-rotation]");
+		if (button) setRotation(Number(button.dataset.rotation));
+	});
+}
 
 blocksView.addEventListener("click", (event) => {
 	const tile = event.target.closest(".tile");
@@ -1133,6 +1160,14 @@ for (const [modal, close] of [
 		if (event.target === modal) close();
 	});
 }
+
+// R turns the view clockwise, Shift+R back.
+document.addEventListener("keydown", (event) => {
+	if ((event.key !== "r" && event.key !== "R") || event.ctrlKey || event.metaKey || event.altKey) return;
+	if (fileDialog.open || !shown || event.target.closest?.("input, select, textarea")) return;
+	event.preventDefault();
+	setRotation((rotation + (event.shiftKey ? ROTATIONS - 1 : 1)) % ROTATIONS);
+});
 
 document.addEventListener("keydown", (event) => {
 	if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;

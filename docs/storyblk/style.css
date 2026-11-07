@@ -167,7 +167,7 @@ body.empty .open { margin-left: auto; }
 	.filter { grid-area: filter; }
 }
 
-/* Status bar: the file, the counts and the zoom */
+/* Status bar: the file, the counts, the rotation and the zoom */
 
 .status {
 	position: sticky;
@@ -224,14 +224,14 @@ body.empty .open { margin-left: auto; }
 }
 .count span + span::before { content: " · "; }
 
-.zoom {
+.segments {
 	display: inline-flex;
 	flex: none;
 	padding: 0.125rem;
 	border-radius: var(--radius);
 	background: var(--sunken);
 }
-.zoom button {
+.segments button {
 	min-width: 2.25rem;
 	height: 1.875rem;
 	padding: 0 0.5rem;
@@ -243,14 +243,14 @@ body.empty .open { margin-left: auto; }
 	font-variant-numeric: tabular-nums;
 	cursor: pointer;
 }
-.zoom button:hover { color: var(--text); }
-.zoom button[aria-pressed="true"] {
+.segments button:hover { color: var(--text); }
+.segments button[aria-pressed="true"] {
 	background: var(--panel);
 	color: var(--text);
 	box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgb(0 0 0 / 0.06);
 }
 
-/* The phone status bar: the file, then the counts and the zoom. */
+/* The phone status bar: the file, then the counts, the rotation and the zoom. */
 @media (max-width: 47.99rem) {
 	.file-button { flex: 1 1 100%; }
 	.count { margin: 0 auto 0 0; }
@@ -432,9 +432,16 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 	font-weight: 600;
 	overflow-wrap: anywhere;
 }
-.detail-meta {
-	padding: 0.625rem 1.25rem;
+.detail-footer {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem 0.75rem;
+	padding: 0.5rem 0.75rem 0.5rem 1.25rem;
 	border-top: 1px solid var(--line);
+}
+.detail-meta {
+	flex: 1 1 12rem;
 	color: var(--muted);
 	font: 0.75rem/1.6 var(--mono);
 	font-variant-numeric: tabular-nums;
@@ -519,7 +526,7 @@ dialog::backdrop { background: rgb(28 28 26 / 0.3); }
 	}
 	#detail { height: 75dvh; }
 	.detail { max-height: 88dvh; }
-	.detail-meta,
+	.detail-footer { padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
 	.file-actions { padding-bottom: max(0.625rem, env(safe-area-inset-bottom)); }
 }
 

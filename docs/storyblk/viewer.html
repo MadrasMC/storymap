@@ -74,7 +74,13 @@
 		<span id="file-label" class="file-label"></span>
 	</button>
 	<span id="count" class="count"></span>
-	<div id="zoom" class="zoom" role="group" aria-label="Zoom">
+	<div class="segments rotation" role="group" aria-label="Rotation">
+		<button type="button" data-rotation="0" aria-pressed="true">0°</button>
+		<button type="button" data-rotation="1" aria-pressed="false">90°</button>
+		<button type="button" data-rotation="2" aria-pressed="false">180°</button>
+		<button type="button" data-rotation="3" aria-pressed="false">270°</button>
+	</div>
+	<div id="zoom" class="segments" role="group" aria-label="Zoom">
 		<button type="button" data-zoom="1" aria-pressed="false">1×</button>
 		<button type="button" data-zoom="2" aria-pressed="true">2×</button>
 		<button type="button" data-zoom="3" aria-pressed="false">3×</button>
@@ -93,7 +99,15 @@
 			<button id="close" class="icon-button" type="button" aria-label="Close">×</button>
 		</header>
 		<div id="detail-sprites" class="detail-sprites"></div>
-		<footer id="detail-meta" class="detail-meta"></footer>
+		<footer class="detail-footer">
+			<div id="detail-meta" class="detail-meta"></div>
+			<div class="segments rotation" role="group" aria-label="Rotation">
+				<button type="button" data-rotation="0" aria-pressed="true">0°</button>
+				<button type="button" data-rotation="1" aria-pressed="false">90°</button>
+				<button type="button" data-rotation="2" aria-pressed="false">180°</button>
+				<button type="button" data-rotation="3" aria-pressed="false">270°</button>
+			</div>
+		</footer>
 	</div>
 </dialog>
 
