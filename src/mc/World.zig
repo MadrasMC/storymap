@@ -12,6 +12,7 @@ const nbt = @import("nbt");
 const Region = @import("Region.zig");
 const Chunk = @import("Chunk.zig");
 const blockNames = @import("names.zig");
+const Prepared = @import("Prepared.zig");
 
 comptime {
     std.debug.assert(tiles.size == Region.side * Chunk.side);
@@ -48,13 +49,19 @@ height: u16,
 name: []const u8,
 version: []const u8,
 names: *Names,
+/// The prepared blocks (`useBlocks`): block state `i` is ID `i + 1`, and names they don't have
+/// come after them.
+prepared: ?*const Prepared = null,
+/// The IDs of the prepared block states, which names they don't have come after.
+stateCount: i32 = 0,
 
-/// The block names met so far, each with an ID, shared by every thread's `Reader`.
+/// The block names met so far that aren't prepared block states, each with an ID, shared by
+/// every thread's `Reader`.
 const Names = struct {
     mutex: Io.Mutex = .init,
     arena: std.heap.ArenaAllocator,
     ids: std.StringHashMapUnmanaged(i32) = .empty,
-    /// By ID, from 1. 0 stands for any name past `maxBlocks`.
+    /// By ID less `stateCount`, from 1. 0 stands for any name past `maxBlocks`.
     mapTypes: [maxBlocks]world.MapType = @splat(.land),
     liquids: [maxBlocks]bool = @splat(false),
     list: [maxBlocks][]const u8 = @splat(""),
@@ -217,12 +224,32 @@ pub fn heights(self: *const World) world.Heights {
     return .{ .world = self.height, .sea = @intCast(seaLevel - self.bottom) };
 }
 
-pub fn blockCount(_: *const World) usize {
-    return maxBlocks;
+/// Draws the world's blocks as `prepared` has them, which must outlive the world. Called before
+/// any `Reader`, as IDs depend on it.
+pub fn useBlocks(self: *World, prepared: *const Prepared) void {
+    self.prepared = prepared;
+    self.stateCount = @intCast(prepared.states.len);
+}
+
+pub fn blockCount(self: *const World) usize {
+    return @as(usize, @intCast(self.stateCount)) + maxBlocks;
+}
+
+/// The prepared block state of ID `id`, if it's one.
+fn stateOf(self: *const World, id: i32) ?*const Prepared.BlockState {
+    const prepared = self.prepared orelse return null;
+    return if (id > 0 and id <= self.stateCount) &prepared.states[@intCast(id - 1)] else null;
+}
+
+/// ID `id`'s place in `names`, if it's a name there.
+fn nameOf(self: *const World, id: i32) ?usize {
+    const local = id - self.stateCount;
+    return if (local > 0 and local < maxBlocks) @intCast(local) else null;
 }
 
 pub fn mapType(self: *const World, id: i32) world.MapType {
-    return if (id >= 0 and id < maxBlocks) self.names.mapTypes[@intCast(id)] else .land;
+    if (self.stateOf(id)) |state| return state.mapType;
+    return if (self.nameOf(id)) |i| self.names.mapTypes[i] else .land;
 }
 
 pub fn isVisible(_: *const World, id: i32) bool {
@@ -234,12 +261,13 @@ pub fn isLow(_: *const World, _: i32) bool {
 }
 
 pub fn isLiquid(self: *const World, id: i32) bool {
-    return id >= 0 and id < maxBlocks and self.names.liquids[@intCast(id)];
+    if (self.stateOf(id)) |state| return state.liquid;
+    return if (self.nameOf(id)) |i| self.names.liquids[i] else false;
 }
 
-/// What the isometric view's `game` style asks of a block, until the prepared blocks say: every
-/// block a cube in its map type's colour, in one place.
+/// A block's top's colour, or for one the prepared blocks don't have, its map type's.
 pub fn colour(self: *const World, id: i32) world.Rgb {
+    if (self.stateOf(id)) |state| if (state.colour) |rgb| return rgb;
     return switch (self.mapType(id)) {
         .land, .road, .devastation => .{ 0x7A, 0x6A, 0x4F },
         .desert => .{ 0xD8, 0xC8, 0x8A },
@@ -252,20 +280,29 @@ pub fn colour(self: *const World, id: i32) world.Rgb {
     };
 }
 
-pub fn spritesOf(_: *const World, _: i32) ?world.BlockSprites {
-    return null;
+pub fn spritesOf(self: *const World, id: i32) ?world.BlockSprites {
+    return if (self.stateOf(id)) |state| state.sprites else null;
 }
 
-pub fn isTinted(_: *const World, _: i32) bool {
-    return false;
+pub fn isTinted(self: *const World, id: i32) bool {
+    return if (self.stateOf(id)) |state| state.sprites.tinted else false;
 }
 
-pub fn isSeeThrough(_: *const World, _: i32) bool {
-    return false;
+pub fn isSeeThrough(self: *const World, id: i32) bool {
+    return if (self.stateOf(id)) |state| state.seeThrough else false;
 }
 
-pub fn variant(_: *const World, _: i32, _: i64, _: i64, _: i64, _: u32) u32 {
-    return 0;
+/// Which of `count` models the block at (x, y, z) shows: picked by its place alone, the same
+/// each time.
+pub fn variant(_: *const World, _: i32, x: i64, y: i64, z: i64, count: u32) u32 {
+    const ux: u64 = @bitCast(x);
+    const uy: u64 = @bitCast(y);
+    const uz: u64 = @bitCast(z);
+    var hash = ux *% 0x9E3779B97F4A7C15 ^ uy *% 0xC2B2AE3D27D4EB4F ^ uz *% 0x165667B19E3779F9;
+    hash ^= hash >> 31;
+    hash *%= 0xBF58476D1CE4E5B9;
+    hash ^= hash >> 29;
+    return @intCast(hash % count);
 }
 
 pub fn drawOffset(_: *const World, _: i32, _: i64, _: i64, _: i64) ?[2]f32 {
@@ -276,32 +313,57 @@ pub fn isPlacedByPosition(_: *const World, _: i32) bool {
     return false;
 }
 
-/// The name of block `id`, e.g. "minecraft:stone", once a reader has met it.
+/// The name of block `id`, e.g. "minecraft:stone": its block state's, or once a reader has met
+/// it, its name.
 pub fn blockName(self: *const World, id: i32) ?[]const u8 {
-    if (id <= 0 or id >= maxBlocks) return null;
-    const name = self.names.list[@intCast(id)];
+    if (self.stateOf(id)) |state| return state.name;
+    const name = self.names.list[self.nameOf(id) orelse return null];
     return if (name.len == 0) null else name;
 }
 
-/// The ID of the block named `name`, given one the first time it's met.
-fn idOf(self: *const World, name: []const u8) !i32 {
+/// The ID of a palette entry: its prepared block state's, or its name's, given one the first
+/// time it's met.
+fn idOf(self: *const World, block: Chunk.Block) !i32 {
+    if (self.prepared) |prepared| {
+        if (prepared.find(block.id, Properties{ .compound = block.properties })) |i| return @intCast(i + 1);
+    }
     const names = self.names;
     names.mutex.lockUncancelable(self.io);
     defer names.mutex.unlock(self.io);
-    if (names.ids.get(name)) |id| return id;
+    if (names.ids.get(block.id)) |id| return id;
     const next: i32 = @intCast(names.ids.count() + 1);
-    const id: i32 = if (next < maxBlocks) next else 0;
+    const id: i32 = if (next < maxBlocks) self.stateCount + next else 0;
     const allocator = names.arena.allocator();
-    const kept = try allocator.dupe(u8, name);
+    const kept = try allocator.dupe(u8, block.id);
     try names.ids.put(allocator, kept, id);
     if (id != 0) {
         const short = blockNames.shortName(kept);
-        names.list[@intCast(id)] = kept;
-        names.mapTypes[@intCast(id)] = blockNames.mapTypeOf(short);
-        names.liquids[@intCast(id)] = blockNames.isLiquid(short);
+        names.list[@intCast(next)] = kept;
+        names.mapTypes[@intCast(next)] = blockNames.mapTypeOf(short);
+        names.liquids[@intCast(next)] = blockNames.isLiquid(short);
     }
     return id;
 }
+
+/// The names met so far that aren't prepared block states (`useBlocks`): blocks the prepared
+/// blocks don't have.
+pub fn unknownNames(self: *const World) []const []const u8 {
+    const names = self.names;
+    names.mutex.lockUncancelable(self.io);
+    defer names.mutex.unlock(self.io);
+    return names.list[1..@min(names.ids.count() + 1, maxBlocks)];
+}
+
+/// A palette entry's properties, as `Prepared.find` looks them up.
+const Properties = struct {
+    compound: ?nbt.Compound,
+
+    pub fn get(self: Properties, name: []const u8) ?[]const u8 {
+        const compound = self.compound orelse return null;
+        const value = (compound.get(name) catch return null) orelse return null;
+        return if (value == .string) value.string else null;
+    }
+};
 
 /// A region file, mapped.
 const MappedRegion = struct {
@@ -365,9 +427,11 @@ pub const Reader = struct {
     const Column = struct {
         present: []bool,
         indexes: [][Chunk.blocks]u16,
-        /// Each palette entry's ID, or −1 for air, and whether it's waterlogged.
+        /// Each palette entry's ID, or −1 for air, whether it's waterlogged, and whether it's a
+        /// liquid.
         ids: [][maxPalette]i32,
         logged: [][maxPalette]bool,
+        liquid: [][maxPalette]bool,
 
         fn init(allocator: std.mem.Allocator, sections: usize) !Column {
             const present = try allocator.alloc(bool, sections);
@@ -376,10 +440,13 @@ pub const Reader = struct {
             errdefer allocator.free(indexes);
             const ids = try allocator.alloc([maxPalette]i32, sections);
             errdefer allocator.free(ids);
-            return .{ .present = present, .indexes = indexes, .ids = ids, .logged = try allocator.alloc([maxPalette]bool, sections) };
+            const logged = try allocator.alloc([maxPalette]bool, sections);
+            errdefer allocator.free(logged);
+            return .{ .present = present, .indexes = indexes, .ids = ids, .logged = logged, .liquid = try allocator.alloc([maxPalette]bool, sections) };
         }
 
         fn deinit(self: Column, allocator: std.mem.Allocator) void {
+            allocator.free(self.liquid);
             allocator.free(self.logged);
             allocator.free(self.ids);
             allocator.free(self.indexes);
@@ -408,7 +475,7 @@ pub const Reader = struct {
             .buffer = buffer,
             .allocator = allocator,
             .column = try .init(allocator, source.height / Chunk.side),
-            .water = try source.idOf("minecraft:water"),
+            .water = try source.idOf(.{ .id = "minecraft:water", .properties = null }),
         };
     }
 
@@ -451,7 +518,7 @@ pub const Reader = struct {
         const indexes = &column.indexes[section];
         const ids = &column.ids[section];
         const logged = &column.logged[section];
-        const liquids = &self.world.names.liquids;
+        const liquids = &column.liquid[section];
         var any = false;
         var at: usize = 0;
         for (0..Chunk.side) |y| for (0..Chunk.side) |z| for (0..Chunk.side) |x| {
@@ -462,7 +529,7 @@ pub const Reader = struct {
             if (id < 0) continue;
             const target = ((y0 + y) * side + z0 + z) * side + x0 + x;
             any = true;
-            if (liquids[@intCast(id)]) {
+            if (liquids[index]) {
                 out.liquid[target] = id;
                 continue;
             }
@@ -566,7 +633,6 @@ pub const Reader = struct {
 
     /// Finds the column's highest block, going down past any liquid for the ground under it.
     fn recordColumn(self: *const Reader, surface: world.Surface, i: usize, x: usize, z: usize, top: u16) void {
-        const names = self.world.names;
         const column = self.column;
         var y: usize = top;
         while (y > 0) {
@@ -577,7 +643,7 @@ pub const Reader = struct {
             if (index >= maxPalette) continue;
             const id = column.ids[section][index];
             if (id < 0) continue;
-            if (names.liquids[@intCast(id)]) {
+            if (column.liquid[section][index]) {
                 if (surface.liquidTop[i] == null) {
                     surface.liquidTop[i] = @intCast(y);
                     surface.liquidBlock[i] = id;
@@ -610,15 +676,18 @@ pub const Reader = struct {
             while (try palette.next()) |item| : (entry += 1) {
                 if (entry >= maxPalette) break;
                 const block: Chunk.Block = try .of(item);
-                column.ids[slot][entry] = if (blockNames.isAir(blockNames.shortName(block.id))) -1 else try self.world.idOf(block.id);
+                const id = if (blockNames.isAir(blockNames.shortName(block.id))) -1 else try self.world.idOf(block);
+                column.ids[slot][entry] = id;
+                column.liquid[slot][entry] = self.world.isLiquid(id);
                 column.logged[slot][entry] = try isWaterlogged(block);
             }
         }
     }
 
-    /// The colour multiplied into a block's: none yet, as biomes aren't read.
-    pub fn tint(_: *Reader, _: i32, _: i64, _: i64, _: i64) !world.Rgb {
-        return @splat(255);
+    /// The colour multiplied into a block's tinted faces: its prepared block state's, the same
+    /// everywhere, as biomes aren't read yet.
+    pub fn tint(self: *Reader, id: i32, _: i64, _: i64, _: i64) !world.Rgb {
+        return if (self.world.stateOf(id)) |state| state.tint else @splat(255);
     }
 
     fn isWaterlogged(block: Chunk.Block) !bool {

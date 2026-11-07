@@ -1,6 +1,9 @@
 //! Minecraft's block states as rendering needs them, prepared once from the client jar into the
 //! prepared blocks file (docs/storyblk/spec.md): each with the shapes its sprites are drawn in,
-//! and the colour of its top, which a map seen from above shows.
+//! and the colour of its top, which a map seen from above shows. Loaded from the file, they're
+//! what a render reads a world's blocks as.
+const Prepared = @This();
+
 const std = @import("std");
 const Io = std.Io;
 const world = @import("world");
@@ -12,6 +15,134 @@ const Models = @import("Models.zig");
 const names = @import("names.zig");
 const Tables = storyblk.Tables;
 const Image = world.Image;
+
+arena: std.heap.ArenaAllocator,
+gameVersion: []const u8,
+/// In the order of the `block_states` section.
+states: []const BlockState,
+/// Each state's index in `states`, by its name.
+byName: std.StringHashMapUnmanaged(u32) = .empty,
+/// Each block's properties that its states are named by, in name order, by the block's name,
+/// e.g. "minecraft:oak_stairs".
+properties: std.StringHashMapUnmanaged([]const Property) = .empty,
+
+/// A block state as a render draws it.
+pub const BlockState = struct {
+    name: []const u8,
+    sprites: world.BlockSprites,
+    /// Its top's colour; null where it has none.
+    colour: ?world.Rgb,
+    mapType: world.MapType,
+    liquid: bool,
+    seeThrough: bool,
+    /// What its tinted faces are multiplied by: the game's colour for its kind of block in
+    /// plains, as biomes aren't read yet.
+    tint: world.Rgb,
+};
+
+/// A property, and the values a block's states are named with.
+pub const Property = struct {
+    name: []const u8,
+    values: []const []const u8,
+};
+
+pub fn deinit(self: *Prepared) void {
+    self.arena.deinit();
+}
+
+/// The block states in the six sections of `file` (`Tables.read`), each one's sprites checked
+/// against `spriteCount`, the `sprites` section's count. Their names are where `file` is, which
+/// must outlive the result.
+pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCount: usize) !Prepared {
+    var self: Prepared = .{ .arena = .init(allocator), .gameVersion = file.info.gameVersion, .states = &.{} };
+    errdefer self.deinit();
+    const arena = self.arena.allocator();
+    const tables, var read = try Tables.read(arena, file, spriteCount);
+    const states = try arena.alloc(BlockState, read.count);
+    try self.byName.ensureTotalCapacity(arena, read.count);
+    // Each block's properties, and each property's values, in the order they're first named.
+    var named: std.StringArrayHashMapUnmanaged(std.ArrayList(Building)) = .empty;
+    while (try read.next()) |state| {
+        const short = names.shortName(state.name);
+        states[read.index - 1] = .{
+            .name = state.name,
+            .sprites = .{
+                .first = state.firstSprite,
+                .variants = state.variants,
+                .alternates = state.alternates,
+                .turns = state.turns,
+                .shape = state.flags.shape,
+                .tinted = state.flags.tinted,
+                .cover = state.coverSprite,
+            },
+            .colour = if (state.colour) |i| tables.textureColours[i].average else null,
+            .mapType = std.meta.stringToEnum(world.MapType, tables.colourCodes[state.colourCode]) orelse .land,
+            .liquid = names.isLiquid(short),
+            .seeThrough = state.flags.seeThrough,
+            .tint = names.tintOf(short),
+        };
+        self.byName.putAssumeCapacity(state.name, read.index - 1);
+        try collectProperties(arena, &named, state.name);
+    }
+    self.states = states;
+    try self.properties.ensureTotalCapacity(arena, @intCast(named.count()));
+    for (named.keys(), named.values()) |block, building| {
+        const properties = try arena.alloc(Property, building.items.len);
+        for (properties, building.items) |*property, built| property.* = .{ .name = built.name, .values = built.values.items };
+        self.properties.putAssumeCapacity(block, properties);
+    }
+    return self;
+}
+
+const Building = struct {
+    name: []const u8,
+    values: std.ArrayList([]const u8) = .empty,
+};
+
+/// Adds the block, properties and values a state's name names, e.g.
+/// `minecraft:oak_stairs[facing=east,half=bottom]`, to `named`.
+fn collectProperties(arena: std.mem.Allocator, named: *std.StringArrayHashMapUnmanaged(std.ArrayList(Building)), name: []const u8) !void {
+    const open = std.mem.indexOfScalar(u8, name, '[');
+    const block = name[0 .. open orelse name.len];
+    const entry = try named.getOrPut(arena, block);
+    if (!entry.found_existing) entry.value_ptr.* = .empty;
+    const start = open orelse return;
+    if (name[name.len - 1] != ']') return;
+    var pairs = std.mem.splitScalar(u8, name[start + 1 .. name.len - 1], ',');
+    while (pairs.next()) |pair| {
+        const equals = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        const key = pair[0..equals];
+        const value = pair[equals + 1 ..];
+        const property = for (entry.value_ptr.items) |*property| {
+            if (std.mem.eql(u8, property.name, key)) break property;
+        } else add: {
+            try entry.value_ptr.append(arena, .{ .name = key });
+            break :add &entry.value_ptr.items[entry.value_ptr.items.len - 1];
+        };
+        for (property.values.items) |known| {
+            if (std.mem.eql(u8, known, value)) break;
+        } else try property.values.append(arena, value);
+    }
+}
+
+/// The index of the state that block `block` with `given` properties is drawn as: its name with
+/// only the properties its states are named by, a value they don't name as empty
+/// (`BlockStates`). Null for a block the file doesn't have.
+pub fn find(self: *const Prepared, block: []const u8, given: anytype) ?u32 {
+    const properties = self.properties.get(block) orelse return null;
+    var buffer: [512]u8 = undefined;
+    var w: Io.Writer = .fixed(&buffer);
+    w.writeAll(block) catch return null;
+    for (properties, 0..) |property, i| {
+        const value = given.get(property.name) orelse "";
+        const known = for (property.values) |named| {
+            if (std.mem.eql(u8, named, value)) break value;
+        } else "";
+        w.print("{s}{s}={s}", .{ if (i == 0) "[" else ",", property.name, known }) catch return null;
+    }
+    if (properties.len > 0) w.writeByte(']') catch return null;
+    return self.byName.get(w.buffered());
+}
 
 /// The game, as the file's `info` and `--game` name it.
 pub const game = "minecraft";
@@ -233,6 +364,42 @@ fn averageOf(pixels: []const [4]u8) ?Tables.TextureColours {
     var average: [3]u8 = undefined;
     for (&average, sums) |*channel, sum| channel.* = @intCast((sum + weight / 2) / weight);
     return .{ .average = average, .grain = @splat(average) };
+}
+
+test find {
+    var self: Prepared = .{ .arena = .init(std.testing.allocator), .gameVersion = "", .states = &.{} };
+    defer self.deinit();
+    const arena = self.arena.allocator();
+    const stateNames = [_][]const u8{
+        "minecraft:stone",
+        "minecraft:oak_stairs[facing=east,half=bottom]",
+        "minecraft:oak_stairs[facing=west,half=bottom]",
+        "minecraft:wall[east=low,up=true]",
+        "minecraft:wall[east=,up=true]",
+    };
+    var named: std.StringArrayHashMapUnmanaged(std.ArrayList(Building)) = .empty;
+    for (stateNames, 0..) |name, i| {
+        try self.byName.put(arena, name, @intCast(i));
+        try collectProperties(arena, &named, name);
+    }
+    for (named.keys(), named.values()) |block, building| {
+        const properties = try arena.alloc(Property, building.items.len);
+        for (properties, building.items) |*property, built| property.* = .{ .name = built.name, .values = built.values.items };
+        try self.properties.put(arena, block, properties);
+    }
+    const Given = struct {
+        pairs: []const [2][]const u8,
+        fn get(given: @This(), name: []const u8) ?[]const u8 {
+            for (given.pairs) |pair| if (std.mem.eql(u8, pair[0], name)) return pair[1];
+            return null;
+        }
+    };
+    try std.testing.expectEqual(0, self.find("minecraft:stone", Given{ .pairs = &.{} }));
+    // A save's other properties are left out.
+    try std.testing.expectEqual(2, self.find("minecraft:oak_stairs", Given{ .pairs = &.{ .{ "waterlogged", "false" }, .{ "half", "bottom" }, .{ "facing", "west" }, .{ "shape", "straight" } } }));
+    // A value the states don't name is the empty one.
+    try std.testing.expectEqual(4, self.find("minecraft:wall", Given{ .pairs = &.{ .{ "east", "none" }, .{ "up", "true" } } }));
+    try std.testing.expectEqual(null, self.find("minecraft:dirt", Given{ .pairs = &.{} }));
 }
 
 test averageOf {

@@ -122,19 +122,22 @@ fn checkReplaceable(init: std.process.Init, path: []const u8) void {
     };
 }
 
-/// The prepared blocks, and the isometric view's sprites of them, mapped from their file.
-pub const Blocks = struct {
-    prepared: Prepared,
-    sprites: Sprites,
-    file: std.Io.File,
-    map: std.Io.File.MemoryMap,
+/// The prepared blocks, as a game's reader loads them (`Loaded`, its `Prepared`), and the
+/// isometric view's sprites of them, mapped from their file.
+pub fn Blocks(comptime Loaded: type) type {
+    return struct {
+        prepared: Loaded,
+        sprites: Sprites,
+        file: std.Io.File,
+        map: std.Io.File.MemoryMap,
 
-    pub fn deinit(self: *Blocks, io: std.Io) void {
-        self.prepared.deinit();
-        self.map.destroy(io);
-        self.file.close(io);
-    }
-};
+        pub fn deinit(self: *@This(), io: std.Io) void {
+            self.prepared.deinit();
+            self.map.destroy(io);
+            self.file.close(io);
+        }
+    };
+}
 
 const spriteFormat: storyblk.SpriteFormat = .{
     .generatorVersion = Sprites.generatorVersion,
@@ -145,7 +148,7 @@ const spriteFormat: storyblk.SpriteFormat = .{
 /// The blocks for the installed game and mods, from the prepared blocks file, prepared into it
 /// first if it wasn't prepared from them or `force` is set. Without the game, the file as it is,
 /// if this Storymap made it the way it would now, or else null; `force` then stops the program.
-pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
+pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks(Prepared) {
     const io = init.io;
     const path = paths.blocks orelse Prepared.defaultPath;
 
@@ -153,19 +156,7 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     if (game) |found| if (found == .minecraft) console.fail("`--game {s}`: a Vintage Story save needs Vintage Story", .{paths.game.?});
     const gamePath = if (game) |found| found.vintagestory else {
         if (force) noGame();
-        var problem: Problem = .none;
-        const found = open(init, path, &problem) catch |err| {
-            switch (problem) {
-                .none => switch (err) {
-                    error.FileNotFound => noBlocks(),
-                    error.NotPreparedBlocks => console.warn("{s}: not a prepared blocks file; drawing the map without block colours", .{path}),
-                    else => console.warn("{s}: could not read the prepared blocks ({s}); drawing the map without block colours", .{ path, @errorName(err) }),
-                },
-                .generatorVersion => |other| console.warn("{s}: prepared by another Storymap (its {s} section is version {}, this one makes {}); drawing the map without block colours; pass `--game <folder>` to prepare it again", .{ path, other.section, other.file, other.this }),
-                .blockWidth => |width| console.warn("{s}: sprites {} pixels wide, this Storymap's are {}; drawing the map without block colours; pass `--game <folder>` to prepare it again", .{ path, width, isometric.blockWidth }),
-            }
-            return null;
-        };
+        const found = openWithoutGame(Prepared, init, path, "Vintage Story", "<folder>") orelse return null;
         const mods = found.prepared.mods.len;
         console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier ({s}; game not found)", .{ versionText(found.prepared.gameVersion), mods, modText(mods), path });
         return found;
@@ -179,7 +170,7 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
         const existing = hashOf(init, path) orelse break :reason "no readable file";
         if (existing != hash) break :reason "the game, its mods or Storymap changed";
         var problem: Problem = .none;
-        const found = open(init, path, &problem) catch break :reason "the file could not be opened";
+        const found = open(Prepared, init, path, &problem) catch break :reason "the file could not be opened";
         const mods = assets.sources.items.len - 1;
         console.log("blocks: Vintage Story {s} and {} {s}, prepared earlier ({s})", .{ versionText(assets.version orelse ""), mods, modText(mods), path });
         return found;
@@ -188,7 +179,83 @@ pub fn blocks(init: std.process.Init, paths: Paths, force: bool) ?Blocks {
     console.log("blocks: preparing: {s} ({s})", .{ reason, path });
     prepareFile(init, &assets, path, hash);
     var problem: Problem = .none;
-    return open(init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
+    return open(Prepared, init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
+}
+
+/// Minecraft's blocks for a world last saved by Minecraft `version`, from the prepared blocks
+/// file, prepared into it first if it wasn't prepared from the client jar or `force` is set.
+/// The jar is the one `--game` names, the world's version for `--game minecraft`, and without
+/// `--game`, the world's version in the launcher's game folder. Without the jar, the file as it
+/// is, if this Storymap made it the way it would now, or else null; `force` then stops the
+/// program.
+pub fn minecraftBlocks(init: std.process.Init, paths: Paths, version: []const u8, force: bool) ?Blocks(mc.Prepared) {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const path = paths.blocks orelse mc.Prepared.defaultPath;
+    const wanted: ?[]const u8 = if (version.len > 0) version else null;
+    const found: ?[]const u8 = if (paths.game) |given| jar: {
+        if (std.mem.eql(u8, given, mc.game)) {
+            break :jar findMinecraft(init, given, wanted) catch null orelse
+                console.fail("`--game {s}`: could not locate Minecraft {s}, the world's version; pass `--game minecraft-<version>` or `--game <jar>`", .{ given, versionText(version) });
+        }
+        const game = findGame(init, paths) orelse console.fail("`--game {s}`: a Minecraft world needs Minecraft", .{given});
+        if (game != .minecraft) console.fail("`--game {s}`: a Minecraft world needs Minecraft", .{given});
+        break :jar game.minecraft;
+    } else standard: {
+        const folder = mc.Jar.standardFolder(arena, io, init.environ_map) orelse break :standard null;
+        break :standard mc.Jar.inGameFolder(arena, io, folder, wanted) catch null;
+    };
+    const jarPath = found orelse {
+        if (force) console.fail("could not locate Minecraft {s}, the world's version; pass `--game <jar>`", .{versionText(version)});
+        const opened = openWithoutGame(mc.Prepared, init, path, "Minecraft", "<jar>") orelse return null;
+        console.log("blocks: Minecraft {s}, prepared earlier ({s}; game not found)", .{ versionText(opened.prepared.gameVersion), path });
+        return opened;
+    };
+
+    const hash = hash: {
+        var scratch: std.heap.ArenaAllocator = .init(init.gpa);
+        defer scratch.deinit();
+        var jar = mc.Jar.open(scratch.allocator(), io, jarPath) catch |err| switch (err) {
+            error.NotAClientJar => console.fail("{s}: not a Minecraft client jar (no block assets)", .{jarPath}),
+            else => console.fail("{s}: could not read ({s})", .{ jarPath, @errorName(err) }),
+        };
+        defer jar.close(io);
+        break :hash mc.Prepared.hash(io, &jar, spriteFormat) catch |err| console.fail("{s}: could not read ({s})", .{ jarPath, @errorName(err) });
+    };
+    const reason = reason: {
+        if (force) break :reason "`--prepare`";
+        const existing = hashOf(init, path) orelse break :reason "no readable file";
+        if (existing != hash) break :reason "the game or Storymap changed";
+        var problem: Problem = .none;
+        const opened = open(mc.Prepared, init, path, &problem) catch break :reason "the file could not be opened";
+        console.log("blocks: Minecraft {s}, prepared earlier ({s})", .{ versionText(opened.prepared.gameVersion), path });
+        return opened;
+    };
+
+    console.log("blocks: preparing: {s} ({s})", .{ reason, path });
+    prepareMinecraft(init, jarPath, path);
+    var problem: Problem = .none;
+    return open(mc.Prepared, init, path, &problem) catch |err| console.fail("{s}: could not read the prepared blocks ({s})", .{ path, @errorName(err) });
+}
+
+/// The prepared blocks file at `path` as it is, for a render without the game to prepare it
+/// from (`game`, passed as `--game <hint>`); null, with a warning, for one that can't be read or
+/// wasn't made the way this Storymap would.
+fn openWithoutGame(comptime Loaded: type, init: std.process.Init, path: []const u8, comptime game: []const u8, comptime hint: []const u8) ?Blocks(Loaded) {
+    var problem: Problem = .none;
+    return open(Loaded, init, path, &problem) catch |err| {
+        switch (problem) {
+            .none => switch (err) {
+                error.FileNotFound => console.warn("could not locate " ++ game ++ "; drawing the map without block colours; pass `--game " ++ hint ++ "`", .{}),
+                error.NotPreparedBlocks => console.warn("{s}: not a prepared blocks file; drawing the map without block colours", .{path}),
+                else => console.warn("{s}: could not read the prepared blocks ({s}); drawing the map without block colours", .{ path, @errorName(err) }),
+            },
+            .game => |other| console.warn("{s}: prepared for {s}, not " ++ game ++ "; drawing the map without block colours", .{ path, other }),
+            .generatorVersion => |other| console.warn("{s}: prepared by another Storymap (its {s} section is version {}, this one makes {}); drawing the map without block colours; pass `--game " ++ hint ++ "` to prepare it again", .{ path, other.section, other.file, other.this }),
+            .blockWidth => |width| console.warn("{s}: sprites {} pixels wide, this Storymap's are {}; drawing the map without block colours; pass `--game " ++ hint ++ "` to prepare it again", .{ path, width, isometric.blockWidth }),
+        }
+        return null;
+    };
 }
 
 /// Prepares the blocks from `assets`, writes their sprites to the partial file as they're drawn,
@@ -346,15 +413,18 @@ fn hashOf(init: std.process.Init, path: []const u8) ?u64 {
 /// Why a prepared blocks file this Storymap could read isn't one it can use.
 const Problem = union(enum) {
     none,
+    /// Prepared for this game instead (`info.game`).
+    game: []const u8,
     /// A section made by other code than this Storymap's (spec §7).
     generatorVersion: struct { section: []const u8, file: u16, this: u16 },
     /// Sprites drawn for a cube's square this many pixels wide.
     blockWidth: u16,
 };
 
-/// The prepared blocks file at `path`, mapped. One made other than the way this Storymap makes
-/// it now is error.OtherVersion, and `problem` says how.
-fn open(init: std.process.Init, path: []const u8, problem: *Problem) !Blocks {
+/// The prepared blocks file at `path`, mapped and loaded as a game's reader loads them
+/// (`Loaded`, its `Prepared`). One made for another game, or other than the way this Storymap
+/// makes it now, is error.OtherVersion, and `problem` says how.
+fn open(comptime Loaded: type, init: std.process.Init, path: []const u8, problem: *Problem) !Blocks(Loaded) {
     const io = init.io;
     const file = try std.Io.Dir.cwd().openFile(io, path, .{});
     errdefer file.close(io);
@@ -363,7 +433,12 @@ fn open(init: std.process.Init, path: []const u8, problem: *Problem) !Blocks {
     var map: std.Io.File.MemoryMap = try .create(io, file, .{ .len = @intCast(size), .protection = .{ .read = true }, .populate = false });
     errdefer map.destroy(io);
     const parsed = try storyblk.parse(init.arena.allocator(), map.memory);
-    for (storyblk.Tables.names, storyblk.Tables.layoutVersions) |name, layout| try checkVersion(&parsed, name, layout, Prepared.generatorVersion, problem);
+    if (!std.mem.eql(u8, parsed.info.game, Loaded.game)) {
+        // Its name is in the file, which is closed before `problem` is read.
+        problem.* = .{ .game = try init.arena.allocator().dupe(u8, parsed.info.game) };
+        return error.OtherVersion;
+    }
+    for (storyblk.Tables.names, storyblk.Tables.layoutVersions) |name, layout| try checkVersion(&parsed, name, layout, Loaded.generatorVersion, problem);
     for ([_][]const u8{ Sprites.entriesSection, Sprites.layersSection }) |name| try checkVersion(&parsed, name, Sprites.layoutVersion, Sprites.generatorVersion, problem);
     // Each section starts on a multiple of 8 in the mapped file.
     const entries = try parsed.section(Sprites.entriesSection, Sprites.layoutVersion);
@@ -373,7 +448,7 @@ fn open(init: std.process.Init, path: []const u8, problem: *Problem) !Blocks {
         problem.* = .{ .blockWidth = sprites.blockWidth };
         return error.OtherVersion;
     }
-    const prepared = try Prepared.load(init.gpa, &parsed, sprites.count);
+    const prepared = try Loaded.load(init.gpa, &parsed, sprites.count);
     return .{ .prepared = prepared, .sprites = sprites, .file = file, .map = map };
 }
 
@@ -382,10 +457,6 @@ fn checkVersion(file: *const storyblk.File, name: []const u8, layoutVersion: u8,
     if (section.generatorVersion == generatorVersion) return;
     problem.* = .{ .generatorVersion = .{ .section = name, .file = section.generatorVersion, .this = generatorVersion } };
     return error.OtherVersion;
-}
-
-fn noBlocks() void {
-    console.warn("could not locate Vintage Story; drawing the map without block colours; pass `--game <folder>`", .{});
 }
 
 fn versionText(version: []const u8) []const u8 {

@@ -32,7 +32,7 @@ pub const spec: args.Spec = .{
         .{ .name = "no-write", .description = "Draw and encode the tiles without writing anything, to time the rest." },
         .{ .name = "json", .description = "Print the render's times and counts on stdout as one line of JSON, for scripts." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
-        .{ .name = "blocks", .value = "file", .description = "The prepared blocks file: " ++ Prepared.defaultPath ++ " by default." },
+        .{ .name = "blocks", .value = "file", .description = "The prepared blocks file: " ++ Prepared.defaultPath ++ " or " ++ mc.Prepared.defaultPath ++ " by default, by the game." },
         prepare.gameOption,
         prepare.dataOption,
     },
@@ -81,7 +81,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     const paths: prepare.Paths = .{
         .game = parsed.value("game"),
         .data = parsed.value("data"),
-        .blocks = parsed.value("blocks") orelse Prepared.defaultPath,
+        .blocks = parsed.value("blocks"),
     };
     const force = parsed.flag("prepare");
     const write = !parsed.flag("no-write");
@@ -115,8 +115,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
     if (prepare.isFolder(init.io, savePath)) {
         if (season != null) console.warn("`--season`: not supported for Minecraft", .{});
         if (area != null) console.fail("`--clip`: not implemented for Minecraft", .{});
-        if (force or parsed.value("blocks") != null or paths.game != null or paths.data != null)
-            console.fail("`--prepare`, `--blocks`, `--game` and `--data`: not implemented for Minecraft", .{});
+        if (paths.data != null) console.fail("`--data`: not used for Minecraft", .{});
         if (chosen.topdown and theme.topdown == .game) console.fail("the game's own top-down style: not supported for Minecraft; try `--style relief`", .{});
 
         const opening: std.Io.Timestamp = .now(init.io, .awake);
@@ -126,9 +125,18 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
             else => console.fail("{s}: could not read ({s})", .{ savePath, @errorName(err) }),
         };
         defer source.close(allocator);
-
         request.openTime = opening.untilNow(init.io, .awake);
-        return draw(mc.World, allocator, init.io, arena, &source, null, request);
+
+        const loading: std.Io.Timestamp = .now(init.io, .awake);
+        var prepared = prepare.minecraftBlocks(init, paths, source.version, force);
+        defer if (prepared) |*blocks| blocks.deinit(init.io);
+        request.blocksTime = loading.untilNow(init.io, .awake);
+        if (prepared) |*blocks| source.useBlocks(&blocks.prepared);
+        try draw(mc.World, allocator, init.io, arena, &source, if (prepared) |*blocks| &blocks.sprites else null, request);
+        // Known only once the views have read the blocks.
+        const unknown = source.unknownNames();
+        if (prepared != null and unknown.len > 0)
+            console.warn("{} {s} unknown to the prepared blocks, drawn in their map type's colour, e.g. {s}", .{ unknown.len, if (unknown.len == 1) "block" else "blocks", unknown[0] });
     } else {
         // The save is opened first, so one that can't be read stops the program before the blocks
         // are prepared for it.

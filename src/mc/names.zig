@@ -38,6 +38,17 @@ pub fn mapTypeOf(short: []const u8) world.MapType {
     return .land;
 }
 
+/// What a block's tinted faces are multiplied by, from its short name: the game's colours for
+/// grass, foliage and water in plains, or a few leaves' own.
+pub fn tintOf(short: []const u8) world.Rgb {
+    if (std.mem.eql(u8, short, "birch_leaves")) return .{ 0x80, 0xA7, 0x55 };
+    if (std.mem.eql(u8, short, "spruce_leaves")) return .{ 0x61, 0x99, 0x61 };
+    if (std.mem.eql(u8, short, "lily_pad")) return .{ 0x20, 0x80, 0x30 };
+    if (std.mem.indexOf(u8, short, "water") != null or std.mem.eql(u8, short, "bubble_column")) return .{ 0x3F, 0x76, 0xE4 };
+    if (std.mem.indexOf(u8, short, "leaves") != null or std.mem.indexOf(u8, short, "vine") != null) return .{ 0x77, 0xAB, 0x2F };
+    return .{ 0x91, 0xBD, 0x59 };
+}
+
 test shortName {
     try std.testing.expectEqualStrings("grass_block", shortName("minecraft:grass_block[snowy=false]"));
     try std.testing.expectEqualStrings("stone", shortName("minecraft:stone"));
