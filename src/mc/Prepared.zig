@@ -160,7 +160,7 @@ pub const defaultPath = game ++ ".storyblk";
 
 /// How the seven sections' contents are read from the jar: raise it when that changes, so files
 /// prepared before are prepared again.
-pub const generatorVersion: u16 = 2;
+pub const generatorVersion: u16 = 3;
 
 /// The section only Minecraft's files have: its biomes' colours (spec §3).
 const biomesSection = "biomes";
@@ -237,6 +237,8 @@ pub const Contents = struct {
         name: []const u8,
         /// The shapes it picks one of by where it is; none for a state its models don't draw.
         shapes: []const world.Shape,
+        /// A liquid's faces, drawn as a cube, which the game draws without a model.
+        cube: ?world.CubeFaces = null,
         /// Its top's colours in `textures`.
         colour: ?u32,
         colourCode: u8,
@@ -308,9 +310,10 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
             }
             try shapes.append(arena, .{ .boxes = alternate.boxes, .textures = faces });
         }
+        const short = names.shortName(read.name);
         const first = if (read.alternates.len > 0) read.alternates[0] else Models.Shape{ .boxes = &.{}, .textures = &.{} };
         const colour = if (first.top) |top| try textures.colours(first.textures[top].name) else null;
-        const mapType = names.mapTypeOf(names.shortName(read.name));
+        const mapType = names.mapTypeOf(short);
         const code = try colourCodes.getOrPut(arena, @tagName(mapType));
         const sixteenths = @round(first.height * 16);
         state.* = .{
@@ -321,6 +324,23 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
             .height = if (sixteenths >= 16 or shapes.items.len == 0) null else @intFromFloat(@max(sixteenths, 0)),
             .seeThrough = seeThrough,
         };
+        if (names.isLiquid(short)) {
+            const kind = if (names.isWater(short)) "water" else "lava";
+            const still = try std.fmt.allocPrint(arena, "minecraft:block/{s}_still", .{kind});
+            const flow = try std.fmt.allocPrint(arena, "minecraft:block/{s}_flow", .{kind});
+            const top = try textures.get(still) orelse continue;
+            const side = try textures.get(flow) orelse top;
+            const tinted = names.isWater(short);
+            const layer = struct {
+                fn of(texture: *const Textures.Texture, isTinted: bool) world.CubeFaces.Face {
+                    return if (isTinted) .{ .tinted = texture.layer } else .{ .plain = texture.layer };
+                }
+            }.of;
+            const sideFace = layer(side, tinted);
+            state.cube = .{ .up = layer(top, tinted), .south = sideFace, .east = sideFace, .north = sideFace, .west = sideFace };
+            state.seeThrough = top.seeThrough;
+            state.colour = try textures.colours(still);
+        }
     }
     const grassMap = if (try textures.get("minecraft:colormap/grass")) |texture| texture.layer[0] else null;
     const foliageMap = if (try textures.get("minecraft:colormap/foliage")) |texture| texture.layer[0] else null;

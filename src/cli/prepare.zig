@@ -104,7 +104,8 @@ fn prepareMinecraft(init: std.process.Init, jarPath: []const u8, path: []const u
         contents.states.len, versionText(jar.version), secondsSince(io, start), path,
     });
     const drawables = arena.alloc(isometric.Drawable, contents.states.len) catch console.fail("{s}: out of memory", .{path});
-    for (drawables, contents.states) |*drawable, state| drawable.* = .{
+    for (drawables, contents.states) |*drawable, *state| drawable.* = .{
+        .cube = if (state.cube) |*cube| cube else null,
         .shapes = state.shapes,
         .colour = if (state.colour) |i| contents.textures[i].average else @splat(0x80),
         .seeThrough = state.seeThrough,

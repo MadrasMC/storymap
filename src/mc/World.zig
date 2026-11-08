@@ -688,7 +688,7 @@ pub const Reader = struct {
                 const id = if (blockNames.isAir(blockNames.shortName(block.id))) -1 else try self.world.idOf(block);
                 column.ids[slot][entry] = id;
                 column.liquid[slot][entry] = self.world.isLiquid(id);
-                column.logged[slot][entry] = try isWaterlogged(block);
+                column.logged[slot][entry] = try isWaterlogged(block) or blockNames.isInWater(blockNames.shortName(block.id));
             }
             try self.loadBiomes(&column.biomes[slot], section);
         }

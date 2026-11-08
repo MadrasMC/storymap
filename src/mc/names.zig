@@ -10,8 +10,21 @@ pub fn shortName(name: []const u8) []const u8 {
     return short[0 .. std.mem.indexOfScalar(u8, short, '[') orelse short.len];
 }
 
+/// Water and lava, and a bubble column, which is water a player can't stand in.
 pub fn isLiquid(short: []const u8) bool {
-    return std.mem.eql(u8, short, "water") or std.mem.eql(u8, short, "lava");
+    return isWater(short) or std.mem.eql(u8, short, "lava");
+}
+
+pub fn isWater(short: []const u8) bool {
+    return std.mem.eql(u8, short, "water") or std.mem.eql(u8, short, "bubble_column");
+}
+
+/// Plants that grow only under water, and stand in it without a `waterlogged` property.
+pub fn isInWater(short: []const u8) bool {
+    for ([_][]const u8{ "seagrass", "tall_seagrass", "kelp", "kelp_plant" }) |plant| {
+        if (std.mem.eql(u8, short, plant)) return true;
+    }
+    return false;
 }
 
 pub fn isAir(short: []const u8) bool {
