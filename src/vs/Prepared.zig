@@ -119,6 +119,9 @@ pub fn hash(io: Io, assets: *const Assets, sprites: SpriteFormat) !u64 {
 /// The six sections' contents before they're written: the blocks prepared from the assets,
 /// with what drawing their sprites needs, and the tables they name.
 pub const Contents = struct {
+    /// The sections `encode` makes.
+    pub const sectionCount = Tables.names.len;
+
     gameVersion: []const u8,
     mods: []const storyblk.Mod,
     domains: []const []const u8,

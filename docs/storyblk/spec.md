@@ -22,7 +22,7 @@ A cube's square is the square a cube's sprite is drawn in, `sprites.block_width`
 
 ## 3. Layout
 
-`header`, `info` and `section_table` come first, in that order, from the start of the file. `header` is 24 bytes, so `header.hash` can be read without reading the rest. Each section starts on a multiple of 8 bytes from the start of the file, after `section_table`, and lies wholly within the file. A section's length doesn't count the bytes after it up to the next multiple of 8, which are 0. A file has each of the sections below once, and a reader skips sections whose names it doesn't know. They can be in any order; Storymap writes them in the order below, so the pixel data in `sprite_layers` comes last.
+`header`, `info` and `section_table` come first, in that order, from the start of the file. `header` is 24 bytes, so `header.hash` can be read without reading the rest. Each section starts on a multiple of 8 bytes from the start of the file, after `section_table`, and lies wholly within the file. A section's length doesn't count the bytes after it up to the next multiple of 8, which are 0. A file has each of the sections below once, `biomes` only for Minecraft, and a reader skips sections whose names it doesn't know. They can be in any order; Storymap writes them in the order below, so the pixel data in `sprite_layers` comes last.
 
 `sprites` and `sprite_layers` are read where the file is mapped: every integer in them lies at a multiple of its own size, and every Sprite and SpriteLayers at a multiple of 4. The other sections are read a field at a time: strings of any length put the integers after them anywhere.
 
@@ -95,6 +95,15 @@ The section is 4 + 93 × `count` bytes long.
 | --- | --- | --- |
 | `count` | u16 | – |
 | `entries` | \[count][String](#string) | the domains the game and mods have assets in ([Mods](../rendering.md#mods)), e.g. `game`, `primitivesurvival`; `minecraft` for Minecraft |
+
+### `biomes`
+
+Only Minecraft's files have it: the colours a biome gives the faces of grass, leaves and water that the game tints. Which a block takes is the reader's: the game's assets don't say.
+
+| Field | Type | Contents |
+| --- | --- | --- |
+| `count` | u16 | – |
+| `entries` | \[count][Biome](#biome) | one for each biome the game's data has |
 
 ### `sprites`
 
@@ -200,6 +209,15 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 
 A block state's sprites are a run of `variants` × `alternates` × `turns` Sprites in `sprites.entries` (§2). The Sprite at index `first_sprite + (turn × alternates + alternate) × variants + variant` is that variant of that alternate, in that turn. Block states drawn from the same textures, in the same shapes and turns, share their sprites: their `first_sprite`, `variants`, `alternates` and `turns` are the same. Block states drawn from different textures have sprites of their own, even where those look the same.
 
+### Biome
+
+| Field | Type | Contents |
+| --- | --- | --- |
+| `name` | [String](#string) | as a save names it, e.g. `minecraft:plains` |
+| `grass` | [3]u8 | red, green and blue: the biome's own grass colour, or else the grass colour map's at its temperature and downfall |
+| `foliage` | [3]u8 | the same for leaves, from the foliage colour map |
+| `water` | [3]u8 | – |
+
 ### Sprite
 
 16 bytes.
@@ -238,6 +256,7 @@ A reader rejects the whole file when:
 - a BlockState's `material` isn't below `materials.count`, its `colour_code` isn't below `colour_codes.count`, its `colour` or `grain` isn't below `texture_colours.count` and isn't 0xFFFFFFFF, or its `climate_colour_map` or `season_colour_map` isn't below `colour_maps.count` and isn't 0xFF
 - a BlockState has `variants` but no `alternates` or `turns`, or its sprites or `cover_sprite` go past `sprites.count`
 - the length of `texture_colours` or `sprites` isn't the one §3 gives
+- a Minecraft file has no `biomes`
 - a Sprite's `offset` isn't a multiple of 4, or its SpriteLayers go past the end of `sprite_layers`
 
 ## 6. Hash
@@ -258,6 +277,6 @@ A layout version says how to read something, and a generator version how its con
 
 - The container's version, `header.version`, changes when `header`, `info` or `section_table` change.
 - A section's `layout_version` changes when that section's layout changes. In container version 3, `colour_maps`'s, `sprites`'s and `sprite_layers`'s `layout_version` is 2, and every other section's 1. `block_states` replaced `blocks`, whose last layout version was 3.
-- A section's `generator_version` changes when the code that makes its contents changes without the layout changing: a block read differently, or a sprite drawn differently. Storymap gives `block_states`, `materials`, `colour_codes`, `texture_colours`, `colour_maps` and `domains` the version of how it reads the game's assets, and `sprites` and `sprite_layers` the version of how it draws sprites.
+- A section's `generator_version` changes when the code that makes its contents changes without the layout changing: a block read differently, or a sprite drawn differently. Storymap gives `block_states`, `materials`, `colour_codes`, `texture_colours`, `colour_maps`, `domains` and `biomes` the version of how it reads the game's assets, and `sprites` and `sprite_layers` the version of how it draws sprites.
 
 A reader rejects a file with a layout version it doesn't know (§5). A `generator_version` other than the reader's own doesn't make the file invalid: the section was made by other code, and what to do with it is the reader's choice. Readers that only show the file go on reading it. Storymap, with the game, finds the hash different (§6) and prepares the file again; without it, it compares the generator versions themselves (§1).

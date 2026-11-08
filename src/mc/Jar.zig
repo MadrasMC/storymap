@@ -1,6 +1,7 @@
-//! Minecraft's client jar, whose assets hold its blocks' states, models and textures: found where
-//! the official launcher keeps it, `versions/<version>/<version>.jar` in the game folder, and
-//! read in place. The game folder is only ever read.
+//! Minecraft's client jar, whose assets hold its blocks' states, models and textures, and whose
+//! data its biomes: found where the official launcher keeps it,
+//! `versions/<version>/<version>.jar` in the game folder, and read in place. The game folder is
+//! only ever read.
 const Jar = @This();
 
 const std = @import("std");
@@ -11,11 +12,16 @@ const Dir = Io.Dir;
 file: Io.File,
 /// The needed entries, by path below `assets/minecraft/`, e.g. "blockstates/stone.json".
 entries: std.StringHashMapUnmanaged(std.zip.Iterator.Entry),
+/// The needed entries of the game's data, by path below `data/minecraft/`, e.g.
+/// "worldgen/biome/plains.json".
+data: std.StringHashMapUnmanaged(std.zip.Iterator.Entry),
 /// The game version, from the jar's `version.json`, e.g. "26.3"; empty if it has none.
 version: []const u8,
 
 /// The folders below `assets/minecraft/` that preparing blocks reads.
 const neededFolders = [_][]const u8{ "blockstates/", "models/block/", "textures/block/", "textures/colormap/" };
+/// The folders below `data/minecraft/` that preparing blocks reads.
+const neededDataFolders = [_][]const u8{"worldgen/biome/"};
 
 /// The largest file read; the biggest block texture in 26.3 is a few KiB.
 const maxFileBytes = 16 << 20;
@@ -28,19 +34,21 @@ pub fn open(arena: std.mem.Allocator, io: Io, path: []const u8) !Jar {
     var reader = file.reader(io, &buffer);
     var it = try std.zip.Iterator.init(&reader);
     var entries: std.StringHashMapUnmanaged(std.zip.Iterator.Entry) = .empty;
+    var data: std.StringHashMapUnmanaged(std.zip.Iterator.Entry) = .empty;
     var versionEntry: ?std.zip.Iterator.Entry = null;
     var name: [Dir.max_path_bytes]u8 = undefined;
     while (try it.next()) |entry| {
         const entryPath = try entry.getFilename(&reader, &name, .{});
         if (std.mem.eql(u8, entryPath, "version.json")) versionEntry = entry;
-        const prefix = "assets/minecraft/";
-        if (!std.mem.startsWith(u8, entryPath, prefix) or entryPath[entryPath.len - 1] == '/') continue;
-        const key = entryPath[prefix.len..];
-        if (!isNeeded(key)) continue;
-        try entries.put(arena, try arena.dupe(u8, key), entry);
+        if (entryPath.len == 0 or entryPath[entryPath.len - 1] == '/') continue;
+        for ([_][]const u8{ "assets/minecraft/", "data/minecraft/" }, [_]*std.StringHashMapUnmanaged(std.zip.Iterator.Entry){ &entries, &data }, [_][]const []const u8{ &neededFolders, &neededDataFolders }) |prefix, map, folders| {
+            if (!std.mem.startsWith(u8, entryPath, prefix)) continue;
+            const key = entryPath[prefix.len..];
+            if (isIn(key, folders)) try map.put(arena, try arena.dupe(u8, key), entry);
+        }
     }
     if (entries.count() == 0) return error.NotAClientJar;
-    var self: Jar = .{ .file = file, .entries = entries, .version = "" };
+    var self: Jar = .{ .file = file, .entries = entries, .data = data, .version = "" };
     if (versionEntry) |entry| self.version = try versionOf(arena, try self.extract(arena, io, entry));
     return self;
 }
@@ -49,8 +57,8 @@ pub fn close(self: *Jar, io: Io) void {
     self.file.close(io);
 }
 
-fn isNeeded(path: []const u8) bool {
-    for (neededFolders) |folder| if (std.mem.startsWith(u8, path, folder)) return true;
+fn isIn(path: []const u8, folders: []const []const u8) bool {
+    for (folders) |folder| if (std.mem.startsWith(u8, path, folder)) return true;
     return false;
 }
 
@@ -64,6 +72,13 @@ fn versionOf(arena: std.mem.Allocator, json: []const u8) ![]const u8 {
 /// doesn't have it or it isn't needed.
 pub fn read(self: *const Jar, allocator: std.mem.Allocator, io: Io, path: []const u8) !?[]u8 {
     const entry = self.entries.get(path) orelse return null;
+    return try self.extract(allocator, io, entry);
+}
+
+/// Reads `path` below `data/minecraft/`, e.g. "worldgen/biome/plains.json"; null if the jar
+/// doesn't have it or it isn't needed.
+pub fn readData(self: *const Jar, allocator: std.mem.Allocator, io: Io, path: []const u8) !?[]u8 {
+    const entry = self.data.get(path) orelse return null;
     return try self.extract(allocator, io, entry);
 }
 

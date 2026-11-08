@@ -38,15 +38,27 @@ pub fn mapTypeOf(short: []const u8) world.MapType {
     return .land;
 }
 
-/// What a block's tinted faces are multiplied by, from its short name: the game's colours for
-/// grass, foliage and water in plains, or a few leaves' own.
-pub fn tintOf(short: []const u8) world.Rgb {
-    if (std.mem.eql(u8, short, "birch_leaves")) return .{ 0x80, 0xA7, 0x55 };
-    if (std.mem.eql(u8, short, "spruce_leaves")) return .{ 0x61, 0x99, 0x61 };
-    if (std.mem.eql(u8, short, "lily_pad")) return .{ 0x20, 0x80, 0x30 };
-    if (std.mem.indexOf(u8, short, "water") != null or std.mem.eql(u8, short, "bubble_column")) return .{ 0x3F, 0x76, 0xE4 };
-    if (std.mem.indexOf(u8, short, "leaves") != null or std.mem.indexOf(u8, short, "vine") != null) return .{ 0x77, 0xAB, 0x2F };
-    return .{ 0x91, 0xBD, 0x59 };
+/// What a block's tinted faces are multiplied by: the colour its biome gives grass, leaves or
+/// water, or one of its own.
+pub const Tint = union(enum) {
+    grass,
+    foliage,
+    water,
+    fixed: world.Rgb,
+};
+
+/// What a block's tinted faces are multiplied by, from its short name; the game's assets don't
+/// say.
+pub fn tintOf(short: []const u8) Tint {
+    if (std.mem.eql(u8, short, "birch_leaves")) return .{ .fixed = .{ 0x80, 0xA7, 0x55 } };
+    if (std.mem.eql(u8, short, "spruce_leaves")) return .{ .fixed = .{ 0x61, 0x99, 0x61 } };
+    if (std.mem.eql(u8, short, "mangrove_leaves")) return .{ .fixed = .{ 0x92, 0xC6, 0x48 } };
+    if (std.mem.eql(u8, short, "lily_pad")) return .{ .fixed = .{ 0x20, 0x80, 0x30 } };
+    // Its tint goes with its power, which its states aren't named by: half power.
+    if (std.mem.eql(u8, short, "redstone_wire")) return .{ .fixed = .{ 0xB0, 0x00, 0x00 } };
+    if (std.mem.indexOf(u8, short, "water") != null or std.mem.eql(u8, short, "bubble_column")) return .water;
+    if (std.mem.indexOf(u8, short, "leaves") != null or std.mem.indexOf(u8, short, "vine") != null) return .foliage;
+    return .grass;
 }
 
 test shortName {

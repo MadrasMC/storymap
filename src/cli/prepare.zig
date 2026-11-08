@@ -99,6 +99,7 @@ fn prepareMinecraft(init: std.process.Init, jarPath: []const u8, path: []const u
         console.fail("{s}: could not prepare the blocks ({s})", .{ path, @errorName(err) });
     for (problems.blockStates.items) |file| console.warn("{s}: could not read; its block is left out", .{file});
     for (problems.models.keys()) |model| console.warn("{s}: could not read; left out of the blocks that use it", .{model});
+    for (problems.biomes.items) |file| console.warn("{s}: could not read; its biome is drawn as plains", .{file});
     console.log("blocks: {} block states prepared from Minecraft {s} in {d:.1} s ({s})", .{
         contents.states.len, versionText(jar.version), secondsSince(io, start), path,
     });
@@ -389,7 +390,7 @@ fn hashAssets(io: std.Io, assets: *const Assets) u64 {
 
 /// Every section of the file, in the order they're written, with the `sprites` section's bytes
 /// `entries`. `sprite_layers`, last, is in the file already.
-fn encodeSections(arena: std.mem.Allocator, contents: anytype, entries: []const u8) ![storyblk.Tables.names.len + 2]storyblk.Section {
+fn encodeSections(arena: std.mem.Allocator, contents: anytype, entries: []const u8) ![std.meta.Child(@TypeOf(contents)).sectionCount + 2]storyblk.Section {
     return (try contents.encode(arena)) ++ [2]storyblk.Section{
         .{ .name = Sprites.entriesSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = entries },
         .{ .name = Sprites.layersSection, .layoutVersion = Sprites.layoutVersion, .generatorVersion = Sprites.generatorVersion, .bytes = "" },

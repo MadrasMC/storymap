@@ -13,6 +13,7 @@ const Region = @import("Region.zig");
 const Chunk = @import("Chunk.zig");
 const blockNames = @import("names.zig");
 const Prepared = @import("Prepared.zig");
+const Biomes = @import("Biomes.zig");
 
 comptime {
     std.debug.assert(tiles.size == Region.side * Chunk.side);
@@ -432,6 +433,9 @@ pub const Reader = struct {
         ids: [][maxPalette]i32,
         logged: [][maxPalette]bool,
         liquid: [][maxPalette]bool,
+        /// Each 4 × 4 × 4 cell's biome (`Chunk.Section.unpackBiomes`), as its index in the
+        /// prepared biomes, or `noBiome`.
+        biomes: [][Chunk.biomes]u16,
 
         fn init(allocator: std.mem.Allocator, sections: usize) !Column {
             const present = try allocator.alloc(bool, sections);
@@ -442,10 +446,13 @@ pub const Reader = struct {
             errdefer allocator.free(ids);
             const logged = try allocator.alloc([maxPalette]bool, sections);
             errdefer allocator.free(logged);
-            return .{ .present = present, .indexes = indexes, .ids = ids, .logged = logged, .liquid = try allocator.alloc([maxPalette]bool, sections) };
+            const liquid = try allocator.alloc([maxPalette]bool, sections);
+            errdefer allocator.free(liquid);
+            return .{ .present = present, .indexes = indexes, .ids = ids, .logged = logged, .liquid = liquid, .biomes = try allocator.alloc([Chunk.biomes]u16, sections) };
         }
 
         fn deinit(self: Column, allocator: std.mem.Allocator) void {
+            allocator.free(self.biomes);
             allocator.free(self.liquid);
             allocator.free(self.logged);
             allocator.free(self.ids);
@@ -466,6 +473,8 @@ pub const Reader = struct {
     /// The most palette entries kept for a section; blocks past them are passed over. The largest
     /// palette seen is 47.
     const maxPalette = 512;
+    /// A biome cell whose biome the prepared blocks don't have.
+    const noBiome = std.math.maxInt(u16);
 
     pub fn init(source: *const World, allocator: std.mem.Allocator, _: ?MapStyle) !Reader {
         const buffer = try allocator.alloc(u8, maxChunkBytes);
@@ -681,13 +690,58 @@ pub const Reader = struct {
                 column.liquid[slot][entry] = self.world.isLiquid(id);
                 column.logged[slot][entry] = try isWaterlogged(block);
             }
+            try self.loadBiomes(&column.biomes[slot], section);
         }
     }
 
-    /// The colour multiplied into a block's tinted faces: its prepared block state's, the same
-    /// everywhere, as biomes aren't read yet.
-    pub fn tint(self: *Reader, id: i32, _: i64, _: i64, _: i64) !world.Rgb {
-        return if (self.world.stateOf(id)) |state| state.tint else @splat(255);
+    /// A section's biomes, as indexes in the prepared biomes; `noBiome` without them.
+    fn loadBiomes(self: *const Reader, out: *[Chunk.biomes]u16, section: Chunk.Section) !void {
+        const prepared = self.world.prepared orelse return @memset(out, noBiome);
+        var byEntry: [Chunk.biomes]u16 = @splat(noBiome);
+        var palette = section.biomePalette.iterator();
+        var entry: usize = 0;
+        while (try palette.next()) |item| : (entry += 1) {
+            if (entry >= byEntry.len) break;
+            if (item == .string) byEntry[entry] = prepared.biomeIndexes.get(item.string) orelse noBiome;
+        }
+        try section.unpackBiomes(out);
+        for (out) |*cell| cell.* = if (cell.* < byEntry.len) byEntry[cell.*] else noBiome;
+    }
+
+    /// The colour multiplied into a block's tinted faces: the colour of grass, leaves or water in
+    /// its biome, or its own. Plains' where its biome isn't known.
+    pub fn tint(self: *Reader, id: i32, x: i64, y: i64, z: i64) !world.Rgb {
+        const state = self.world.stateOf(id) orelse return @splat(255);
+        const biome = try self.biomeAt(x, y, z) orelse &Biomes.plains;
+        return switch (state.tint) {
+            .grass => biome.grass,
+            .foliage => biome.foliage,
+            .water => biome.water,
+            .fixed => |rgb| rgb,
+        };
+    }
+
+    /// The biome of the block at (x, y, z), y counting up from the world's bottom; null where
+    /// its chunk or biome isn't known. Drawing a tile follows its lines of sight through more
+    /// chunks than `readChunk` keeps, so the block's chunk may be read again.
+    fn biomeAt(self: *Reader, x: i64, y: i64, z: i64) !?*const Biomes.Biome {
+        const prepared = self.world.prepared orelse return null;
+        if (y < 0) return null;
+        const side = world.Chunk.side;
+        const cx = std.math.cast(i32, @divFloor(x, side)) orelse return null;
+        const cz = std.math.cast(i32, @divFloor(z, side)) orelse return null;
+        const cube = try self.cubeAt(cx, cz);
+        const inX: usize = @intCast(x - @as(i64, cx) * side);
+        const inZ: usize = @intCast(z - @as(i64, cz) * side);
+        const place = (inZ / Chunk.side) * cubeColumns + inX / Chunk.side;
+        if (!cube.full[place]) return null;
+        const column = cube.columns[place];
+        const section: usize = @intCast(@divFloor(y, Chunk.side));
+        if (section >= column.present.len or !column.present[section]) return null;
+        const at = Chunk.biomeSide;
+        const cell = ((@as(usize, @intCast(@mod(y, Chunk.side))) / at * at + inZ % Chunk.side / at) * at) + inX % Chunk.side / at;
+        const index = column.biomes[section][cell];
+        return if (index == noBiome) null else &prepared.biomes[index];
     }
 
     fn isWaterlogged(block: Chunk.Block) !bool {

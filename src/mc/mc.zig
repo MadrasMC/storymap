@@ -15,4 +15,5 @@ pub const game = Prepared.game;
 test {
     std.testing.refAllDecls(@This());
     _ = @import("names.zig");
+    _ = @import("Biomes.zig");
 }

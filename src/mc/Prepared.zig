@@ -12,9 +12,11 @@ const stb = @import("stb_image");
 const Jar = @import("Jar.zig");
 const Blocks = @import("Blocks.zig");
 const Models = @import("Models.zig");
+const Biomes = @import("Biomes.zig");
 const names = @import("names.zig");
 const Tables = storyblk.Tables;
 const Image = world.Image;
+const Biome = Biomes.Biome;
 
 arena: std.heap.ArenaAllocator,
 gameVersion: []const u8,
@@ -22,6 +24,10 @@ gameVersion: []const u8,
 states: []const BlockState,
 /// Each state's index in `states`, by its name.
 byName: std.StringHashMapUnmanaged(u32) = .empty,
+/// In the order of the `biomes` section.
+biomes: []const Biome = &.{},
+/// Each biome's index in `biomes`, by its name.
+biomeIndexes: std.StringHashMapUnmanaged(u16) = .empty,
 /// Each block's properties that its states are named by, in name order, by the block's name,
 /// e.g. "minecraft:oak_stairs".
 properties: std.StringHashMapUnmanaged([]const Property) = .empty,
@@ -35,9 +41,8 @@ pub const BlockState = struct {
     mapType: world.MapType,
     liquid: bool,
     seeThrough: bool,
-    /// What its tinted faces are multiplied by: the game's colour for its kind of block in
-    /// plains, as biomes aren't read yet.
-    tint: world.Rgb,
+    /// What its tinted faces are multiplied by.
+    tint: names.Tint,
 };
 
 /// A property, and the values a block's states are named with.
@@ -85,6 +90,9 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
         try collectProperties(arena, &named, state.name);
     }
     self.states = states;
+    self.biomes = try readBiomes(arena, try file.section(biomesSection, biomesLayoutVersion));
+    try self.biomeIndexes.ensureTotalCapacity(arena, @intCast(self.biomes.len));
+    for (self.biomes, 0..) |biome, i| self.biomeIndexes.putAssumeCapacity(biome.name, @intCast(i));
     try self.properties.ensureTotalCapacity(arena, @intCast(named.count()));
     for (named.keys(), named.values()) |block, building| {
         const properties = try arena.alloc(Property, building.items.len);
@@ -150,9 +158,44 @@ pub const game = "minecraft";
 /// Where the prepared blocks file goes when no path is given, relative to the current folder.
 pub const defaultPath = game ++ ".storyblk";
 
-/// How the six sections' contents are read from the jar: raise it when that changes, so files
+/// How the seven sections' contents are read from the jar: raise it when that changes, so files
 /// prepared before are prepared again.
-pub const generatorVersion: u16 = 1;
+pub const generatorVersion: u16 = 2;
+
+/// The section only Minecraft's files have: its biomes' colours (spec §3).
+const biomesSection = "biomes";
+const biomesLayoutVersion: u8 = 1;
+/// The bytes of a Biome with an empty name.
+const biomeLength = 2 + 3 * 3;
+
+fn writeBiomes(arena: std.mem.Allocator, biomes: []const Biome) !storyblk.Section {
+    if (biomes.len > std.math.maxInt(u16)) return error.TooManyBiomes;
+    var bytes: Io.Writer.Allocating = .init(arena);
+    const w = &bytes.writer;
+    try w.writeInt(u16, @intCast(biomes.len), .little);
+    for (biomes) |biome| {
+        try storyblk.writeString(w, biome.name);
+        try w.writeAll(&biome.grass);
+        try w.writeAll(&biome.foliage);
+        try w.writeAll(&biome.water);
+    }
+    return .{ .name = biomesSection, .layoutVersion = biomesLayoutVersion, .generatorVersion = generatorVersion, .bytes = bytes.written() };
+}
+
+/// The `biomes` section's biomes, kept in `arena`, their names where the file is.
+fn readBiomes(arena: std.mem.Allocator, section: storyblk.Section) ![]const Biome {
+    var r: storyblk.Reader = .{ .bytes = section.bytes };
+    const count = try r.int(u16);
+    if (count > section.bytes.len / biomeLength) return error.NotPreparedBlocks;
+    const biomes = try arena.alloc(Biome, count);
+    for (biomes) |*biome| biome.* = .{
+        .name = try r.string(),
+        .grass = (try r.take(3))[0..3].*,
+        .foliage = (try r.take(3))[0..3].*,
+        .water = (try r.take(3))[0..3].*,
+    };
+    return biomes;
+}
 
 /// The only domain: the game's assets are all in `minecraft`.
 const domains = [_][]const u8{game};
@@ -166,6 +209,7 @@ pub fn hash(io: Io, jar: *const Jar, sprites: storyblk.SpriteFormat) !u64 {
     var hasher: std.hash.Wyhash = .init(0);
     std.hash.autoHash(&hasher, storyblk.version);
     std.hash.autoHash(&hasher, Tables.layoutVersions);
+    std.hash.autoHash(&hasher, biomesLayoutVersion);
     std.hash.autoHash(&hasher, generatorVersion);
     std.hash.autoHash(&hasher, sprites);
     hasher.update(game);
@@ -177,13 +221,17 @@ pub fn hash(io: Io, jar: *const Jar, sprites: storyblk.SpriteFormat) !u64 {
     return hasher.final();
 }
 
-/// The six sections' contents before they're written, with what drawing the sprites needs.
+/// The seven sections' contents before they're written, with what drawing the sprites needs.
 pub const Contents = struct {
+    /// The sections `encode` makes.
+    pub const sectionCount = Tables.names.len + 1;
+
     gameVersion: []const u8,
     states: []State,
     textures: []const Tables.TextureColours,
     /// The map types the states are, by name (`world.MapType`), each once.
     colourCodes: []const []const u8,
+    biomes: []const Biome,
 
     pub const State = struct {
         name: []const u8,
@@ -210,8 +258,9 @@ pub const Contents = struct {
         return .{ .game = game, .gameVersion = try arena.dupe(u8, self.gameVersion), .mods = &.{} };
     }
 
-    /// The six sections, in the order of `Tables.names`, their bytes kept in `arena`.
-    pub fn encode(self: *const Contents, arena: std.mem.Allocator) ![Tables.names.len]storyblk.Section {
+    /// The six sections in the order of `Tables.names`, then `biomes`, their bytes kept in
+    /// `arena`.
+    pub fn encode(self: *const Contents, arena: std.mem.Allocator) ![sectionCount]storyblk.Section {
         var encoder: Tables.Encoder = try .init(arena, .{
             .materials = &materials,
             .colourCodes = self.colourCodes,
@@ -232,7 +281,7 @@ pub const Contents = struct {
             .turns = state.sprites.turns,
             .coverSprite = state.sprites.cover,
         });
-        return encoder.finish(arena, generatorVersion);
+        return (try encoder.finish(arena, generatorVersion)) ++ [1]storyblk.Section{try writeBiomes(arena, self.biomes)};
     }
 };
 
@@ -273,11 +322,14 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
             .seeThrough = seeThrough,
         };
     }
+    const grassMap = if (try textures.get("minecraft:colormap/grass")) |texture| texture.layer[0] else null;
+    const foliageMap = if (try textures.get("minecraft:colormap/foliage")) |texture| texture.layer[0] else null;
     return .{
         .gameVersion = jar.version,
         .states = states,
         .textures = textures.read.items,
         .colourCodes = colourCodes.keys(),
+        .biomes = try Biomes.read(arena, io, jar, grassMap, foliageMap, &problems.biomes),
     };
 }
 

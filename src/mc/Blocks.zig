@@ -27,6 +27,8 @@ pub const Problems = struct {
     blockStates: std.ArrayList([]const u8) = .empty,
     /// Models that couldn't be read, each once, e.g. "minecraft:block/stone".
     models: std.StringArrayHashMapUnmanaged(void) = .empty,
+    /// Biome files that couldn't be read, e.g. "worldgen/biome/plains.json".
+    biomes: std.ArrayList([]const u8) = .empty,
 };
 
 /// Reads every block state in `jar`, kept in `arena`.
