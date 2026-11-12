@@ -81,16 +81,31 @@ pub fn next(self: *ProtoBuf) Error!?Message {
 }
 
 pub fn parseVarInt(self: *ProtoBuf) Error!u64 {
-    var result: u64 = 0;
-    for (0..10) |i| {
-        const byte = (try self.take(1))[0];
-        result |= @as(u64, byte & 0x7f) << @intCast(7 * i);
-        if (byte & 0x80 == 0) return result;
+    const bytes = self.peek(10);
+    // Tags of fields 1 to 15 and values below 128 fit in one byte.
+    if (bytes.len > 0 and bytes[0] < 0x80) {
+        self.cur += 1;
+        return bytes[0];
     }
-    return error.InvalidVarint;
+    var result: u64 = 0;
+    for (bytes, 0..) |byte, i| {
+        result |= @as(u64, byte & 0x7f) << @intCast(7 * i);
+        if (byte & 0x80 == 0) {
+            self.cur += i + 1;
+            return result;
+        }
+    }
+    return if (bytes.len < 10) error.EndOfData else error.InvalidVarint;
 }
 
-/// The only place that touches `buf` directly.
+/// Up to `max` bytes at the current position, without moving past them.
+/// With `take`, the only place that touches `buf` directly.
+fn peek(self: *ProtoBuf, max: usize) []const u8 {
+    const rest = self.buf[self.cur..];
+    return rest[0..@min(rest.len, max)];
+}
+
+/// With `peek`, the only place that touches `buf` directly.
 fn take(self: *ProtoBuf, len: usize) Error![]const u8 {
     if (self.buf.len - self.cur < len) return error.EndOfData;
     defer self.cur += len;
@@ -100,6 +115,12 @@ fn take(self: *ProtoBuf, len: usize) Error![]const u8 {
 test "117" {
     var parser = ProtoBuf{ .buf = &.{117} };
     try std.testing.expect(try parser.parseVarInt() == 117);
+}
+
+test "a 10-byte varint at the end of the data" {
+    var parser = ProtoBuf{ .buf = &.{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 } };
+    try std.testing.expectEqual(std.math.maxInt(u64), try parser.parseVarInt());
+    try std.testing.expectEqual(10, parser.cur);
 }
 
 test "every wire type" {
