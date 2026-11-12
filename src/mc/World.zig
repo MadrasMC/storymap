@@ -266,6 +266,13 @@ pub fn isLiquid(self: *const World, id: i32) bool {
     return if (self.nameOf(id)) |i| self.names.liquids[i] else false;
 }
 
+/// How high a liquid's surface is where none of it is above, in sixteenths of a block; 16 for any
+/// other block.
+pub fn surfaceHeight(self: *const World, id: i32) u8 {
+    const state = self.stateOf(id) orelse return 16;
+    return if (state.liquid) state.height else 16;
+}
+
 /// A block's top's colour, or for one the prepared blocks don't have, its map type's.
 pub fn colour(self: *const World, id: i32) world.Rgb {
     if (self.stateOf(id)) |state| if (state.colour) |rgb| return rgb;
@@ -344,6 +351,19 @@ fn idOf(self: *const World, block: Chunk.Block) !i32 {
         names.liquids[@intCast(next)] = blockNames.isLiquid(short);
     }
     return id;
+}
+
+/// The ID of the water a block stands in: a source's.
+fn waterId(self: *const World) !i32 {
+    const Source = struct {
+        pub fn get(_: @This(), name: []const u8) ?[]const u8 {
+            return if (std.mem.eql(u8, name, "level")) "0" else null;
+        }
+    };
+    if (self.prepared) |prepared| {
+        if (prepared.find("minecraft:water", Source{})) |i| return @intCast(i + 1);
+    }
+    return self.idOf(.{ .id = "minecraft:water", .properties = null });
 }
 
 /// The names met so far that aren't prepared block states (`useBlocks`): blocks the prepared
@@ -484,7 +504,7 @@ pub const Reader = struct {
             .buffer = buffer,
             .allocator = allocator,
             .column = try .init(allocator, source.height / Chunk.side),
-            .water = try source.idOf(.{ .id = "minecraft:water", .properties = null }),
+            .water = try source.waterId(),
         };
     }
 

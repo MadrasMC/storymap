@@ -191,14 +191,14 @@ A colour map that a block's colour is multiplied by, by climate or by season ([C
 
 | Field | Type | Contents |
 | --- | --- | --- |
-| `name` | [String](#string) | its name as a save names it: for Vintage Story, its block code, with its domain unless that's `game`, e.g. `rock-granite`, `primitivesurvival:…` ([Block codes](../blocks.md#block-codes)); for Minecraft, the block and the properties its blockstate file names, in name order, e.g. `minecraft:oak_stairs[facing=east,half=bottom,shape=straight]`, a save's other properties left out, and a property's value empty where it stands for every value a `multipart` file's conditions don't name; each name appears once |
+| `name` | [String](#string) | its name as a save names it: for Vintage Story, its block code, with its domain unless that's `game`, e.g. `rock-granite`, `primitivesurvival:…` ([Block codes](../blocks.md#block-codes)); for Minecraft, the block and the properties its blockstate file names, in name order, e.g. `minecraft:oak_stairs[facing=east,half=bottom,shape=straight]`, a save's other properties left out, and a property's value empty where it stands for every value a `multipart` file's conditions don't name; then, in `{}`, the properties Storymap names states by though the file doesn't, e.g. `minecraft:water{level=0}` for each level a liquid flows at and `minecraft:water{level=}` for the rest, a falling liquid's; each name appears once |
 | `material` | u8 | its index in `materials.entries` |
 | `colour_code` | u8 | its index in `colour_codes.entries` |
 | `colour` | u32 | the index in `texture_colours.entries` of the TextureColours whose `average` is its colour; 0xFFFFFFFF for none |
 | `grain` | u32 | the index in `texture_colours.entries` of the TextureColours whose `grain` is its grain; 0xFFFFFFFF for none |
 | `climate_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
 | `season_colour_map` | u8 | its index in `colour_maps.entries`; 0xFF for none |
-| `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../blocks.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block; for Minecraft, how high its models reach |
+| `height` | u8 | how high its selection box reaches, in sixteenths of a block, at most 254 ([Cube faces](../blocks.md#cube-faces)); 0xFF where its block type gives none, taken as the whole block; for Minecraft, how high its models reach, or for a liquid, its surface where none of it is above: 14 for a source, eight ninths of a block, and a ninth less with each level |
 | `draw_offset` | u8 | its block type's `randomDrawOffset`, 1 for `true`: the larger, the less it's moved off the middle of its place by where it is; 0 for not moved ([Shapes](../blocks.md#shapes)); 0 for Minecraft |
 | `flags` | u8 | bit 0: the variant, alternate and turn of its sprite are picked by x and z alone, with y as 0 (`randomizeAxes: xz`); bit 1: it's turned by where it is (`randomizeRotations`); bit 2: it's drawn in its shape, rather than as a cube; bit 3: any of its textures has a tinted layer; bit 4: it's glass, water or ice that shows what's behind it ([See-through blocks](../blocks.md#cube-faces)) |
 | `first_sprite` | u32 | the index of its first Sprite in `sprites.entries` |

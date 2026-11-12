@@ -3,11 +3,33 @@
 const std = @import("std");
 const world = @import("world");
 
+/// A block state's name without its properties, in `[]` or `{}`: its block's.
+pub fn blockOf(name: []const u8) []const u8 {
+    return name[0 .. std.mem.indexOfAny(u8, name, "[{") orelse name.len];
+}
+
 /// `name` without its namespace, if that's the game's, and without its properties.
 pub fn shortName(name: []const u8) []const u8 {
     const prefix = "minecraft:";
-    const short = if (std.mem.startsWith(u8, name, prefix)) name[prefix.len..] else name;
-    return short[0 .. std.mem.indexOfScalar(u8, short, '[') orelse short.len];
+    const block = blockOf(name);
+    return if (std.mem.startsWith(u8, block, prefix)) block[prefix.len..] else block;
+}
+
+/// The levels a flowing liquid's states are named by, as a save's `level` has them: 0 for a
+/// source, then lower the farther it has flowed. Any other level is a falling liquid's.
+pub const levels = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7" };
+
+/// How high the surface of a liquid at `level` of `levels` is, in sixteenths of a block; a falling
+/// liquid's, null, is a source's. The game fills eight ninths of a source's block, and a ninth
+/// less with each level.
+pub fn liquidHeight(level: ?usize) u8 {
+    const ninths: f32 = @floatFromInt(8 - (level orelse 0));
+    return @intFromFloat(@round(ninths / 9 * 16));
+}
+
+/// Whether a liquid's states are named by its level: water and lava, which flow.
+pub fn hasLevels(short: []const u8) bool {
+    return std.mem.eql(u8, short, "water") or std.mem.eql(u8, short, "lava");
 }
 
 /// Water and lava, and a bubble column, which is water a player can't stand in.
@@ -78,6 +100,15 @@ test shortName {
     try std.testing.expectEqualStrings("grass_block", shortName("minecraft:grass_block[snowy=false]"));
     try std.testing.expectEqualStrings("stone", shortName("minecraft:stone"));
     try std.testing.expectEqualStrings("other:stone", shortName("other:stone"));
+    try std.testing.expectEqualStrings("water", shortName("minecraft:water{level=3}"));
+    try std.testing.expectEqualStrings("minecraft:x", blockOf("minecraft:x[a=b]{level=}"));
+}
+
+test liquidHeight {
+    try std.testing.expectEqual(14, liquidHeight(0));
+    try std.testing.expectEqual(14, liquidHeight(null));
+    try std.testing.expectEqual(12, liquidHeight(1));
+    try std.testing.expectEqual(2, liquidHeight(7));
 }
 
 test mapTypeOf {

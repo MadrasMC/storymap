@@ -404,6 +404,11 @@ pub fn isLiquid(self: *const SaveFile, id: i32) bool {
     return self.appearance(id).liquid;
 }
 
+/// Every cube fills its place: liquids aren't drawn at their levels' heights yet.
+pub fn surfaceHeight(_: *const SaveFile, _: i32) u8 {
+    return 16;
+}
+
 pub fn isSeeThrough(self: *const SaveFile, id: i32) bool {
     return self.appearance(id).seeThrough;
 }

@@ -24,6 +24,8 @@
 //! - for the `game` style, `colour(id: i32) world.Rgb`, `spritesOf(id: i32)
 //!   ?world.BlockSprites`, the block's sprites (`Options.sprites`), `isTinted(id: i32) bool`,
 //!   `isLiquid(id: i32) bool`, `isSeeThrough(id: i32) bool`, a block that shows what's behind it,
+//!   `surfaceHeight(id: i32) u8`, how high a block drawn as a cube reaches where none of its kind
+//!   is above it, as a liquid's surface does, in sixteenths of a block, 16 for all of its place,
 //!   `variant(id: i32, x: i64, y: i64, z: i64, count: u32) u32`, which of `count` variants of
 //!   its textures, `count` shapes or `count` turns the block at (x, y, z) shows, `drawOffset(id:
 //!   i32, x: i64, y: i64, z: i64) ?[2]f32`, how far east and south of the middle of its place
@@ -581,6 +583,53 @@ const light = std.EnumArray(Face, u16).init(.{ .none = 0, .top = 256, .left = 20
 /// What a tile's depth buffer counts in: `depthSteps`ths of a block, of x + y + z of the point
 /// each pixel shows in the view's coordinates, larger nearer.
 const depthSteps = 256;
+
+/// How many pixels lower than its place's the top of a cube `sixteenths` high is.
+fn dropOf(sixteenths: u8) u8 {
+    return @intCast((16 - @as(usize, @min(sixteenths, 16))) * below / 16);
+}
+
+/// A pixel of a cube's sprite, and the face it's on.
+const CubePixel = struct { face: Face, row: usize, column: usize };
+
+/// The pixel of a cube's sprite that shows at (`row`, `column`) of its square when its top is
+/// `drop` pixels lower: the top's, moved down, or a side's below it, the side's upper `drop`
+/// pixels left out. Null where nothing shows.
+fn loweredPixel(row: usize, column: usize, drop: usize) ?CubePixel {
+    if (row < drop) return null;
+    const moved = faces[row - drop][column];
+    if (moved == .top) return .{ .face = .top, .row = row - drop, .column = column };
+    const here = faces[row][column];
+    return if (moved != .none and moved == here) .{ .face = here, .row = row, .column = column } else null;
+}
+
+/// How much farther back a top `drop` pixels lower is, in `depthSteps`ths.
+fn dropDepth(drop: usize) i64 {
+    return @intCast(drop * depthSteps / below);
+}
+
+test loweredPixel {
+    const w = blockWidth;
+    // Not lowered, every pixel is its own.
+    for (0..w) |row| for (0..w) |column| {
+        const pixel = loweredPixel(row, column, 0);
+        if (faces[row][column] == .none) {
+            try std.testing.expectEqual(null, pixel);
+        } else try std.testing.expectEqual(CubePixel{ .face = faces[row][column], .row = row, .column = column }, pixel.?);
+    };
+    // Lowered by 2: the top's first rows show nothing, and its middle is 2 rows down.
+    try std.testing.expectEqual(null, loweredPixel(1, w / 2, 2));
+    try std.testing.expectEqual(CubePixel{ .face = .top, .row = w / 4, .column = w / 2 }, loweredPixel(w / 4 + 2, w / 2, 2).?);
+    // Just under the top's old edge, a side's pixel is now the top's; lower down it's its own.
+    try std.testing.expectEqual(Face.top, loweredPixel(w / 2 + 1, w / 2 - 1, 2).?.face);
+    try std.testing.expectEqual(CubePixel{ .face = .left, .row = w * 3 / 4, .column = w / 4 }, loweredPixel(w * 3 / 4, w / 4, 2).?);
+    // The left edge's corner, where the side began, shows nothing.
+    try std.testing.expectEqual(null, loweredPixel(w / 4 + 1, 0, 2));
+    // A top a block lower is as far back as the block below's.
+    try std.testing.expectEqual(depthSteps, dropDepth(below));
+    try std.testing.expectEqual(0, dropOf(16));
+    try std.testing.expectEqual(2, dropOf(14));
+}
 
 /// How far into its block each pixel of a cube's square shows the cube: x + y + z of the point
 /// there on the face it shows, the block being from 0 to 1, in `depthSteps`ths. At the middle of
@@ -1561,6 +1610,10 @@ const TestSource = struct {
         return false;
     }
 
+    pub fn surfaceHeight(_: *const TestSource, _: i32) u8 {
+        return 16;
+    }
+
     pub fn isSeeThrough(_: *const TestSource, _: i32) bool {
         return false;
     }
@@ -1675,7 +1728,8 @@ fn View(comptime Source: type) type {
             /// it is, whether its tint colours their tinted layer, and whether it's see-through.
             sprite: SpriteLook,
 
-            const SpriteLook = struct { sprites: world.BlockSprites, block: i32, tinted: bool = false, seeThrough: bool = false };
+            /// `drop` is how many pixels lower a cube's top is where none of its kind is above it.
+            const SpriteLook = struct { sprites: world.BlockSprites, block: i32, tinted: bool = false, seeThrough: bool = false, drop: u8 = 0 };
         };
 
         fn init(allocator: std.mem.Allocator, source: *const Source, style: Style, sprites: ?*const Sprites, rotation: Rotation) !Self {
@@ -1723,10 +1777,12 @@ fn View(comptime Source: type) type {
                             const placed = source.isPlacedByPosition(id);
                             anyPlaced = anyPlaced or placed;
                             const seeThrough = source.isSeeThrough(id);
-                            if (tinted or placed or own.cover != null or seeThrough) {
+                            const drop = if (own.shape) 0 else dropOf(source.surfaceHeight(id));
+                            if (tinted or placed or own.cover != null or seeThrough or drop > 0) {
                                 var ownLook = spriteLook;
                                 ownLook.tinted = tinted;
                                 ownLook.seeThrough = seeThrough;
+                                ownLook.drop = drop;
                                 look.* = try addLook(allocator, &looks, .{ .sprite = ownLook });
                                 continue;
                             }
@@ -1888,7 +1944,7 @@ fn View(comptime Source: type) type {
             /// faces touch its own material, so a stack of it is one thick surface.
             fn listSeeThrough(self: *Worker, line: Line, look: Look.SpriteLook, block: Block, x0: i64, y0: i64) !void {
                 const inShape = look.sprites.shape;
-                const exposed: std.EnumSet(Face) = if (inShape) .{} else try self.exposedFaces(line, block, look.sprites.first);
+                const exposed: std.EnumSet(Face) = if (inShape) .{} else try self.exposedFaces(line, block, look);
                 if ((!inShape and exposed.count() == 0) or self.seeThroughCount == self.seeThrough.len) return;
                 const picked = try self.pickSprite(look, block);
                 const square = line.square();
@@ -1900,26 +1956,53 @@ fn View(comptime Source: type) type {
                     .tint = picked.tint,
                     .inShape = inShape,
                     .exposed = exposed,
+                    .drop = if (exposed.contains(.top)) look.drop else 0,
                 };
                 self.seeThroughCount += 1;
             }
 
-            /// The faces of `block`, on `line`, the view sees that don't touch `material`.
-            fn exposedFaces(self: *Worker, line: Line, block: Block, material: u32) !std.EnumSet(Face) {
+            /// The faces of cube `block`, on `line`, in `look`, that the view sees: those that
+            /// don't touch a block of its kind, and a side beside one whose top is lower than
+            /// its own.
+            fn exposedFaces(self: *Worker, line: Line, block: Block, look: Look.SpriteLook) !std.EnumSet(Face) {
                 const rotation = self.view.rotation;
                 const x, const z = line.at(block.y);
                 const leftX, const leftZ = rotation.toWorld(x, z + 1);
                 const rightX, const rightZ = rotation.toWorld(x + 1, z);
                 var exposed: std.EnumSet(Face) = .{};
-                exposed.setPresent(.top, try self.materialAt(block.x, block.y + 1, block.z) != material);
-                exposed.setPresent(.left, try self.materialAt(leftX, block.y, leftZ) != material);
-                exposed.setPresent(.right, try self.materialAt(rightX, block.y, rightZ) != material);
+                const open = !try self.isKindAt(block.x, block.y + 1, block.z, look);
+                exposed.setPresent(.top, open);
+                const drop = if (open) look.drop else 0;
+                exposed.setPresent(.left, try self.isSideExposed(leftX, block.y, leftZ, look, drop));
+                exposed.setPresent(.right, try self.isSideExposed(rightX, block.y, rightZ, look, drop));
                 return exposed;
             }
 
-            /// The see-through material at a place, in a liquid around a block too, by its first
-            /// sprite; null for none.
-            fn materialAt(self: *Worker, x: i64, y: i64, z: i64) !?u32 {
+            /// Whether a side of a cube in `look`, its top `drop` pixels lower than its place's,
+            /// shows beside the place at (x, y, z): not beside a block of its kind, unless that
+            /// one's top is lower still.
+            fn isSideExposed(self: *Worker, x: i64, y: i64, z: i64, look: Look.SpriteLook, drop: u8) !bool {
+                const beside = try self.spriteLookAt(x, y, z) orelse return true;
+                if (!isKind(beside, look)) return true;
+                // Its top can only be lower where none of its kind is above it.
+                if (beside.drop <= drop) return false;
+                return !try self.isKindAt(x, y + 1, z, look);
+            }
+
+            /// Whether two looks are of one kind of block, such as water at two levels, which
+            /// share their sprites.
+            fn isKind(a: *const Look.SpriteLook, b: Look.SpriteLook) bool {
+                return a.sprites.first == b.sprites.first and a.seeThrough == b.seeThrough;
+            }
+
+            fn isKindAt(self: *Worker, x: i64, y: i64, z: i64, look: Look.SpriteLook) !bool {
+                const there = try self.spriteLookAt(x, y, z) orelse return false;
+                return isKind(there, look);
+            }
+
+            /// The look of the block drawn in sprites at a place, or of the liquid around a block
+            /// there; null for none.
+            fn spriteLookAt(self: *Worker, x: i64, y: i64, z: i64) !?*const Look.SpriteLook {
                 if (y < 0 or y >= self.view.height) return null;
                 const cx = @divFloor(x, side);
                 const cy = @divFloor(y, side);
@@ -1933,7 +2016,7 @@ fn View(comptime Source: type) type {
                 const look = if (liquid != 0) liquid else slot.looks[place];
                 if (look == 0) return null;
                 return switch (self.view.looks[look - 1]) {
-                    .sprite => |own| if (own.seeThrough) own.sprites.first else null,
+                    .sprite => |*own| own,
                     else => null,
                 };
             }
@@ -1981,8 +2064,10 @@ fn View(comptime Source: type) type {
                         const picked = try self.pickSprite(look, block);
                         const sprites = self.view.sprites.?;
                         const sprite = sprites.entries[picked.index];
-                        fills = sprite.flags.fills;
-                        break :sprite .{ .sprite = .{ .sprite = sprite, .layers = sprites.layersOf(picked.index), .tint = picked.tint } };
+                        // A lowered top leaves the top of its square to what's behind it.
+                        const drop = if (look.drop > 0 and !try self.isKindAt(block.x, block.y + 1, block.z, look)) look.drop else 0;
+                        fills = sprite.flags.fills and drop == 0;
+                        break :sprite .{ .sprite = .{ .sprite = sprite, .layers = sprites.layersOf(picked.index), .tint = picked.tint, .drop = drop } };
                     },
                 };
                 const square = line.square();
@@ -2035,8 +2120,9 @@ fn View(comptime Source: type) type {
             /// a sprite.
             const Paint = union(enum) {
                 faces: *const [3]u32,
-                /// A sprite, its tinted layer, if it has one, tinted by `tint`.
-                sprite: struct { sprite: Sprite, layers: SpriteLayers, tint: world.Rgb },
+                /// A sprite, its tinted layer, if it has one, tinted by `tint`; a cube's, its top
+                /// `drop` pixels lower.
+                sprite: struct { sprite: Sprite, layers: SpriteLayers, tint: world.Rgb, drop: u8 = 0 },
             };
 
             /// The next drawn block on a line of sight, following it down from height `y.*`, or
@@ -2132,6 +2218,26 @@ fn View(comptime Source: type) type {
                     .sprite => |from| {
                         const sprite = &from.sprite;
                         const layers = &from.layers;
+                        if (from.drop > 0) {
+                            for (0..blockWidth) |row| {
+                                const py = top + @as(i64, @intCast(row));
+                                if (py < 0 or py >= tiles.size) continue;
+                                for (0..blockWidth) |column| {
+                                    const px = left + @as(i64, @intCast(column));
+                                    if (px < 0 or px >= tiles.size) continue;
+                                    const pixel = loweredPixel(row, column, from.drop) orelse continue;
+                                    const at = pixel.row * sprite.width + pixel.column;
+                                    if (!layers.shows(at)) continue;
+                                    const p: usize = @intCast(py * tiles.size + px);
+                                    const pointDepth = depth + layers.depths[at] - if (pixel.face == .top) dropDepth(from.drop) else 0;
+                                    if (pointDepth <= self.depth[p]) continue;
+                                    self.depth[p] = pointDepth;
+                                    pixels[p] = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], from.tint) else layers.plain[at];
+                                    any = true;
+                                }
+                            }
+                            return any;
+                        }
                         for (0..sprite.height) |row| {
                             const py = top + sprite.top + @as(i64, @intCast(row));
                             if (py < 0 or py >= tiles.size) continue;
@@ -2184,6 +2290,8 @@ const SeeThroughBlock = struct {
     tint: world.Rgb,
     inShape: bool = false,
     exposed: std.EnumSet(Face),
+    /// How many pixels lower than its place's a cube's top is.
+    drop: u8 = 0,
 
     fn isFarther(_: void, a: SeeThroughBlock, b: SeeThroughBlock) bool {
         return a.depth < b.depth;
@@ -2205,12 +2313,18 @@ fn paintBlock(block: *const SeeThroughBlock, sprite: Sprite, layers: SpriteLayer
         for (0..sprite.width) |column| {
             const px = @as(i64, block.left) + sprite.left + @as(i64, @intCast(column));
             if (px < 0 or px >= tiles.size) continue;
-            const at = row * sprite.width + column;
+            var at = row * sprite.width + column;
+            var lowered: i64 = 0;
             if (block.inShape) {
                 if (!layers.shows(at)) continue;
-            } else if (!block.exposed.contains(faces[row][column])) continue;
+            } else {
+                const pixel = loweredPixel(row, column, block.drop) orelse continue;
+                if (!block.exposed.contains(pixel.face)) continue;
+                at = pixel.row * sprite.width + pixel.column;
+                if (pixel.face == .top) lowered = dropDepth(block.drop);
+            }
             const p: usize = @intCast(py * tiles.size + px);
-            const pointDepth = @as(i64, block.depth) * depthSteps + layers.depths[at];
+            const pointDepth = @as(i64, block.depth) * depthSteps + layers.depths[at] - lowered;
             if (pointDepth <= depths[p]) continue;
             const colour = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], block.tint) else layers.plain[at];
             if (depths[p] == std.math.minInt(i64)) {
@@ -2297,6 +2411,18 @@ test paintBlock {
     try std.testing.expectEqual(mix(sand, pane[0], 51), pixels[glassAt]);
     try std.testing.expectEqual(tiles.rgba(0, 0, 0, 255), pixels[glassAt + 1]);
     try std.testing.expectEqual(sand, pixels[glassAt + tiles.size]);
+
+    // A cube whose top is 2 pixels lower: its top's first rows are left as they were, the top is
+    // painted 2 rows down, that much farther back, and its sides start lower.
+    @memset(pixels, tiles.transparent);
+    @memset(depths, std.math.minInt(i64));
+    const lowered: SeeThroughBlock = .{ .sprite = 0, .left = 0, .top = 0, .depth = 10, .tint = @splat(255), .exposed = all, .drop = 2 };
+    try std.testing.expect(paintBlock(&lowered, square, waterLayers, pixels, depths));
+    try std.testing.expectEqual(tiles.transparent, pixels[1 * tiles.size + w / 2]);
+    try std.testing.expectEqual(tiles.rgba(0, 0, 200, 255), pixels[top + 2 * tiles.size]);
+    try std.testing.expectEqual(10 * depthSteps + @as(i64, topDepth) - dropDepth(2), depths[top + 2 * tiles.size]);
+    try std.testing.expectEqual(tiles.transparent, pixels[(w / 4 + 1) * tiles.size]);
+    try std.testing.expectEqual(10 * depthSteps + @as(i64, opaqueDepths[(w * 5 / 8) * w + w / 4]), depths[south]);
 }
 
 test SeeThroughBlock {

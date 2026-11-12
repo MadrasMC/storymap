@@ -43,12 +43,16 @@ pub const BlockState = struct {
     seeThrough: bool,
     /// What its tinted faces are multiplied by.
     tint: names.Tint,
+    /// How high it reaches, in sixteenths of a block: a liquid's surface where none is above it.
+    height: u8,
 };
 
 /// A property, and the values a block's states are named with.
 pub const Property = struct {
     name: []const u8,
     values: []const []const u8,
+    /// One Storymap names states by though the block's blockstate file doesn't, in `{}`.
+    added: bool,
 };
 
 pub fn deinit(self: *Prepared) void {
@@ -85,6 +89,7 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
             .liquid = names.isLiquid(short),
             .seeThrough = state.flags.seeThrough,
             .tint = names.tintOf(short),
+            .height = @min(state.height orelse 16, 16),
         };
         self.byName.putAssumeCapacity(state.name, read.index - 1);
         try collectProperties(arena, &named, state.name);
@@ -96,7 +101,7 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
     try self.properties.ensureTotalCapacity(arena, @intCast(named.count()));
     for (named.keys(), named.values()) |block, building| {
         const properties = try arena.alloc(Property, building.items.len);
-        for (properties, building.items) |*property, built| property.* = .{ .name = built.name, .values = built.values.items };
+        for (properties, building.items) |*property, built| property.* = .{ .name = built.name, .values = built.values.items, .added = built.added };
         self.properties.putAssumeCapacity(block, properties);
     }
     return self;
@@ -104,51 +109,62 @@ pub fn load(allocator: std.mem.Allocator, file: *const storyblk.File, spriteCoun
 
 const Building = struct {
     name: []const u8,
+    added: bool,
     values: std.ArrayList([]const u8) = .empty,
 };
 
-/// Adds the block, properties and values a state's name names, e.g.
-/// `minecraft:oak_stairs[facing=east,half=bottom]`, to `named`.
+/// Adds the block, properties and values a state's name names to `named`: those of its
+/// blockstate file in `[]`, then those Storymap adds in `{}`, e.g.
+/// `minecraft:oak_stairs[facing=east,half=bottom]` and `minecraft:water{level=0}`.
 fn collectProperties(arena: std.mem.Allocator, named: *std.StringArrayHashMapUnmanaged(std.ArrayList(Building)), name: []const u8) !void {
-    const open = std.mem.indexOfScalar(u8, name, '[');
-    const block = name[0 .. open orelse name.len];
+    const block = names.blockOf(name);
     const entry = try named.getOrPut(arena, block);
     if (!entry.found_existing) entry.value_ptr.* = .empty;
-    const start = open orelse return;
-    if (name[name.len - 1] != ']') return;
-    var pairs = std.mem.splitScalar(u8, name[start + 1 .. name.len - 1], ',');
-    while (pairs.next()) |pair| {
-        const equals = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
-        const key = pair[0..equals];
-        const value = pair[equals + 1 ..];
-        const property = for (entry.value_ptr.items) |*property| {
-            if (std.mem.eql(u8, property.name, key)) break property;
-        } else add: {
-            try entry.value_ptr.append(arena, .{ .name = key });
-            break :add &entry.value_ptr.items[entry.value_ptr.items.len - 1];
-        };
-        for (property.values.items) |known| {
-            if (std.mem.eql(u8, known, value)) break;
-        } else try property.values.append(arena, value);
+    var rest = name[block.len..];
+    for ([_][2]u8{ "[]".*, "{}".* }, [_]bool{ false, true }) |brackets, added| {
+        if (rest.len == 0 or rest[0] != brackets[0]) continue;
+        const end = std.mem.indexOfScalar(u8, rest, brackets[1]) orelse return;
+        var pairs = std.mem.splitScalar(u8, rest[1..end], ',');
+        rest = rest[end + 1 ..];
+        while (pairs.next()) |pair| {
+            const equals = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+            const key = pair[0..equals];
+            const value = pair[equals + 1 ..];
+            const property = for (entry.value_ptr.items) |*property| {
+                if (property.added == added and std.mem.eql(u8, property.name, key)) break property;
+            } else add: {
+                try entry.value_ptr.append(arena, .{ .name = key, .added = added });
+                break :add &entry.value_ptr.items[entry.value_ptr.items.len - 1];
+            };
+            for (property.values.items) |known| {
+                if (std.mem.eql(u8, known, value)) break;
+            } else try property.values.append(arena, value);
+        }
     }
 }
 
 /// The index of the state that block `block` with `given` properties is drawn as: its name with
-/// only the properties its states are named by, a value they don't name as empty
-/// (`BlockStates`). Null for a block the file doesn't have.
+/// only the properties its states are named by, those of its blockstate file in `[]` and those
+/// Storymap adds in `{}`, a value they don't name as empty (`BlockStates`). Null for a block the
+/// file doesn't have.
 pub fn find(self: *const Prepared, block: []const u8, given: anytype) ?u32 {
     const properties = self.properties.get(block) orelse return null;
     var buffer: [512]u8 = undefined;
     var w: Io.Writer = .fixed(&buffer);
     w.writeAll(block) catch return null;
-    for (properties, 0..) |property, i| {
-        const value = given.get(property.name) orelse "";
-        const known = for (property.values) |named| {
-            if (std.mem.eql(u8, named, value)) break value;
-        } else "";
-        w.print("{s}{s}={s}", .{ if (i == 0) "[" else ",", property.name, known }) catch return null;
+    for ([_][2]u8{ "[]".*, "{}".* }, [_]bool{ false, true }) |brackets, added| {
+        var any = false;
+        for (properties) |property| {
+            if (property.added != added) continue;
+            const value = given.get(property.name) orelse "";
+            const known = for (property.values) |named| {
+                if (std.mem.eql(u8, named, value)) break value;
+            } else "";
+            w.print("{c}{s}={s}", .{ @as(u8, if (any) ',' else brackets[0]), property.name, known }) catch return null;
+            any = true;
+        }
+        if (any) w.writeByte(brackets[1]) catch return null;
     }
-    if (properties.len > 0) w.writeByte(']') catch return null;
     return self.byName.get(w.buffered());
 }
 
@@ -160,7 +176,7 @@ pub const defaultPath = game ++ ".storyblk";
 
 /// How the seven sections' contents are read from the jar: raise it when that changes, so files
 /// prepared before are prepared again.
-pub const generatorVersion: u16 = 3;
+pub const generatorVersion: u16 = 4;
 
 /// The section only Minecraft's files have: its biomes' colours (spec §3).
 const biomesSection = "biomes";
@@ -293,8 +309,9 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
     const blocks = try Blocks.read(arena, io, jar, problems);
     var textures: Textures = .{ .arena = arena, .io = io, .jar = jar };
     var colourCodes: std.StringArrayHashMapUnmanaged(void) = .empty;
-    const states = try arena.alloc(Contents.State, blocks.states.len);
-    for (states, blocks.states) |*state, read| {
+    var states: std.ArrayList(Contents.State) = .empty;
+    try states.ensureTotalCapacity(arena, blocks.states.len + 2 * (names.levels.len + 1));
+    for (blocks.states) |read| {
         var seeThrough = false;
         var shapes: std.ArrayList(world.Shape) = .empty;
         for (read.alternates) |alternate| {
@@ -316,7 +333,7 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
         const mapType = names.mapTypeOf(short);
         const code = try colourCodes.getOrPut(arena, @tagName(mapType));
         const sixteenths = @round(first.height * 16);
-        state.* = .{
+        var state: Contents.State = .{
             .name = read.name,
             .shapes = shapes.items,
             .colour = colour,
@@ -324,11 +341,14 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
             .height = if (sixteenths >= 16 or shapes.items.len == 0) null else @intFromFloat(@max(sixteenths, 0)),
             .seeThrough = seeThrough,
         };
-        if (names.isLiquid(short)) {
-            const kind = if (names.isWater(short)) "water" else "lava";
-            const still = try std.fmt.allocPrint(arena, "minecraft:block/{s}_still", .{kind});
-            const flow = try std.fmt.allocPrint(arena, "minecraft:block/{s}_flow", .{kind});
-            const top = try textures.get(still) orelse continue;
+        if (!names.isLiquid(short)) {
+            try states.append(arena, state);
+            continue;
+        }
+        const kind = if (names.isWater(short)) "water" else "lava";
+        const still = try std.fmt.allocPrint(arena, "minecraft:block/{s}_still", .{kind});
+        const flow = try std.fmt.allocPrint(arena, "minecraft:block/{s}_flow", .{kind});
+        if (try textures.get(still)) |top| {
             const side = try textures.get(flow) orelse top;
             const tinted = names.isWater(short);
             const layer = struct {
@@ -341,12 +361,27 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
             state.seeThrough = top.seeThrough;
             state.colour = try textures.colours(still);
         }
+        state.height = names.liquidHeight(0);
+        if (!names.hasLevels(short)) {
+            try states.append(arena, state);
+            continue;
+        }
+        // A state for each level, which the game draws at its own height though its blockstate
+        // file doesn't name it, then one for a falling liquid's.
+        for (names.levels, 0..) |level, i| {
+            state.name = try std.fmt.allocPrint(arena, "{s}{{level={s}}}", .{ read.name, level });
+            state.height = names.liquidHeight(i);
+            try states.append(arena, state);
+        }
+        state.name = try std.fmt.allocPrint(arena, "{s}{{level=}}", .{read.name});
+        state.height = names.liquidHeight(null);
+        try states.append(arena, state);
     }
     const grassMap = if (try textures.get("minecraft:colormap/grass")) |texture| texture.layer[0] else null;
     const foliageMap = if (try textures.get("minecraft:colormap/foliage")) |texture| texture.layer[0] else null;
     return .{
         .gameVersion = jar.version,
-        .states = states,
+        .states = states.items,
         .textures = textures.read.items,
         .colourCodes = colourCodes.keys(),
         .biomes = try Biomes.read(arena, io, jar, grassMap, foliageMap, &problems.biomes),
@@ -448,6 +483,9 @@ test find {
         "minecraft:oak_stairs[facing=west,half=bottom]",
         "minecraft:wall[east=low,up=true]",
         "minecraft:wall[east=,up=true]",
+        "minecraft:water{level=0}",
+        "minecraft:water{level=}",
+        "minecraft:pipe[axis=x]{level=1}",
     };
     var named: std.StringArrayHashMapUnmanaged(std.ArrayList(Building)) = .empty;
     for (stateNames, 0..) |name, i| {
@@ -456,7 +494,7 @@ test find {
     }
     for (named.keys(), named.values()) |block, building| {
         const properties = try arena.alloc(Property, building.items.len);
-        for (properties, building.items) |*property, built| property.* = .{ .name = built.name, .values = built.values.items };
+        for (properties, building.items) |*property, built| property.* = .{ .name = built.name, .values = built.values.items, .added = built.added };
         try self.properties.put(arena, block, properties);
     }
     const Given = struct {
@@ -472,6 +510,10 @@ test find {
     // A value the states don't name is the empty one.
     try std.testing.expectEqual(4, self.find("minecraft:wall", Given{ .pairs = &.{ .{ "east", "none" }, .{ "up", "true" } } }));
     try std.testing.expectEqual(null, self.find("minecraft:dirt", Given{ .pairs = &.{} }));
+    // Properties Storymap adds are in `{}`, after the file's in `[]`.
+    try std.testing.expectEqual(5, self.find("minecraft:water", Given{ .pairs = &.{.{ "level", "0" }} }));
+    try std.testing.expectEqual(6, self.find("minecraft:water", Given{ .pairs = &.{.{ "level", "12" }} }));
+    try std.testing.expectEqual(7, self.find("minecraft:pipe", Given{ .pairs = &.{ .{ "level", "1" }, .{ "axis", "x" } } }));
 }
 
 test averageOf {
