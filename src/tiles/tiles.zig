@@ -45,8 +45,9 @@ pub const Tile = struct {
     }
 };
 
-/// Where tiles go, and what they're encoded as.
+/// Where tiles go, what they're encoded as, and how many threads draw them.
 pub const Output = struct {
+    threads: usize,
     /// Null to encode the tiles and drop them (`--no-write`), so a benchmark doesn't time the
     /// disk.
     folder: ?Io.Dir,
@@ -199,12 +200,13 @@ pub fn render(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
 
 /// Works out where each of `images` falls on the map in `list`, into `placements`, so the
 /// images' sizes are known before anything is drawn. Finding what the map covers draws a few of
-/// its tiles. error.ImageTooLarge for all of a map at a scale too large to count its pixels.
-pub fn place(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *const View, list: []const Tile, images: []const Image, placements: []Placement) !void {
+/// its tiles, on up to `threads` threads. error.ImageTooLarge for all of a map at a scale too
+/// large to count its pixels.
+pub fn place(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *const View, list: []const Tile, images: []const Image, threads: usize, placements: []Placement) !void {
     var needsBounds = false;
     for (images) |image| needsBounds = needsBounds or image.needsBounds();
     var stats: Stats = .{};
-    const bounds: Bounds = if (needsBounds and list.len > 0) try findBounds(View, allocator, io, view, list, &stats) else .{};
+    const bounds: Bounds = if (needsBounds and list.len > 0) try findBounds(View, allocator, io, view, list, threads, &stats) else .{};
     for (placements, images) |*placement, image| placement.* = try .of(image, bounds);
 }
 
@@ -214,12 +216,11 @@ fn renderMap(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *V
     defer pyramid.deinit(allocator);
 
     // Workers take whole subtrees: a tile at level `split` and everything under it. `split` is
-    // the highest level with enough tiles to keep every core busy; the levels above are built
+    // the highest level with enough tiles to keep every thread busy; the levels above are built
     // from the subtrees' halves afterwards.
-    const cores = std.Thread.getCpuCount() catch 1;
     var split: usize = 0;
     for (pyramid.levels, 0..) |level, n| {
-        if (level.count() >= 4 * cores) split = n;
+        if (level.count() >= 4 * output.threads) split = n;
     }
     const items = pyramid.levels[split].keys();
     // Each subtree's tile at the cut level, at half size, and whether it has anything on it.
@@ -240,7 +241,7 @@ fn renderMap(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *V
     try written.ensureUnusedCapacity(allocator, tileCount);
     var slots: Slots = .{ .written = written.unusedCapacitySlice()[0..tileCount] };
 
-    const count = @max(1, @min(cores, items.len));
+    const count = @max(1, @min(output.threads, items.len));
     const jobs = try allocator.alloc(Job(View), count);
     defer allocator.free(jobs);
     var next: std.atomic.Value(usize) = .init(0);
@@ -310,7 +311,7 @@ fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
         const out = if (file != null) &fileWriter.interface else &discarding.writer;
 
         try encoder.begin(out, placement.width, placement.height);
-        try drawRows(View, allocator, io, view, pyramid, placement, &encoder, !output.map, stats);
+        try drawRows(View, allocator, io, view, pyramid, placement, output.threads, &encoder, !output.map, stats);
         try encoder.finish();
         try out.flush();
         return;
@@ -325,7 +326,7 @@ fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
     };
     defer encoder.deinit(allocator);
     var rows: RowSink = .{ .pixels = pixels, .width = placement.width };
-    try drawRows(View, allocator, io, view, pyramid, placement, &rows, !output.map, stats);
+    try drawRows(View, allocator, io, view, pyramid, placement, output.threads, &rows, !output.map, stats);
 
     const compressing: Io.Timestamp = .now(io, .awake);
     const bytes = std.mem.sliceAsBytes(pixels);
@@ -432,14 +433,13 @@ const Side = enum {
 /// that may have something on them. From each side it draws one row or column of tiles after
 /// another, until one has something on it, so it draws few of the map's tiles. A map with nothing
 /// on it covers all of its tiles.
-fn findBounds(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *const View, list: []const Tile, stats: *Stats) !Bounds {
+fn findBounds(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *const View, list: []const Tile, threads: usize, stats: *Stats) !Bounds {
     const order = try allocator.dupe(Tile, list);
     defer allocator.free(order);
 
     var next: std.atomic.Value(usize) = .init(0);
     var found: std.atomic.Value(bool) = .init(false);
-    const cores = std.Thread.getCpuCount() catch 1;
-    const jobs = try allocator.alloc(BoundsJob(View), @max(1, @min(cores, list.len)));
+    const jobs = try allocator.alloc(BoundsJob(View), @max(1, @min(threads, list.len)));
     defer allocator.free(jobs);
     var ready: usize = 0;
     defer for (jobs[0..ready]) |*job| job.deinit(allocator);
@@ -447,8 +447,8 @@ fn findBounds(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
         job.* = try .init(view, allocator, io, &next, &found);
         ready += 1;
     }
-    const threads = try allocator.alloc(?std.Thread, jobs.len);
-    defer allocator.free(threads);
+    const spawned = try allocator.alloc(?std.Thread, jobs.len);
+    defer allocator.free(spawned);
 
     for (std.enums.values(Side)) |side| {
         std.mem.sort(Tile, order, side, Side.isNearer);
@@ -459,7 +459,7 @@ fn findBounds(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *
             while (end < order.len and side.key(order[end]) == side.key(order[start])) end += 1;
             for (jobs) |*job| job.tiles = order[start..end];
             next.store(0, .monotonic);
-            try runAll(BoundsJob(View), jobs, threads, BoundsJob(View).run);
+            try runAll(BoundsJob(View), jobs, spawned, BoundsJob(View).run);
             start = end;
         }
     }
@@ -688,16 +688,16 @@ test "Placement.levelOf" {
 }
 
 /// Draws the tiles under `placement`, one row of them at a time, top to bottom, and gives each
-/// row of pixels to `sink.writeRow`. Workers draw a row of tiles together into one buffer, so
-/// memory follows the image's width, not its height. Tiles have no order of their own to be drawn
-/// in, as each is drawn from the world alone.
-fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, placement: Placement, sink: anytype, collect: bool, stats: *Stats) !void {
+/// row of pixels to `sink.writeRow`. Up to `threads` workers draw a row of tiles together into one
+/// buffer, so memory follows the image's width, not its height. Tiles have no order of their own
+/// to be drawn in, as each is drawn from the world alone.
+fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, placement: Placement, threads: usize, sink: anytype, collect: bool, stats: *Stats) !void {
     const firstColumn, const columns = placement.tileColumns();
     var band: Band = .{
         .tiles = try allocator.alloc(Pixels, columns),
         .firstColumn = @intCast(firstColumn),
         .level = placement.level,
-        .steps = Band.stepsFor(columns, placement.level),
+        .steps = Band.stepsFor(columns, placement.level, threads),
     };
     defer allocator.free(band.tiles);
     const row = try allocator.alloc(u32, placement.width);
@@ -711,8 +711,7 @@ fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *Vi
         offset.* = column * size * size + @as(usize, @intCast(@mod(source, size)));
     }
 
-    const cores = std.Thread.getCpuCount() catch 1;
-    const count = @max(1, @min(cores, band.itemCount()));
+    const count = @max(1, @min(threads, band.itemCount()));
     const jobs = try allocator.alloc(ImageJob(View), count);
     defer allocator.free(jobs);
     var ready: usize = 0;
@@ -721,8 +720,8 @@ fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *Vi
         job.* = try .init(view, allocator, io, pyramid, &band);
         ready += 1;
     }
-    const threads = try allocator.alloc(?std.Thread, count);
-    defer allocator.free(threads);
+    const spawned = try allocator.alloc(?std.Thread, count);
+    defer allocator.free(spawned);
 
     const drawn: []const u32 = @ptrCast(band.tiles);
     var drawnRow: ?i64 = null;
@@ -733,7 +732,7 @@ fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *Vi
             for (band.tiles) |*tile| @memset(tile, transparent);
             for (jobs) |*job| job.row = @intCast(tileRow);
             band.next.store(0, .monotonic);
-            try runAll(ImageJob(View), jobs, threads, ImageJob(View).run);
+            try runAll(ImageJob(View), jobs, spawned, ImageJob(View).run);
             drawnRow = tileRow;
         }
         const encoding: Io.Timestamp = .now(io, .awake);
@@ -749,7 +748,7 @@ fn drawRows(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *Vi
 }
 
 /// One row of an image's tiles, as workers draw it. It's shared out in items, tiles `steps`
-/// levels below the image's, so an image of few tiles still keeps every core busy.
+/// levels below the image's, so an image of few tiles still keeps every thread busy.
 const Band = struct {
     /// The row's tiles, left to right.
     tiles: []Pixels,
@@ -762,11 +761,10 @@ const Band = struct {
     /// `shrink`'s sums fit up to here.
     const maxSteps = 8;
 
-    /// The fewest steps with enough items to keep every core busy.
-    fn stepsFor(columns: usize, level: usize) u4 {
-        const cores = std.Thread.getCpuCount() catch 1;
+    /// The fewest steps with enough items to keep `threads` threads busy.
+    fn stepsFor(columns: usize, level: usize, threads: usize) u4 {
         var steps: u4 = 0;
-        while (steps < @min(level, maxSteps) and columns << (2 * @as(u6, steps)) < 4 * cores) steps += 1;
+        while (steps < @min(level, maxSteps) and columns << (2 * @as(u6, steps)) < 4 * threads) steps += 1;
         return steps;
     }
 
@@ -1249,6 +1247,9 @@ const SolidView = struct {
     };
 };
 
+/// More than one, so tests run workers side by side on any machine.
+const testThreads = 4;
+
 fn expectRows(list: []const Tile, placement: Placement, expected: fn (x: usize, y: usize) u32, drawnTiles: usize) !void {
     const allocator = std.testing.allocator;
     var pyramid: Pyramid = try .init(allocator, list, @as(usize, placement.level) + 1);
@@ -1258,7 +1259,7 @@ fn expectRows(list: []const Tile, placement: Placement, expected: fn (x: usize, 
     var view: SolidView = .{};
     var sink: RowSink = .{ .pixels = pixels, .width = placement.width };
     var stats: Stats = .{};
-    try drawRows(SolidView, allocator, std.testing.io, &view, &pyramid, placement, &sink, true, &stats);
+    try drawRows(SolidView, allocator, std.testing.io, &view, &pyramid, placement, testThreads, &sink, true, &stats);
     try std.testing.expectEqual(placement.height, sink.rows);
     try std.testing.expectEqual(drawnTiles, view.drawnTiles);
     for (0..placement.height) |y| for (0..placement.width) |x| {
@@ -1333,7 +1334,7 @@ test "findBounds finds what a map's tiles really have on them" {
     for (&list, 0..) |*tile, i| tile.* = .{ .x = @intCast(i % 3), .y = @as(i32, @intCast(i / 3)) - 1 };
     var view: SparseView = .{};
     var stats: Stats = .{};
-    const bounds = try findBounds(SparseView, std.testing.allocator, std.testing.io, &view, &list, &stats);
+    const bounds = try findBounds(SparseView, std.testing.allocator, std.testing.io, &view, &list, testThreads, &stats);
     try std.testing.expectEqual(Bounds{ .left = 200, .top = 300, .right = size + 61, .bottom = 2 * size + 41 }, bounds);
 }
 
@@ -1341,7 +1342,7 @@ test "a map with nothing on it covers all of its tiles" {
     const list: []const Tile = &.{ .{ .x = 4, .y = 4 }, .{ .x = 5, .y = 6 } };
     var view: SparseView = .{};
     var stats: Stats = .{};
-    const bounds = try findBounds(SparseView, std.testing.allocator, std.testing.io, &view, list, &stats);
+    const bounds = try findBounds(SparseView, std.testing.allocator, std.testing.io, &view, list, testThreads, &stats);
     try std.testing.expectEqual(Bounds{ .left = 4 * size, .top = 4 * size, .right = 6 * size, .bottom = 7 * size }, bounds);
 }
 

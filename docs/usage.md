@@ -116,6 +116,7 @@ Without `--game`, it prepares whichever of the two it finds in their standard pl
 
 | option | use |
 | --- | --- |
+| `-j`, `--jobs <threads>` | how many threads draw and encode the tiles: one for each of the processor's threads by default |
 | `--no-write` | draw and encode the tiles without writing anything, to time the rest |
 | `--json` | print the render's times and counts on stdout as one line of JSON |
 

@@ -29,6 +29,7 @@ pub const spec: args.Spec = .{
         .{ .name = "webp", .description = "Encode the tiles and images as lossless WebP instead of PNG." },
         .{ .name = "lossy-from", .value = "level", .description = "With --webp, encode the tiles from this level up, and images taken from it, as lossy WebP: level 0 is full detail, 2 where blocks are 8 pixels wide." },
         .{ .name = "yes", .short = 'y', .description = "Write images that need more than " ++ memoryToAskText ++ " of memory without asking." },
+        .{ .name = "jobs", .short = 'j', .value = "threads", .description = "How many threads draw and encode the tiles: one for each of the processor's threads by default." },
         .{ .name = "no-write", .description = "Draw and encode the tiles without writing anything, to time the rest." },
         .{ .name = "json", .description = "Print the render's times and counts on stdout as one line of JSON, for scripts." },
         .{ .name = "prepare", .description = "Prepare the blocks again, even if they were prepared before." },
@@ -96,7 +97,12 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         if (format != .webp) console.fail("`--lossy-from`: only with `--webp`", .{});
         break :level std.fmt.parseInt(u8, text, 10) catch console.fail("`--lossy-from`: invalid level {s}. expected: a level from 0", .{text});
     } else null;
-    const output: tiles.Output = .{ .folder = out, .format = format, .lossyFrom = lossyFrom, .map = mode.map };
+    const threads: usize = if (parsed.value("jobs")) |text| count: {
+        const count = std.fmt.parseInt(u16, text, 10) catch 0;
+        if (count == 0) console.fail("`--jobs`: invalid count {s}. expected: a number of threads from 1", .{text});
+        break :count count;
+    } else std.Thread.getCpuCount() catch 1;
+    const output: tiles.Output = .{ .threads = threads, .folder = out, .format = format, .lossyFrom = lossyFrom, .map = mode.map };
     var request: Request = .{
         .start = start,
         .savePath = savePath,
@@ -201,14 +207,14 @@ fn draw(comptime Source: type, allocator: std.mem.Allocator, io: std.Io, arena: 
     if (mode.images.len > 0) {
         if (chosen.topdown) {
             const placements = try arena.alloc(tiles.Placement, mode.images.len);
-            topdown.placeImages(Source, allocator, io, source, try requestsOf(arena, mode.images, place, .topdown), topdownOptions, placements) catch |err| return failPlacing(err);
+            topdown.placeImages(Source, allocator, io, source, try requestsOf(arena, mode.images, place, .topdown), output.threads, topdownOptions, placements) catch |err| return failPlacing(err);
             topdownImages = try filesOf(arena, topdown.folder, format, placements);
         }
         for (chosen.rotations, std.enums.values(isometric.Rotation), &isometricImages) |wanted, rotation, *files| {
             if (!wanted) continue;
             const placements = try arena.alloc(tiles.Placement, mode.images.len);
             const options: isometric.Options = .{ .style = theme.isometric, .sprites = sprites, .rotation = rotation };
-            isometric.placeImages(Source, allocator, io, source, try requestsOf(arena, mode.images, place, .{ .isometric = rotation }), options, placements) catch |err| return failPlacing(err);
+            isometric.placeImages(Source, allocator, io, source, try requestsOf(arena, mode.images, place, .{ .isometric = rotation }), output.threads, options, placements) catch |err| return failPlacing(err);
             files.* = try filesOf(arena, rotation.folder(), format, placements);
         }
         checkImages(io, &([_][]const tiles.ImageFile{topdownImages} ++ isometricImages), format, request.yes);
@@ -262,7 +268,7 @@ fn draw(comptime Source: type, allocator: std.mem.Allocator, io: std.Io, arena: 
         .version = build_options.version,
         .world = std.fs.path.basename(request.savePath),
         .build = @tagName(builtin.mode),
-        .threads = std.Thread.getCpuCount() catch 1,
+        .threads = output.threads,
         .written = request.write,
         .format = @tagName(output.format),
         .chunks = try source.countChunks(),
