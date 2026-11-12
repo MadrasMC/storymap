@@ -293,7 +293,7 @@ fn vector(comptime n: usize, value: ?Json) ?[n]f32 {
     return result;
 }
 
-const Transform = [3][4]f32;
+pub const Transform = [3][4]f32;
 
 /// Where an element's box goes in its model: from its corner at `from`, turned and stretched
 /// about its rotation's origin; in blocks.
@@ -306,14 +306,14 @@ fn elementTransform(element: Element) Transform {
 
 /// A blockstate's turn of a model about the block's middle: x quarter turns, then y, each
 /// clockwise looking down the axis towards 0. Exact, so turned boxes meet as unturned ones do.
-fn blockTurn(x: u2, y: u2) Transform {
+pub fn blockTurn(x: u2, y: u2) Transform {
     var matrix: [3][3]f32 = .{ .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } };
     for (0..x) |_| matrix = multiply3(.{ .{ 1, 0, 0 }, .{ 0, 0, 1 }, .{ 0, -1, 0 } }, matrix);
     for (0..y) |_| matrix = multiply3(.{ .{ 0, 0, -1 }, .{ 0, 1, 0 }, .{ 1, 0, 0 } }, matrix);
     return about(@splat(0.5), matrix);
 }
 
-fn translation(by: [3]f32) Transform {
+pub fn translation(by: [3]f32) Transform {
     return .{ .{ 1, 0, 0, by[0] }, .{ 0, 1, 0, by[1] }, .{ 0, 0, 1, by[2] } };
 }
 
@@ -331,7 +331,7 @@ fn about(origin: [3]f32, matrix: [3][3]f32) Transform {
     return result;
 }
 
-fn multiply(a: Transform, b: Transform) Transform {
+pub fn multiply(a: Transform, b: Transform) Transform {
     var result: Transform = undefined;
     for (0..3) |row| {
         for (0..4) |column| {

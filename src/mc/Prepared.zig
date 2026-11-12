@@ -13,6 +13,7 @@ const Jar = @import("Jar.zig");
 const Blocks = @import("Blocks.zig");
 const Models = @import("Models.zig");
 const Biomes = @import("Biomes.zig");
+const BlockEntities = @import("BlockEntities.zig");
 const names = @import("names.zig");
 const Tables = storyblk.Tables;
 const Image = world.Image;
@@ -176,7 +177,7 @@ pub const defaultPath = game ++ ".storyblk";
 
 /// How the seven sections' contents are read from the jar: raise it when that changes, so files
 /// prepared before are prepared again.
-pub const generatorVersion: u16 = 4;
+pub const generatorVersion: u16 = 5;
 
 /// The section only Minecraft's files have: its biomes' colours (spec §3).
 const biomesSection = "biomes";
@@ -310,37 +311,17 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
     var textures: Textures = .{ .arena = arena, .io = io, .jar = jar };
     var colourCodes: std.StringArrayHashMapUnmanaged(void) = .empty;
     var states: std.ArrayList(Contents.State) = .empty;
-    try states.ensureTotalCapacity(arena, blocks.states.len + 2 * (names.levels.len + 1));
     for (blocks.states) |read| {
-        var seeThrough = false;
-        var shapes: std.ArrayList(world.Shape) = .empty;
-        for (read.alternates) |alternate| {
-            if (alternate.boxes.len == 0) continue;
-            const faces = try arena.alloc(world.CubeFaces.Face, alternate.textures.len);
-            for (faces, alternate.textures) |*face, texture| {
-                const found = try textures.get(texture.name) orelse {
-                    face.* = .{};
-                    continue;
-                };
-                seeThrough = seeThrough or found.seeThrough;
-                face.* = if (texture.tinted) .{ .tinted = found.layer } else .{ .plain = found.layer };
-            }
-            try shapes.append(arena, .{ .boxes = alternate.boxes, .textures = faces });
-        }
         const short = names.shortName(read.name);
-        const first = if (read.alternates.len > 0) read.alternates[0] else Models.Shape{ .boxes = &.{}, .textures = &.{} };
-        const colour = if (first.top) |top| try textures.colours(first.textures[top].name) else null;
-        const mapType = names.mapTypeOf(short);
-        const code = try colourCodes.getOrPut(arena, @tagName(mapType));
-        const sixteenths = @round(first.height * 16);
-        var state: Contents.State = .{
-            .name = read.name,
-            .shapes = shapes.items,
-            .colour = colour,
-            .colourCode = @intCast(code.index),
-            .height = if (sixteenths >= 16 or shapes.items.len == 0) null else @intFromFloat(@max(sixteenths, 0)),
-            .seeThrough = seeThrough,
-        };
+        // A block the game draws in code has a state for each shape that draws it.
+        if (try BlockEntities.statesOf(arena, short)) |drawn| {
+            for (drawn) |entity| {
+                const name = try std.fmt.allocPrint(arena, "{s}{{{s}}}", .{ read.name, entity.properties });
+                try states.append(arena, try stateOf(arena, &textures, &colourCodes, name, &.{entity.shape}));
+            }
+            continue;
+        }
+        var state = try stateOf(arena, &textures, &colourCodes, read.name, read.alternates);
         if (!names.isLiquid(short)) {
             try states.append(arena, state);
             continue;
@@ -385,6 +366,37 @@ pub fn prepare(arena: std.mem.Allocator, io: Io, jar: *const Jar, problems: *Blo
         .textures = textures.read.items,
         .colourCodes = colourCodes.keys(),
         .biomes = try Biomes.read(arena, io, jar, grassMap, foliageMap, &problems.biomes),
+    };
+}
+
+/// The state `name` drawn in `alternates`, each with its textures read, its colour its first
+/// shape's top's, and its map type its name's.
+fn stateOf(arena: std.mem.Allocator, textures: *Textures, colourCodes: *std.StringArrayHashMapUnmanaged(void), name: []const u8, alternates: []const Models.Shape) !Contents.State {
+    var seeThrough = false;
+    var shapes: std.ArrayList(world.Shape) = .empty;
+    for (alternates) |alternate| {
+        if (alternate.boxes.len == 0) continue;
+        const faces = try arena.alloc(world.CubeFaces.Face, alternate.textures.len);
+        for (faces, alternate.textures) |*face, texture| {
+            const found = try textures.get(texture.name) orelse {
+                face.* = .{};
+                continue;
+            };
+            seeThrough = seeThrough or found.seeThrough;
+            face.* = if (texture.tinted) .{ .tinted = found.layer } else .{ .plain = found.layer };
+        }
+        try shapes.append(arena, .{ .boxes = alternate.boxes, .textures = faces });
+    }
+    const first = if (alternates.len > 0) alternates[0] else Models.Shape{ .boxes = &.{}, .textures = &.{} };
+    const code = try colourCodes.getOrPut(arena, @tagName(names.mapTypeOf(names.shortName(name))));
+    const sixteenths = @round(first.height * 16);
+    return .{
+        .name = name,
+        .shapes = shapes.items,
+        .colour = if (first.top) |top| try textures.colours(first.textures[top].name) else null,
+        .colourCode = @intCast(code.index),
+        .height = if (sixteenths >= 16 or shapes.items.len == 0) null else @intFromFloat(@max(sixteenths, 0)),
+        .seeThrough = seeThrough,
     };
 }
 

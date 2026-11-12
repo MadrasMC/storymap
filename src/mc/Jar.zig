@@ -19,7 +19,7 @@ data: std.StringHashMapUnmanaged(std.zip.Iterator.Entry),
 version: []const u8,
 
 /// The folders below `assets/minecraft/` that preparing blocks reads.
-const neededFolders = [_][]const u8{ "blockstates/", "models/block/", "textures/block/", "textures/colormap/" };
+const neededFolders = [_][]const u8{ "blockstates/", "models/block/", "textures/block/", "textures/colormap/", "textures/entity/chest/" };
 /// The folders below `data/minecraft/` that preparing blocks reads.
 const neededDataFolders = [_][]const u8{"worldgen/biome/"};
 
