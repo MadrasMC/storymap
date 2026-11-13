@@ -143,6 +143,24 @@
 			<div class="panel chart" id="libdeflate-versions"></div>
 		</div>
 	</section>
+
+	<section id="image-chunks">
+		<div class="section-content">
+			<h2>4. libdeflate in chunks, for image mode</h2>
+			<p>libdeflate 1.26 with a patch: <code>libdeflate_deflate_compress_chunk</code> leaves the last block of a chunk not final and ends it on a byte boundary with an empty stored block, so chunks chain into the one zlib stream a PNG's IDAT chunks hold. Each chunk starts without the history of the ones before it.</p>
+			<p>Two 8192 × 8192 isometric images of large (<code>--mode image:8192x8192</code>, the whole map, and <code>@1:1</code>, full detail), 256 MiB of filtered rows each. One thread, fastest of 3 runs, Adler-32 included; every stream inflated with std and checked. Chunks are whole rows, the most that fit in the size given. 936 more streams, of 120,133 chunks from 1 byte to 300,000 at levels 0 to 12, all inflated to their input.</p>
+			<div class="panel chart" id="chunk-time"></div>
+			<div class="panel chart" id="chunk-size"></div>
+		</div>
+	</section>
+
+	<section id="libdeflate-tiles">
+		<div class="section-content">
+			<h2>5. libdeflate for map tiles, against 8de6cd2</h2>
+			<p>8de6cd2 and the working tree with <code>lib/libdeflate</code> at level 1 for map tiles, both in one folder, timed with hyperfine (mean of 7, 5 and 3 runs after one warm-up). Written once each, coloured-world's 2,444 tiles held the same pixels, the isometric ones 0.06% larger and the top-down ones 1.9% smaller.</p>
+			<div class="panel chart" id="tiles-relative"></div>
+		</div>
+	</section>
 </main>
 <div class="tip" role="status" aria-live="polite"></div>
 <script>
@@ -230,6 +248,19 @@ const deflateFamilies = {
 	PixelDeflate: { name: "PixelDeflate", colour: "--series-2" },
 	libdeflate: { name: "libdeflate", colour: "--series-3" },
 };
+// chunk-bench on the two images: variant, seconds and bytes for fit, then full.
+const chunkRuns = [
+	["std level_4, streaming (now)", 1.7697, 14532834, 2.0433, 30745374],
+	["libdeflate 1, whole image", 0.3716, 14273423, 0.5332, 30817474],
+	["libdeflate 1, 224 KiB chunks", 0.3699, 14308885, 0.5328, 30942399],
+	["libdeflate 1, 992 KiB chunks", 0.3703, 14281591, 0.5324, 30842534],
+	["libdeflate 1, 4064 KiB chunks", 0.3717, 14275936, 0.5329, 30820624],
+	["libdeflate 4, whole image", 0.7013, 14568493, 1.0713, 29834205],
+	["libdeflate 4, 224 KiB chunks", 0.6964, 14539071, 1.0560, 29981475],
+	["libdeflate 4, 992 KiB chunks", 0.7010, 14563539, 1.0673, 29874336],
+	["libdeflate 4, 4064 KiB chunks", 0.7014, 14567394, 1.0685, 29841067],
+];
+const images = { fit: { name: "whole map (fit)", colour: "--series-1" }, full: { name: "full detail (1:1)", colour: "--series-2" } };
 const mib = (bytes) => bytes / (1 << 20);
 const current = deflateRuns.find(([family, level]) => family === "std" && level === "level_4");
 
@@ -424,6 +455,71 @@ const versionItems = libdeflate124.flatMap(([level, seconds]) => {
 		{ label: `level ${level}, 1.26`, value: newer, colour: versions.v126.colour, tip: `<b>libdeflate 1.26, level ${level}</b><br>${newer.toFixed(2)} s, ${((newer / seconds - 1) * 100).toFixed(1)}% against 1.24` },
 	];
 });
+function renderChunks() {
+	const [, fitStd, fitStdBytes, fullStd, fullStdBytes] = chunkRuns[0];
+	const timeItems = chunkRuns.flatMap(([label, fitSeconds, , fullSeconds]) => [
+		{ label: `${label}, fit`, value: fitSeconds, colour: images.fit.colour, tip: `<b>${label}</b><br>${images.fit.name}: ${fitSeconds.toFixed(2)} s, ${(fitStd / fitSeconds).toFixed(2)}× as fast as std` },
+		{ label: `${label}, 1:1`, value: fullSeconds, colour: images.full.colour, tip: `<b>${label}</b><br>${images.full.name}: ${fullSeconds.toFixed(2)} s, ${(fullStd / fullSeconds).toFixed(2)}× as fast as std` },
+	]);
+	const timeRoot = renderBars("chunk-time", "Time to build the zlib stream", "8192 × 8192, one thread.", timeItems, (value) => value.toFixed(2) + " s");
+	timeRoot.insertBefore(legendOf(images), timeRoot.children[1]);
+
+	// Size against std, as a signed bar from a centre line.
+	const root = document.getElementById("chunk-size");
+	root.append(el("h3", { text: "Size against std level_4, streaming" }));
+	root.append(legendOf(images));
+	root.append(el("p", { class: "note", text: "Left of the line is smaller." }));
+	const items = chunkRuns.slice(1).flatMap(([label, , fitBytes, , fullBytes]) => [
+		{ label: `${label}, fit`, value: (fitBytes / fitStdBytes - 1) * 100, colour: images.fit.colour, bytes: fitBytes },
+		{ label: `${label}, 1:1`, value: (fullBytes / fullStdBytes - 1) * 100, colour: images.full.colour, bytes: fullBytes },
+	]);
+	const span = Math.max(...items.map((item) => Math.abs(item.value)));
+	const bars = el("div", { class: "bars" });
+	for (const item of items) {
+		const width = (Math.abs(item.value) / span) * 40;
+		const signed = (item.value >= 0 ? "+" : "−") + Math.abs(item.value).toFixed(2) + "%";
+		const side = item.value >= 0 ? "left" : "right";
+		const bar = el("div", { class: "bar", style: `position: absolute; height: 16px; width: ${width}%; ${side}: 50%; border-radius: ${item.value >= 0 ? "0 4px 4px 0" : "4px 0 0 4px"}; background: var(${item.colour})` });
+		withTip(bar, `<b>${item.label}</b><br>${mib(item.bytes).toFixed(2)} MiB, ${signed}`);
+		const value = el("span", { class: "bar-value", text: signed, style: `position: absolute; ${side}: calc(50% + ${width}% + 6px)` });
+		const track = el("div", { class: "bar-track", style: "display: block; position: relative" }, [el("span", { style: "position: absolute; left: 50%; top: -3px; bottom: -3px; border-left: 1px solid var(--axis)" }), bar, value]);
+		bars.append(el("div", { class: "bar-row" }, [el("div", { class: "label", text: item.label }), track]));
+	}
+	root.append(bars);
+	root.append(table(
+		["variant", "fit s", "fit MiB", "1:1 s", "1:1 MiB"],
+		chunkRuns.map(([label, fitSeconds, fitBytes, fullSeconds, fullBytes]) => [label, fitSeconds.toFixed(3), mib(fitBytes).toFixed(2), fullSeconds.toFixed(3), mib(fullBytes).toFixed(2)]),
+		[false, true, true, true, true],
+	));
+}
+renderChunks();
+
+// hyperfine: run, mean and σ in seconds for 8de6cd2, then for libdeflate.
+const tileRuns = [
+	["large, top-down", 0.9494, 0.0030, 0.7301, 0.0029],
+	["coloured-world, both views", 9.476, 0.038, 5.833, 0.013],
+	["large, isometric", 69.475, 0.374, 39.281, 0.389],
+];
+const builds = { before: { name: "8de6cd2 (std flate)", colour: "--series-1" }, after: { name: "libdeflate, level 1", colour: "--series-3" } };
+const tilesRoot = renderBars(
+	"tiles-relative",
+	"Render time, against 8de6cd2",
+	"Each run's time as a share of 8de6cd2's, so runs of very different lengths share one axis.",
+	tileRuns.flatMap(([label, before, beforeSd, after, afterSd]) => [
+		{ label: `${label}, 8de6cd2`, value: 100, colour: builds.before.colour, tip: `<b>${label}</b><br>8de6cd2: ${before.toFixed(3)} s ± ${beforeSd.toFixed(3)}` },
+		{ label: `${label}, libdeflate`, value: (after / before) * 100, colour: builds.after.colour, tip: `<b>${label}</b><br>libdeflate: ${after.toFixed(3)} s ± ${afterSd.toFixed(3)}<br>${(before / after).toFixed(2)}× as fast` },
+	]),
+	(value) => value.toFixed(1) + "%",
+	100,
+);
+tilesRoot.insertBefore(legendOf(builds), tilesRoot.children[1]);
+tilesRoot.querySelector("details").remove();
+tilesRoot.append(table(
+	["run", "8de6cd2 s", "libdeflate s", "speed-up"],
+	tileRuns.map(([label, before, , after]) => [label, before.toFixed(3), after.toFixed(3), (before / after).toFixed(2) + "×"]),
+	[false, true, true, true],
+));
+
 const versionRoot = renderBars("libdeflate-versions", "libdeflate 1.24 and 1.26", "Same tiles, same sizes byte for byte; 1.24 built without its AVX-512 Adler-32, which this CPU doesn't use.", versionItems, (value) => value.toFixed(2) + " s");
 versionRoot.insertBefore(legendOf(versions), versionRoot.children[1]);
 renderBars("prepare-functions", "prepare: functions over 1%", "13.0 s, one thread drawing sprites for 11.5 s of it.", prepareFunctions.map(([label, value]) => ({ label, value })), percent);
