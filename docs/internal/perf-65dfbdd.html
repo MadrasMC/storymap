@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Performance measurements</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='9' width='3' height='6' fill='%232a78d6'/%3E%3Crect x='6' y='5' width='3' height='10' fill='%232a78d6'/%3E%3Crect x='11' y='1' width='3' height='14' fill='%232a78d6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../style/fonts.css">
+<link rel="stylesheet" href="../style/base.css">
+<style>
+	:root {
+		--series-1: #2a78d6;
+		--series-2: #eb6834;
+		--series-3: #1baf7a;
+		--grid: #e1e0d9;
+		--axis: #c3c2b7;
+		--tip-bg: #1d1f23;
+		--tip-fg: #f4f3ef;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root:where(:not([data-theme="light"])) {
+			color-scheme: dark;
+			--bg: #141517;
+			--fg: #ecebe6;
+			--muted: #a3a6ad;
+			--panel: #1f2125;
+			--border: #33363c;
+			--soft: #272a2f;
+			--series-1: #3987e5;
+			--series-2: #d95926;
+			--series-3: #199e70;
+			--grid: #2c2e33;
+			--axis: #43464d;
+			--tip-bg: #ecebe6;
+			--tip-fg: #1d1f23;
+		}
+	}
+	:root[data-theme="dark"] {
+		color-scheme: dark;
+		--bg: #141517;
+		--fg: #ecebe6;
+		--muted: #a3a6ad;
+		--panel: #1f2125;
+		--border: #33363c;
+		--soft: #272a2f;
+		--series-1: #3987e5;
+		--series-2: #d95926;
+		--series-3: #199e70;
+		--grid: #2c2e33;
+		--axis: #43464d;
+		--tip-bg: #ecebe6;
+		--tip-fg: #1d1f23;
+	}
+	body { background: var(--bg); }
+	.chart { display: grid; gap: var(--s4); }
+	.chart h3 { margin: 0; font-size: var(--t-body); font-weight: 600; }
+	.chart .note { margin: 0; color: var(--muted); font-size: var(--t-small); }
+	.legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--t-small); color: var(--muted); margin: 0; padding: 0; list-style: none; }
+	.legend li { display: flex; align-items: center; gap: var(--s2); }
+	.legend .key { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+	.bars { display: grid; gap: var(--s2); }
+	.bar-row { display: grid; grid-template-columns: minmax(8rem, 15rem) minmax(0, 1fr); align-items: center; gap: var(--s3); }
+	.bar-row .label { font: var(--t-small)/1.3 var(--mono); overflow-wrap: anywhere; }
+	.bar-track { position: relative; height: 18px; display: flex; align-items: center; gap: var(--s2); border-left: 1px solid var(--axis); }
+	.bar { height: 16px; border-radius: 0 4px 4px 0; min-width: 2px; cursor: default; }
+	.bar-value { font: var(--t-micro)/1 var(--mono); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+	details { font-size: var(--t-small); }
+	details summary { cursor: pointer; color: var(--muted); }
+	details table { margin-top: var(--s2); font-variant-numeric: tabular-nums; }
+	td.num, th.num { text-align: right; }
+	.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--tip-bg); color: var(--tip-fg); font: var(--t-small)/1.4 var(--sans); padding: var(--s1) var(--s2); border-radius: var(--radius-sm); opacity: 0; transition: opacity 120ms var(--ease); max-width: 18rem; }
+	.tip.shown { opacity: 1; }
+	.tip b { font-weight: 600; }
+	@media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+	@media (max-width: 560px) { .bar-row { grid-template-columns: minmax(0, 1fr); gap: var(--s1); } }
+</style>
+</head>
+<body>
+<main>
+	<header>
+		<h1>Performance measurements</h1>
+		<p class="lede">Against 65dfbdd. Xeon E3-1270 v6, 4 cores, 8 threads, Debian 13. ReleaseFast for Skylake, <code>--theme plain --style game:coloured --no-write</code>, both builds in one folder.</p>
+	</header>
+
+	<section id="image-bands">
+		<div class="section-content">
+			<h2>1. Image mode in libdeflate bands</h2>
+			<p>65dfbdd, whose <code>RowEncoder</code> streams through std's flate at <code>level_4</code>, and the working tree, whose <code>RowEncoder</code> compresses bands of 1 MiB of filtered rows with libdeflate 1.26 at level 1, patched to chain them into one stream. Images of large, 8192 × 8192; hyperfine, mean of 5 runs after one warm-up. Written once each, the images held the same pixels.</p>
+			<div class="panel chart" id="image-time"></div>
+			<div class="panel chart" id="image-size"></div>
+		</div>
+	</section>
+</main>
+<div class="tip" role="status" aria-live="polite"></div>
+<script>
+// hyperfine: run, mean and σ in seconds for 65dfbdd, then for the bands.
+const imageRuns = [
+	["isometric image, full detail (1:1)", 2.603, 0.019, 1.266, 0.002],
+	["top-down image, full detail (1:1)", 3.095, 0.133, 1.824, 0.011],
+	["isometric image, whole map", 23.580, 0.022, 22.923, 0.065],
+	["map, top-down (no images)", 0.7310, 0.0034, 0.7207, 0.0031],
+];
+// Written once each: run, bytes for 65dfbdd, then for the bands.
+const imageSizes = [
+	["isometric image, full detail (1:1)", 30751059, 30845759],
+	["top-down image, full detail (1:1)", 22855016, 22689874],
+	["isometric image, whole map", 14535543, 14284816],
+];
+const builds = { before: { name: "65dfbdd (std flate, streaming)", colour: "--series-1" }, after: { name: "libdeflate, 1 MiB bands", colour: "--series-3" } };
+
+const tip = document.querySelector(".tip");
+function showTip(event, html) {
+	tip.innerHTML = html;
+	tip.classList.add("shown");
+	tip.style.left = Math.min(event.clientX + 12, window.innerWidth - tip.offsetWidth - 8) + "px";
+	tip.style.top = Math.max(event.clientY - tip.offsetHeight - 12, 8) + "px";
+}
+function hideTip() { tip.classList.remove("shown"); }
+function withTip(element, html) {
+	element.addEventListener("pointermove", (event) => showTip(event, html));
+	element.addEventListener("pointerleave", hideTip);
+	element.tabIndex = 0;
+	element.setAttribute("aria-label", html.replace(/<[^>]+>/g, " "));
+	element.addEventListener("focus", () => {
+		const box = element.getBoundingClientRect();
+		showTip({ clientX: box.left, clientY: box.top }, html);
+	});
+	element.addEventListener("blur", hideTip);
+}
+function el(tag, attributes = {}, children = []) {
+	const node = document.createElement(tag);
+	for (const [key, value] of Object.entries(attributes)) {
+		if (key === "text") node.textContent = value;
+		else node.setAttribute(key, value);
+	}
+	for (const child of children) node.append(child);
+	return node;
+}
+function table(headers, rows, numeric) {
+	const head = el("tr", {}, headers.map((h, i) => el("th", { text: h, class: numeric[i] ? "num" : "" })));
+	const body = rows.map((row) => el("tr", {}, row.map((cell, i) => el("td", { text: cell, class: numeric[i] ? "num" : "" }))));
+	return el("details", {}, [el("summary", { text: "Table" }), el("div", { class: "table-wrap" }, [el("table", {}, [el("thead", {}, [head]), el("tbody", {}, body)])])]);
+}
+function legend(entries) {
+	return el("ul", { class: "legend" }, Object.values(entries).map((entry) => el("li", {}, [el("span", { class: "key", style: `background: var(${entry.colour})` }), entry.name])));
+}
+function bars(root, items, max, format) {
+	const list = el("div", { class: "bars" });
+	for (const item of items) {
+		const bar = el("div", { class: "bar", style: `width: ${(item.value / max) * 85}%; background: var(${item.colour})` });
+		withTip(bar, item.tip);
+		list.append(el("div", { class: "bar-row" }, [el("div", { class: "label", text: item.label }), el("div", { class: "bar-track" }, [bar, el("span", { class: "bar-value", text: format(item.value) })])]));
+	}
+	root.append(list);
+}
+
+{
+	const root = document.getElementById("image-time");
+	root.append(el("h3", { text: "Render time, against 65dfbdd" }), legend(builds), el("p", { class: "note", text: "Each run's time as a share of 65dfbdd's, so runs of very different lengths share one axis." }));
+	bars(root, imageRuns.flatMap(([label, before, beforeSd, after, afterSd]) => [
+		{ label: `${label}, 65dfbdd`, value: 100, colour: builds.before.colour, tip: `<b>${label}</b><br>65dfbdd: ${before.toFixed(3)} s ± ${beforeSd.toFixed(3)}` },
+		{ label: `${label}, bands`, value: (after / before) * 100, colour: builds.after.colour, tip: `<b>${label}</b><br>bands: ${after.toFixed(3)} s ± ${afterSd.toFixed(3)}<br>${(before / after).toFixed(2)}× as fast` },
+	]), 100, (value) => value.toFixed(1) + "%");
+	root.append(table(["run", "65dfbdd s", "bands s", "speed-up"], imageRuns.map(([label, before, , after]) => [label, before.toFixed(3), after.toFixed(3), (before / after).toFixed(2) + "×"]), [false, true, true, true]));
+}
+{
+	const root = document.getElementById("image-size");
+	root.append(el("h3", { text: "Image size" }), legend(builds));
+	const max = Math.max(...imageSizes.flatMap(([, a, b]) => [a, b])) / (1 << 20);
+	bars(root, imageSizes.flatMap(([label, before, after]) => [
+		{ label: `${label}, 65dfbdd`, value: before / (1 << 20), colour: builds.before.colour, tip: `<b>${label}</b><br>65dfbdd: ${(before / (1 << 20)).toFixed(2)} MiB` },
+		{ label: `${label}, bands`, value: after / (1 << 20), colour: builds.after.colour, tip: `<b>${label}</b><br>bands: ${(after / (1 << 20)).toFixed(2)} MiB, ${after >= before ? "+" : "−"}${(Math.abs(after / before - 1) * 100).toFixed(2)}%` },
+	]), max, (value) => value.toFixed(2) + " MiB");
+	root.append(table(["image", "65dfbdd MiB", "bands MiB", "change"], imageSizes.map(([label, before, after]) => [label, (before / (1 << 20)).toFixed(2), (after / (1 << 20)).toFixed(2), (after >= before ? "+" : "−") + (Math.abs(after / before - 1) * 100).toFixed(2) + "%"]), [false, true, true, true]));
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,153 @@
+--- a/lib/deflate_compress.c
++++ b/lib/deflate_compress.c
+@@ -466,6 +466,9 @@
+ 	/* Anything of this size or less we won't bother trying to compress. */
+ 	size_t max_passthrough_size;
+ 
++	/* More chunks follow: no block is written as final. */
++	bool continues;
++
+ 	/*
+ 	 * The maximum search depth: consider at most this many potential
+ 	 * matches at each position
+@@ -1735,6 +1738,7 @@
+ 	u32 best_cost;
+ 	struct deflate_codes *codes;
+ 	unsigned sym;
++	const bool bfinal_bit = is_final_block && !c->continues;
+ 
+ 	ASSERT(block_length >= MIN_BLOCK_LENGTH ||
+ 	       (is_final_block && block_length > 0));
+@@ -1829,7 +1833,7 @@
+ 			size_t len = UINT16_MAX;
+ 
+ 			if (in_end - in_next <= UINT16_MAX) {
+-				bfinal = is_final_block;
++				bfinal = bfinal_bit;
+ 				len = in_end - in_next;
+ 			}
+ 			/* It was already checked that there is enough space. */
+@@ -1861,7 +1865,7 @@
+ 	if (best_cost == static_cost) {
+ 		/* Static Huffman block */
+ 		codes = &c->static_codes;
+-		ADD_BITS(is_final_block, 1);
++		ADD_BITS(bfinal_bit, 1);
+ 		ADD_BITS(DEFLATE_BLOCKTYPE_STATIC_HUFFMAN, 2);
+ 		FLUSH_BITS();
+ 	} else {
+@@ -1874,7 +1878,7 @@
+ 
+ 		codes = &c->codes;
+ 		STATIC_ASSERT(CAN_BUFFER(1 + 2 + 5 + 5 + 4 + 3));
+-		ADD_BITS(is_final_block, 1);
++		ADD_BITS(bfinal_bit, 1);
+ 		ADD_BITS(DEFLATE_BLOCKTYPE_DYNAMIC_HUFFMAN, 2);
+ 		ADD_BITS(c->o.precode.num_litlen_syms - 257, 5);
+ 		ADD_BITS(c->o.precode.num_offset_syms - 1, 5);
+@@ -2391,7 +2395,7 @@
+  */
+ static size_t
+ deflate_compress_none(const u8 *in, size_t in_nbytes,
+-		      u8 *out, size_t out_nbytes_avail)
++		      u8 *out, size_t out_nbytes_avail, bool is_final)
+ {
+ 	const u8 *in_next = in;
+ 	const u8 * const in_end = in + in_nbytes;
+@@ -2407,7 +2411,7 @@
+ 		if (out_nbytes_avail < 5)
+ 			return 0;
+ 		/* BFINAL and BTYPE */
+-		*out_next++ = 1 | (DEFLATE_BLOCKTYPE_UNCOMPRESSED << 1);
++		*out_next++ = is_final | (DEFLATE_BLOCKTYPE_UNCOMPRESSED << 1);
+ 		/* LEN and NLEN */
+ 		put_unaligned_le32(0xFFFF0000, out_next);
+ 		return 5;
+@@ -2418,7 +2422,7 @@
+ 		size_t len = UINT16_MAX;
+ 
+ 		if (in_end - in_next <= UINT16_MAX) {
+-			bfinal = 1;
++			bfinal = is_final;
+ 			len = in_end - in_next;
+ 		}
+ 		if (out_end - out_next < 5 + len)
+@@ -3917,6 +3921,7 @@
+ 		       options->free_func : libdeflate_default_free_func;
+ 
+ 	c->compression_level = compression_level;
++	c->continues = false;
+ 
+ 	/*
+ 	 * The higher the compression level, the more we should bother trying to
+@@ -4040,7 +4045,7 @@
+ 	 */
+ 	if (unlikely(in_nbytes <= c->max_passthrough_size))
+ 		return deflate_compress_none(in, in_nbytes,
+-					     out, out_nbytes_avail);
++					     out, out_nbytes_avail, true);
+ 
+ 	/* Initialize the output bitstream structure. */
+ 	os.bitbuf = 0;
+@@ -4071,6 +4076,61 @@
+ 	return os.next - (u8 *)out;
+ }
+ 
++/*
++ * Like libdeflate_deflate_compress(), but for one chunk of a stream that goes
++ * on: unless 'is_final', no block is final and the output ends with an empty
++ * stored block, on a byte boundary, as zlib's Z_SYNC_FLUSH does, so the next
++ * chunk's output can follow it.  Each chunk is compressed without the history
++ * of the ones before it.
++ */
++LIBDEFLATEAPI size_t
++libdeflate_deflate_compress_chunk(struct libdeflate_compressor *c,
++				  const void *in, size_t in_nbytes,
++				  void *out, size_t out_nbytes_avail,
++				  int is_final)
++{
++	struct deflate_output_bitstream os;
++	u8 *out_next;
++
++	if (is_final)
++		return libdeflate_deflate_compress(c, in, in_nbytes,
++						   out, out_nbytes_avail);
++
++	/* Stored blocks already end on a byte boundary. */
++	if (unlikely(in_nbytes <= c->max_passthrough_size))
++		return deflate_compress_none(in, in_nbytes,
++					     out, out_nbytes_avail, false);
++
++	/*
++	 * The empty stored block takes up to 1 more byte than the bits left
++	 * over, and 4 for LEN and NLEN.
++	 */
++	if (out_nbytes_avail < 6)
++		return 0;
++	os.bitbuf = 0;
++	os.bitcount = 0;
++	os.next = out;
++	os.end = os.next + out_nbytes_avail - 5;
++	os.overflow = false;
++
++	c->continues = true;
++	(*c->impl)(c, in, in_nbytes, &os);
++	c->continues = false;
++	if (os.overflow)
++		return 0;
++
++	/* BFINAL 0 and BTYPE 00, then align to a byte boundary. */
++	ASSERT(os.bitcount <= 7);
++	out_next = os.next;
++	*out_next++ = os.bitbuf;
++	if (os.bitcount + 3 > 8)
++		*out_next++ = 0;
++	put_unaligned_le16(0, out_next);
++	put_unaligned_le16(0xFFFF, out_next + 2);
++	out_next += 4;
++	return out_next - (u8 *)out;
++}
++
+ LIBDEFLATEAPI void
+ libdeflate_free_compressor(struct libdeflate_compressor *c)
+ {

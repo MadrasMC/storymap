@@ -300,7 +300,7 @@ fn runAll(comptime Worker: type, jobs: []Worker, threads: []?std.Thread, comptim
 fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, image: ImageFile, output: Output, stats: *Stats) !void {
     const placement = image.placement;
     if (output.format == .png) {
-        var encoder: png.RowEncoder = try .init(allocator, placement.width, .level_4);
+        var encoder: png.RowEncoder = try .init(allocator, placement.width, .{});
         defer encoder.deinit(allocator);
 
         var buffer: [1 << 16]u8 = undefined;
@@ -602,7 +602,7 @@ pub const Placement = struct {
         const pixels = width * self.height;
         const band = @as(u64, self.tileColumns()[1]) * @sizeOf(Pixels) + width * (@sizeOf(u32) + @sizeOf(usize));
         return band + switch (format) {
-            .png => 12 * width + (352 << 10),
+            .png => png.RowEncoder.memory(self.width),
             .jpegxl => pixels * (4 + 8),
             .webp => pixels * (4 + 12 + 48) + (4 << 20),
         };
@@ -673,7 +673,7 @@ test "Placement.memory" {
     const placement: Placement = .{ .level = 0, .width = 1000, .height = 1000, .left = 0, .top = 0, .step = 1 };
     // Two tiles across, and the row's pixels and where each comes from.
     const band = 2 * @sizeOf(Pixels) + 1000 * (4 + @sizeOf(usize));
-    try std.testing.expectEqual(band + 12 * 1000 + (352 << 10), placement.memory(.png));
+    try std.testing.expectEqual(band + png.RowEncoder.memory(1000), placement.memory(.png));
     try std.testing.expectEqual(band + 12 * 1000 * 1000, placement.memory(.jpegxl));
     try std.testing.expectEqual(band + 64 * 1000 * 1000 + (4 << 20), placement.memory(.webp));
 }
