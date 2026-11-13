@@ -7,4 +7,5 @@ pub const render = @import("render.zig");
 
 test {
     std.testing.refAllDecls(@This());
+    _ = @import("Advanced.zig");
 }

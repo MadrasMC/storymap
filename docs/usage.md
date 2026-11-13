@@ -122,6 +122,17 @@ Without `--game`, it prepares whichever of the two it finds in their standard pl
 
 [Performance](performance.md#measuring) has more.
 
+## Advanced options
+
+`--advanced` takes settings of how Storymap works inside, as `key=value` joined by commas: `--advanced libdeflate=6`.
+They aren't stable: a setting changes or goes, without notice, when what it tunes does.
+A setting this version doesn't know is warned about and ignored, so a script that gives one still renders; a value it can't read stops the render.
+`--json` prints the settings in effect, defaults included, under `advanced`.
+
+| setting | use |
+| --- | --- |
+| `libdeflate=<level>` | how hard PNG tiles and images are compressed, from 0, stored as they are, to 12, the smallest and slowest; 1 by default. Levels 2 to 9 take 653 KiB of memory per thread, and 10 to 12 8.6 MiB. |
+
 ## Clipping
 
 Use `--clip` to draw a part of a world. 3 shapes are supported, as in the table below.

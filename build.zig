@@ -352,6 +352,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "console", .module = console_mod },
             .{ .name = "storyblk", .module = storyblk_mod },
             .{ .name = "args", .module = args_mod },
+            .{ .name = "libdeflate", .module = libdeflate_mod },
             .{ .name = "build_options", .module = options_mod },
         },
     });

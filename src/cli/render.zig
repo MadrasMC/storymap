@@ -14,6 +14,7 @@ const viewer = @import("viewer");
 const Theme = @import("theme");
 const console = @import("console");
 const prepare = @import("prepare.zig");
+const Advanced = @import("Advanced.zig");
 const args = @import("args");
 
 pub const spec: args.Spec = .{
@@ -36,6 +37,7 @@ pub const spec: args.Spec = .{
         .{ .name = "blocks", .value = "file", .description = "The prepared blocks file: " ++ Prepared.defaultPath ++ " or " ++ mc.Prepared.defaultPath ++ " by default, by the game." },
         prepare.gameOption,
         prepare.dataOption,
+        .{ .name = "advanced", .value = "settings", .description = "Settings of how Storymap works inside, which change between versions: " ++ Advanced.expected ++ " (docs/usage.md#advanced-options)." },
     },
     .positionals = &.{
         .{ .name = "world", .description = "A Vintage Story save file (.vcdbs), or a Minecraft world's folder." },
@@ -102,7 +104,25 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         if (count == 0) console.fail("`--jobs`: invalid count {s}. expected: a number of threads from 1", .{text});
         break :count count;
     } else std.Thread.getCpuCount() catch 1;
-    const output: tiles.Output = .{ .threads = threads, .folder = out, .format = format, .lossyFrom = lossyFrom, .map = mode.map };
+    var advanced: Advanced = .{};
+    if (parsed.value("advanced")) |text| {
+        var settings = std.mem.tokenizeScalar(u8, text, ',');
+        // A key that's gone, as what it tuned changed, is only warned about, so scripts that
+        // give it still render.
+        while (settings.next()) |setting| switch (advanced.set(setting)) {
+            .set => {},
+            .unknownKey => console.warn("`--advanced`: unknown setting {s}, ignored", .{Advanced.keyOf(setting)}),
+            .invalidValue, .missingValue => console.fail("`--advanced`: invalid setting {s}. expected: " ++ Advanced.expected, .{setting}),
+        };
+    }
+    const output: tiles.Output = .{
+        .threads = threads,
+        .folder = out,
+        .format = format,
+        .png = .{ .libdeflate = .{ .level = advanced.libdeflate } },
+        .lossyFrom = lossyFrom,
+        .map = mode.map,
+    };
     var request: Request = .{
         .start = start,
         .savePath = savePath,
@@ -112,6 +132,7 @@ pub fn run(init: std.process.Init, parsed: args.Parsed(spec)) !void {
         .mode = mode,
         .theme = theme,
         .output = output,
+        .advanced = advanced,
         .write = write,
         .json = parsed.flag("json"),
         .yes = parsed.flag("yes"),
@@ -178,6 +199,8 @@ const Request = struct {
     mode: Mode,
     theme: Theme,
     output: tiles.Output,
+    /// For `--json`; `output` holds what they set.
+    advanced: Advanced,
     write: bool,
     json: bool,
     yes: bool,
@@ -272,6 +295,7 @@ fn draw(comptime Source: type, allocator: std.mem.Allocator, io: std.Io, arena: 
         .written = request.write,
         .format = @tagName(output.format),
         .chunks = try source.countChunks(),
+        .advanced = request.advanced,
         .seconds = .{ .blocks = seconds(request.blocksTime), .open = seconds(request.openTime), .total = seconds(total) },
         .topdown = if (topdownStats) |stats| .{
             .style = try std.fmt.allocPrint(arena, "{f}", .{theme.topdown}),
@@ -305,6 +329,8 @@ const Report = struct {
     format: []const u8,
     /// Every chunk in the save, though a render reads only those it needs.
     chunks: usize,
+    /// The `--advanced` settings in effect, defaults included.
+    advanced: Advanced,
     seconds: struct {
         /// Loading the prepared blocks, or preparing them.
         blocks: f64,

@@ -52,6 +52,8 @@ pub const Output = struct {
     /// disk.
     folder: ?Io.Dir,
     format: Format = .png,
+    /// For PNG, how its tiles' and images' encoders compress; images use its libdeflate level.
+    png: png.Options = .{},
     /// For WebP, the level from which tiles are lossy, at quality 90, where blocks are drawn
     /// small enough that blurred edges don't show; null for none.
     lossyFrom: ?u8 = null,
@@ -300,7 +302,7 @@ fn runAll(comptime Worker: type, jobs: []Worker, threads: []?std.Thread, comptim
 fn writeImage(comptime View: type, allocator: std.mem.Allocator, io: Io, view: *View, pyramid: *const Pyramid, image: ImageFile, output: Output, stats: *Stats) !void {
     const placement = image.placement;
     if (output.format == .png) {
-        var encoder: png.RowEncoder = try .init(allocator, placement.width, .{});
+        var encoder: png.RowEncoder = try .init(allocator, placement.width, output.png.libdeflate);
         defer encoder.deinit(allocator);
 
         var buffer: [1 << 16]u8 = undefined;
@@ -990,7 +992,7 @@ fn Job(comptime View: type) type {
             const pixels = try allocator.alloc(Pixels, split + 1);
             errdefer allocator.free(pixels);
             const encoder: Encoder = switch (output.format) {
-                .png => .{ .png = try .init(allocator, size, size, .{}) },
+                .png => .{ .png = try .init(allocator, size, size, output.png) },
                 .jpegxl => .{ .jpegxl = try .init(allocator, size, size, .{}) },
                 .webp => .{ .webp = try .init(allocator, size, size, .{}) },
             };
