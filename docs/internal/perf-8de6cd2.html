@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Performance measurements</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='9' width='3' height='6' fill='%232a78d6'/%3E%3Crect x='6' y='5' width='3' height='10' fill='%232a78d6'/%3E%3Crect x='11' y='1' width='3' height='14' fill='%232a78d6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../style/fonts.css">
+<link rel="stylesheet" href="../style/base.css">
+<style>
+	:root {
+		--series-1: #2a78d6;
+		--series-2: #eb6834;
+		--series-3: #1baf7a;
+		--series-4: #eda100;
+		--series-5: #e87ba4;
+		--series-6: #008300;
+		--series-other: #b9b7ae;
+		--grid: #e1e0d9;
+		--axis: #c3c2b7;
+		--tip-bg: #1d1f23;
+		--tip-fg: #f4f3ef;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root:where(:not([data-theme="light"])) {
+			color-scheme: dark;
+			--bg: #141517;
+			--fg: #ecebe6;
+			--muted: #a3a6ad;
+			--panel: #1f2125;
+			--border: #33363c;
+			--soft: #272a2f;
+			--series-1: #3987e5;
+			--series-2: #d95926;
+			--series-3: #199e70;
+			--series-4: #c98500;
+			--series-5: #d55181;
+			--series-6: #008300;
+			--series-other: #5c5e63;
+			--grid: #2c2e33;
+			--axis: #43464d;
+			--tip-bg: #ecebe6;
+			--tip-fg: #1d1f23;
+		}
+	}
+	:root[data-theme="dark"] {
+		color-scheme: dark;
+		--bg: #141517;
+		--fg: #ecebe6;
+		--muted: #a3a6ad;
+		--panel: #1f2125;
+		--border: #33363c;
+		--soft: #272a2f;
+		--series-1: #3987e5;
+		--series-2: #d95926;
+		--series-3: #199e70;
+		--series-4: #c98500;
+		--series-5: #d55181;
+		--series-6: #008300;
+		--series-other: #5c5e63;
+		--grid: #2c2e33;
+		--axis: #43464d;
+		--tip-bg: #ecebe6;
+		--tip-fg: #1d1f23;
+	}
+	body { background: var(--bg); }
+	.chart { display: grid; gap: var(--s4); }
+	.chart h3 { margin: 0; font-size: var(--t-body); font-weight: 600; }
+	.chart .note { margin: 0; color: var(--muted); font-size: var(--t-small); }
+	.legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--t-small); color: var(--muted); margin: 0; padding: 0; list-style: none; }
+	.legend li { display: flex; align-items: center; gap: var(--s2); }
+	.legend .key { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+	.stack-row { display: grid; grid-template-columns: 9rem minmax(0, 1fr); align-items: center; gap: var(--s3); }
+	.stack-row .label { font-size: var(--t-small); }
+	.stack-row .label small { display: block; color: var(--muted); font: var(--t-micro)/1.3 var(--mono); }
+	.stack { display: flex; gap: 2px; height: 28px; }
+	.stack .part { border-radius: 4px; min-width: 2px; display: flex; align-items: center; padding-left: var(--s2); font: 600 var(--t-micro)/1 var(--mono); color: #fff; white-space: nowrap; overflow: visible; cursor: default; }
+	.stack .part.dark-text { color: #0b0b0b; }
+
+	.bars { display: grid; gap: var(--s2); }
+	.bar-row { display: grid; grid-template-columns: minmax(8rem, 15rem) minmax(0, 1fr); align-items: center; gap: var(--s3); }
+	.bar-row .label { font: var(--t-small)/1.3 var(--mono); overflow-wrap: anywhere; }
+	.bar-track { position: relative; height: 18px; display: flex; align-items: center; gap: var(--s2); }
+	.bar { height: 16px; border-radius: 0 4px 4px 0; background: var(--series-1); min-width: 2px; cursor: default; }
+	.bar-value { font: var(--t-micro)/1 var(--mono); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+	.bars .axis { border-left: 1px solid var(--axis); }
+
+	details { font-size: var(--t-small); }
+	details summary { cursor: pointer; color: var(--muted); }
+	details table { margin-top: var(--s2); font-variant-numeric: tabular-nums; }
+	td.num, th.num { text-align: right; }
+
+	.scatter svg { width: 100%; height: auto; display: block; overflow: visible; }
+	.scatter .gridline { stroke: var(--grid); stroke-width: 1; }
+	.scatter .axis-line { stroke: var(--axis); stroke-width: 1; }
+	.scatter .tick { fill: var(--muted); font: 11px var(--mono); font-variant-numeric: tabular-nums; }
+	.scatter .axis-title { fill: var(--muted); font: 12px var(--sans); }
+	.scatter .point-label { fill: var(--fg); font: 11px var(--mono); }
+	.scatter circle { stroke: var(--panel); stroke-width: 2; cursor: default; }
+	.scatter .hit { fill: transparent; stroke: none; }
+	.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--tip-bg); color: var(--tip-fg); font: var(--t-small)/1.4 var(--sans); padding: var(--s1) var(--s2); border-radius: var(--radius-sm); opacity: 0; transition: opacity 120ms var(--ease); max-width: 18rem; }
+	.tip.shown { opacity: 1; }
+	.tip b { font-weight: 600; }
+	@media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+	@media (max-width: 560px) {
+		.stack-row, .bar-row { grid-template-columns: minmax(0, 1fr); gap: var(--s1); }
+	}
+</style>
+</head>
+<body>
+<main>
+	<header>
+		<h1>Performance measurements</h1>
+		<p class="lede">Xeon E3-1270 v6, 4 cores, 8 threads, Debian 13. ReleaseFast for Skylake, <code>--theme plain --style game:coloured --no-write</code>.</p>
+	</header>
+
+	<section id="profiles">
+		<div class="section-content">
+			<h2>1. Profiles at 8de6cd2</h2>
+			<p>Share of perf samples (<code>perf record</code>, all threads), by function, grouped by what the function does.</p>
+			<div class="panel chart" id="profile-split"></div>
+			<div class="panel chart" id="isometric-functions"></div>
+			<div class="panel chart" id="prepare-functions"></div>
+		</div>
+	</section>
+
+	<section id="threads">
+		<div class="section-content">
+			<h2>2. Threads</h2>
+			<p>coloured-world, top-down and isometric, 3 runs each with hyperfine.</p>
+			<div class="panel chart" id="threads-chart"></div>
+		</div>
+	</section>
+
+	<section id="deflate">
+		<div class="section-content">
+			<h2>3. Deflate on isometric tiles</h2>
+			<p>Every 4th of coloured-world's 2,420 isometric tiles, at all levels: 605 tiles, 605 MiB of filtered rows, as Storymap's PNG encoder gives them to deflate. One thread, fastest of 3 runs; every output inflated with std and checked. Storymap uses std <code>level_4</code>. libdeflate 1.26.</p>
+			<div class="panel chart" id="deflate-scatter"></div>
+			<div class="panel chart" id="deflate-time"></div>
+			<div class="panel chart" id="deflate-size"></div>
+			<div class="panel chart" id="libdeflate-versions"></div>
+		</div>
+	</section>
+</main>
+<div class="tip" role="status" aria-live="polite"></div>
+<script>
+const groups = {
+	compress: { name: "Compressing (std flate)", colour: "--series-1" },
+	draw: { name: "Drawing", colour: "--series-2" },
+	filter: { name: "PNG filtering", colour: "--series-3" },
+	pipeline: { name: "Tile pipeline", colour: "--series-4", darkText: true },
+	tint: { name: "Tinting", colour: "--series-5" },
+	chunks: { name: "Decoding chunks (zstd)", colour: "--series-6" },
+	other: { name: "Other", colour: "--series-other", darkText: true },
+};
+
+const profiles = [
+	{
+		name: "large, isometric",
+		detail: "70.0 s, 241,271 samples",
+		functions: [
+			["compress.flate.Compress.matchAndAddHash", 29.20, "compress"],
+			["compress.flate.Compress.rebaseInner", 25.27, "compress"],
+			["isometric.Worker.drawBlock", 14.01, "draw"],
+			["compress.flate.Compress.writeBlock", 8.30, "compress"],
+			["tiles.Job.build", 3.15, "pipeline"],
+			["isometric.Worker.chunkLooks", 2.61, "draw"],
+			["png.Encoder.compress", 2.23, "filter"],
+			["mem.eql (in flate)", 1.93, "compress"],
+			["png.filterRow", 1.90, "filter"],
+			["isometric.Worker.draw", 1.80, "draw"],
+			["isometric.ChunkCache.get", 1.67, "draw"],
+			["isometric.paintBlock", 1.67, "draw"],
+			["hash.Adler32.permute", 1.59, "compress"],
+			["memcpy", 1.12, "other"],
+			["compress.flate.Compress.huffman.build", 0.75, "compress"],
+		],
+	},
+	{
+		name: "large, top-down",
+		detail: "0.96 s",
+		functions: [
+			["topdown.Worker.draw", 39.15, "draw"],
+			["compress.flate.Compress.matchAndAddHash", 16.36, "compress"],
+			["compress.flate.Compress.rebaseInner", 11.71, "compress"],
+			["Tint.tint", 7.89, "tint"],
+			["ZSTD_decompressSequences", 5.20, "chunks"],
+			["compress.flate.Compress.writeBlock", 4.44, "compress"],
+			["png.Encoder.compress", 1.15, "filter"],
+		],
+	},
+];
+
+const prepareFunctions = [
+	["rasterizer.triangle", 65.85],
+	["isometric.drawSprites", 14.49],
+	["mem.eql", 4.73],
+	["isometric.average", 3.42],
+	["crypto.blake3.compressPre", 2.24],
+	["Prepared.Textures.paths", 1.81],
+];
+
+const threadRuns = [
+	["-j 8", 9.412, 0.009, 71.4],
+	["-j 4", 13.550, 0.196, 43.9],
+];
+
+// deflate-bench on perf/cw-iso-sample.txt with libdeflate 1.26: seconds, bytes.
+const deflateRuns = [
+	["std", "level_1", 5.3969, 165500270],
+	["std", "level_2", 5.6526, 158578893],
+	["std", "level_4", 6.4478, 151210948],
+	["std", "level_6", 15.4358, 133987415],
+	["PixelDeflate", "ways 8", 3.5715, 157744120],
+	["libdeflate", "1", 1.9793, 151302037],
+	["libdeflate", "2", 3.1757, 144953511],
+	["libdeflate", "3", 3.6212, 141246675],
+	["libdeflate", "4", 3.8516, 138853666],
+	["libdeflate", "5", 4.5067, 135822104],
+	["libdeflate", "6", 5.4724, 132725467],
+	["libdeflate", "7", 6.8157, 131081316],
+	["libdeflate", "9", 11.2863, 129966172],
+];
+// The same run with libdeflate 1.24, built without its AVX-512 Adler-32: level, seconds. Sizes were byte for byte the same.
+const libdeflate124 = [["1", 2.0295], ["2", 3.2783], ["3", 3.6050], ["4", 4.0909], ["5", 4.5638], ["6", 5.4626], ["7", 7.0145], ["9", 10.7578]];
+const deflateFamilies = {
+	std: { name: "std flate", colour: "--series-1" },
+	PixelDeflate: { name: "PixelDeflate", colour: "--series-2" },
+	libdeflate: { name: "libdeflate", colour: "--series-3" },
+};
+const mib = (bytes) => bytes / (1 << 20);
+const current = deflateRuns.find(([family, level]) => family === "std" && level === "level_4");
+
+const tip = document.querySelector(".tip");
+function showTip(event, html) {
+	tip.innerHTML = html;
+	tip.classList.add("shown");
+	const x = Math.min(event.clientX + 12, window.innerWidth - tip.offsetWidth - 8);
+	const y = Math.max(event.clientY - tip.offsetHeight - 12, 8);
+	tip.style.left = x + "px";
+	tip.style.top = y + "px";
+}
+function hideTip() { tip.classList.remove("shown"); }
+function withTip(element, html) {
+	element.addEventListener("pointermove", (event) => showTip(event, html));
+	element.addEventListener("pointerleave", hideTip);
+	element.tabIndex = 0;
+	element.setAttribute("aria-label", html.replace(/<[^>]+>/g, ""));
+	element.addEventListener("focus", () => {
+		const box = element.getBoundingClientRect();
+		showTip({ clientX: box.left, clientY: box.top }, html);
+	});
+	element.addEventListener("blur", hideTip);
+}
+function el(tag, attributes = {}, children = []) {
+	const node = document.createElement(tag);
+	for (const [key, value] of Object.entries(attributes)) {
+		if (key === "text") node.textContent = value;
+		else if (key === "html") node.innerHTML = value;
+		else node.setAttribute(key, value);
+	}
+	for (const child of children) node.append(child);
+	return node;
+}
+const percent = (value) => value.toFixed(1) + "%";
+
+function shares(profile) {
+	const totals = Object.fromEntries(Object.keys(groups).map((key) => [key, 0]));
+	let listed = 0;
+	for (const [, value, group] of profile.functions) {
+		totals[group] += value;
+		listed += value;
+	}
+	totals.other += 100 - listed;
+	return totals;
+}
+
+function table(headers, rows, numeric) {
+	const head = el("tr", {}, headers.map((h, i) => el("th", { text: h, class: numeric[i] ? "num" : "" })));
+	const body = rows.map((row) => el("tr", {}, row.map((cell, i) => el("td", { text: cell, class: numeric[i] ? "num" : "" }))));
+	return el("details", {}, [el("summary", { text: "Table" }), el("div", { class: "table-wrap" }, [el("table", {}, [el("thead", {}, [head]), el("tbody", {}, body)])])]);
+}
+
+function renderSplit() {
+	const root = document.getElementById("profile-split");
+	root.append(el("h3", { text: "Where the time goes" }));
+	const used = Object.keys(groups).filter((key) => profiles.some((p) => shares(p)[key] > 0));
+	root.append(el("ul", { class: "legend" }, used.map((key) => el("li", {}, [el("span", { class: "key", style: `background: var(${groups[key].colour})` }), groups[key].name]))));
+	const rows = [];
+	for (const profile of profiles) {
+		const totals = shares(profile);
+		const stack = el("div", { class: "stack", role: "img", "aria-label": profile.name });
+		for (const key of used) {
+			const value = totals[key];
+			if (value <= 0) continue;
+			const part = el("div", { class: "part" + (groups[key].darkText ? " dark-text" : ""), style: `flex: ${value} 1 0; background: var(${groups[key].colour})` });
+			if (value >= 9) part.textContent = percent(value);
+			withTip(part, `<b>${groups[key].name}</b><br>${profile.name}: ${percent(value)}`);
+			stack.append(part);
+		}
+		root.append(el("div", { class: "stack-row" }, [el("div", { class: "label", html: `${profile.name}<small>${profile.detail}</small>` }), stack]));
+		for (const key of used) rows.push([profile.name, groups[key].name, percent(totals[key])]);
+	}
+	root.append(el("p", { class: "note", text: "Other: functions under 0.7% (isometric) or 1% (top-down) of samples." }));
+	root.append(table(["run", "group", "share"], rows, [false, false, true]));
+}
+
+function renderBars(rootId, title, note, items, format, max) {
+	const root = document.getElementById(rootId);
+	root.append(el("h3", { text: title }));
+	if (note) root.append(el("p", { class: "note", text: note }));
+	const top = max ?? Math.max(...items.map((item) => item.value));
+	const bars = el("div", { class: "bars" });
+	for (const item of items) {
+		const bar = el("div", { class: "bar", style: `width: ${(item.value / top) * 85}%; background: var(${item.colour ?? "--series-1"})` });
+		withTip(bar, item.tip ?? `<b>${item.label}</b><br>${format(item.value)}`);
+		bars.append(el("div", { class: "bar-row" }, [el("div", { class: "label", text: item.label }), el("div", { class: "bar-track axis" }, [bar, el("span", { class: "bar-value", text: format(item.value) })])]));
+	}
+	root.append(bars);
+	root.append(table(["", "value"], items.map((item) => [item.label, format(item.value)]), [false, true]));
+	return root;
+}
+
+function renderIsometricFunctions() {
+	const profile = profiles[0];
+	const used = [...new Set(profile.functions.map(([, , group]) => group))];
+	const root = renderBars(
+		"isometric-functions",
+		"large, isometric: functions over 0.7%",
+		null,
+		profile.functions.map(([label, value, group]) => ({ label, value, colour: groups[group].colour, tip: `<b>${label}</b><br>${groups[group].name}: ${percent(value)}` })),
+		percent,
+	);
+	root.insertBefore(el("ul", { class: "legend" }, used.map((key) => el("li", {}, [el("span", { class: "key", style: `background: var(${groups[key].colour})` }), groups[key].name]))), root.children[1]);
+}
+
+function legendOf(families) {
+	return el("ul", { class: "legend" }, Object.values(families).map((family) => el("li", {}, [el("span", { class: "key", style: `background: var(${family.colour})` }), family.name])));
+}
+
+function deflateTip([family, level, seconds, bytes]) {
+	const time = seconds / current[2];
+	const size = bytes / current[3];
+	return `<b>${deflateFamilies[family].name} ${level}</b><br>${seconds.toFixed(2)} s, ${mib(bytes).toFixed(1)} MiB<br>against std level_4: ${(1 / time).toFixed(2)}× as fast, ${size >= 1 ? "+" : "−"}${(Math.abs(size - 1) * 100).toFixed(1)}% size`;
+}
+
+function renderDeflateScatter() {
+	const root = document.getElementById("deflate-scatter");
+	root.classList.add("scatter");
+	root.append(el("h3", { text: "Time against size" }));
+	root.append(legendOf(deflateFamilies));
+	const width = 720, height = 380, left = 52, right = 16, top = 12, bottom = 44;
+	const xMin = 120, xMax = 160, yMax = 16;
+	const x = (value) => left + ((value - xMin) / (xMax - xMin)) * (width - left - right);
+	const y = (value) => top + (1 - value / yMax) * (height - top - bottom);
+	const ns = "http://www.w3.org/2000/svg";
+	const svg = document.createElementNS(ns, "svg");
+	svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+	svg.setAttribute("role", "img");
+	svg.setAttribute("aria-label", "Compression time against compressed size, by compressor");
+	const add = (tag, attributes, text) => {
+		const node = document.createElementNS(ns, tag);
+		for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+		if (text !== undefined) node.textContent = text;
+		svg.append(node);
+		return node;
+	};
+	for (let s = 0; s <= yMax; s += 4) {
+		add("line", { class: s === 0 ? "axis-line" : "gridline", x1: left, x2: width - right, y1: y(s), y2: y(s) });
+		add("text", { class: "tick", x: left - 8, y: y(s) + 4, "text-anchor": "end" }, s + " s");
+	}
+	for (let m = xMin; m <= xMax; m += 10) {
+		add("line", { class: "gridline", x1: x(m), x2: x(m), y1: top, y2: height - bottom });
+		add("text", { class: "tick", x: x(m), y: height - bottom + 18, "text-anchor": "middle" }, m + " MiB");
+	}
+	add("text", { class: "axis-title", x: left + (width - left - right) / 2, y: height - 4, "text-anchor": "middle" }, "compressed size (smaller is better)");
+	add("text", { class: "axis-title", x: 12, y: top + (height - top - bottom) / 2, "text-anchor": "middle", transform: `rotate(-90 12 ${top + (height - top - bottom) / 2})` }, "time, one thread");
+	for (const run of deflateRuns) {
+		const [family, level, seconds, bytes] = run;
+		const cx = x(mib(bytes)), cy = y(seconds);
+		add("circle", { cx, cy, r: 5, style: `fill: var(${deflateFamilies[family].colour})` });
+		const short = family === "std" ? level.replace("level_", "") : family === "PixelDeflate" ? "pixels" : level;
+		add("text", { class: "point-label", x: cx + 8, y: cy - 6 }, short);
+		const hit = add("circle", { class: "hit", cx, cy, r: 12 });
+		hit.addEventListener("pointermove", (event) => showTip(event, deflateTip(run)));
+		hit.addEventListener("pointerleave", hideTip);
+	}
+	root.append(svg);
+	root.append(el("p", { class: "note", text: "Numbers by the dots are compression levels. Lower left is better." }));
+	root.append(table(
+		["compressor", "seconds", "MiB", "speed against level_4", "size against level_4"],
+		deflateRuns.map(([family, level, seconds, bytes]) => [`${deflateFamilies[family].name} ${level}`, seconds.toFixed(2), mib(bytes).toFixed(1), (current[2] / seconds).toFixed(2) + "×", ((bytes / current[3] - 1) * 100).toFixed(1) + "%"]),
+		[false, true, true, true, true],
+	));
+}
+
+renderSplit();
+renderIsometricFunctions();
+renderDeflateScatter();
+const deflateRoot = renderBars(
+	"deflate-time",
+	"Compression time",
+	"605 tiles on one thread.",
+	deflateRuns.map((run) => ({ label: `${deflateFamilies[run[0]].name} ${run[1]}`, value: run[2], colour: deflateFamilies[run[0]].colour, tip: deflateTip(run) })),
+	(value) => value.toFixed(2) + " s",
+);
+deflateRoot.insertBefore(legendOf(deflateFamilies), deflateRoot.children[1]);
+const sizeRoot = renderBars(
+	"deflate-size",
+	"Compressed size",
+	null,
+	deflateRuns.map((run) => ({ label: `${deflateFamilies[run[0]].name} ${run[1]}`, value: mib(run[3]), colour: deflateFamilies[run[0]].colour, tip: deflateTip(run) })),
+	(value) => value.toFixed(1) + " MiB",
+);
+sizeRoot.insertBefore(legendOf(deflateFamilies), sizeRoot.children[1]);
+
+const versions = { v124: { name: "libdeflate 1.24", colour: "--series-1" }, v126: { name: "libdeflate 1.26", colour: "--series-2" } };
+const versionItems = libdeflate124.flatMap(([level, seconds]) => {
+	const newer = deflateRuns.find(([family, l]) => family === "libdeflate" && l === level)[2];
+	return [
+		{ label: `level ${level}, 1.24`, value: seconds, colour: versions.v124.colour, tip: `<b>libdeflate 1.24, level ${level}</b><br>${seconds.toFixed(2)} s` },
+		{ label: `level ${level}, 1.26`, value: newer, colour: versions.v126.colour, tip: `<b>libdeflate 1.26, level ${level}</b><br>${newer.toFixed(2)} s, ${((newer / seconds - 1) * 100).toFixed(1)}% against 1.24` },
+	];
+});
+const versionRoot = renderBars("libdeflate-versions", "libdeflate 1.24 and 1.26", "Same tiles, same sizes byte for byte; 1.24 built without its AVX-512 Adler-32, which this CPU doesn't use.", versionItems, (value) => value.toFixed(2) + " s");
+versionRoot.insertBefore(legendOf(versions), versionRoot.children[1]);
+renderBars("prepare-functions", "prepare: functions over 1%", "13.0 s, one thread drawing sprites for 11.5 s of it.", prepareFunctions.map(([label, value]) => ({ label, value })), percent);
+renderBars(
+	"threads-chart",
+	"Wall time by thread count",
+	null,
+	threadRuns.map(([label, mean, sd, user]) => ({ label, value: mean, tip: `<b>${label}</b><br>${mean.toFixed(2)} s ± ${sd.toFixed(2)}<br>${user} s of CPU time` })),
+	(value) => value.toFixed(2) + " s",
+);
+</script>
+</body>
+</html>
