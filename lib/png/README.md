@@ -2,7 +2,7 @@
 
 A PNG encoder for 8-bit RGBA images, for Zig 0.17, that allocates nothing while encoding. An `Encoder` sets up its buffers once, for the largest image it will take; each `encode` writes the PNG into them and returns it.
 
-Rows are filtered per row with the filter whose output adds up to the least as signed bytes (the usual heuristic), all five filters worked out together with vector instructions, and compressed with `std.compress.flate`, or with `PixelDeflate`, which looks for a match only where a pixel starts and writes one block with its own Huffman codes.
+Rows are filtered per row with the filter whose output adds up to the least as signed bytes (the usual heuristic), all five filters worked out together with vector instructions, and compressed with libdeflate (`lib/libdeflate`), with `std.compress.flate`, or with `PixelDeflate`, which looks for a match only where a pixel starts and writes one block with its own Huffman codes. libdeflate's level 1 makes files as small as `std.compress.flate`'s `level_4` in under a third of the time; `RowEncoder`, which writes as it goes, uses `std.compress.flate`, as libdeflate compresses only whole buffers.
 
 ## Example
 
@@ -33,12 +33,13 @@ try file.interface.flush();
 | name | contents |
 | --- | --- |
 | `maxSide` | the most pixels across or down a PNG can have, 2³¹ − 1 |
-| `Encoder.init(allocator, width, height, options)` | an encoder for images up to `width` × `height`: about 8 bytes per pixel, plus 64 KiB for deflate's window and the compressor's 225 KiB |
+| `Encoder.init(allocator, width, height, options)` | an encoder for images up to `width` × `height`: about 8 bytes per pixel, plus 64 KiB for deflate's window, `std.compress.flate`'s compressor's 225 KiB and, for `.libdeflate`, libdeflate's working memory, from `malloc` |
 | `Encoder.encode(pixels, width, height)` | the PNG, valid until the next `encode` or `compress`: `filter`, then `compress` |
 | `Encoder.filter(pixels, width, height)` | filters the image's rows, the first half of `encode`; with `compress`, the two halves can be timed apart |
 | `Encoder.compress()` | the PNG of the image `filter` last filtered, the second half of `encode` |
 | `Encoder.deinit(allocator)` | frees the buffers |
-| `Options.compressor` | `.flate`, `std.compress.flate` (the default), or `.pixels`, a deflate that looks for a match only where a pixel starts, as fpng does: faster, and larger |
+| `Options.compressor` | `.libdeflate` (the default), `.flate`, `std.compress.flate`, or `.pixels`, a deflate that looks for a match only where a pixel starts, as fpng does |
+| `Options.libdeflate.level` | for `.libdeflate`, from 0, stored uncompressed, through 1, the fastest that compresses (the default), to 12, the smallest |
 | `Options.pixels.ways` | for `.pixels`, how many places it remembers for each 4 bytes, the longest match among them taken (8 by default): more makes smaller files, more slowly |
 | `Options.level` | for `.flate`, deflate's trade between speed and size, one of `std.compress.flate.Compress.Options` (`.level_4` by default) |
 | `RowEncoder.init(allocator, width, level)` | an encoder for images up to `width` wide, of any height: about 12 bytes per pixel of one row, plus 64 KiB for deflate's window, 64 KiB for a chunk and the compressor's 225 KiB. It must stay where it is while encoding |

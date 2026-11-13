@@ -4,12 +4,15 @@ const std = @import("std");
 const flate = std.compress.flate;
 const Writer = std.Io.Writer;
 const PixelDeflate = @import("PixelDeflate.zig");
+const libdeflate = @import("libdeflate");
 
 /// The most pixels across or down a PNG can have.
 pub const maxSide = (1 << 31) - 1;
 
 pub const Options = struct {
-    compressor: Compressor = .flate,
+    compressor: Compressor = .libdeflate,
+    /// For `libdeflate`, its level.
+    libdeflate: libdeflate.Options = .{},
     /// For `flate`, deflate's trade between speed and size.
     level: flate.Compress.Options = .level_4,
     /// For `pixels`, where it looks for matches.
@@ -18,6 +21,8 @@ pub const Options = struct {
 
 /// How the filtered rows are compressed.
 pub const Compressor = enum {
+    /// libdeflate, at `Options.libdeflate`.
+    libdeflate,
     /// `std.compress.flate`, at `Options.level`.
     flate,
     /// Matches only where a pixel starts, one guess each, as fpng does (`PixelDeflate`).
@@ -43,13 +48,19 @@ pub const Encoder = struct {
     deflate: *flate.Compress,
     /// For the `pixels` compressor.
     pixelDeflate: ?PixelDeflate,
+    /// For the `libdeflate` compressor.
+    libdeflate: ?libdeflate.Compressor,
 
     /// An encoder for images of up to `width` × `height` pixels.
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32, options: Options) !Encoder {
         const rowBytes = 1 + @as(usize, width) * 4;
         const raw = rowBytes * height;
-        // Deflate's stored blocks add 5 bytes per 65,535; the PNG and zlib wrapping, 57 more.
-        const out = try allocator.alloc(u8, raw + (raw / 65535 + 1) * 5 + 64);
+        const compressor: ?libdeflate.Compressor = if (options.compressor == .libdeflate) try .init(options.libdeflate) else null;
+        errdefer if (compressor) |made| made.deinit();
+        // Deflate's stored blocks add 5 bytes per 65,535, and libdeflate's bound allows for more;
+        // the PNG's chunks around the stream take 57.
+        const stream = @max(raw + (raw / 65535 + 1) * 5 + 6, if (compressor) |made| made.zlibBound(raw) else 0);
+        const out = try allocator.alloc(u8, stream + 64);
         errdefer allocator.free(out);
         const window = try allocator.alloc(u8, flate.max_window_len);
         errdefer allocator.free(window);
@@ -72,10 +83,12 @@ pub const Encoder = struct {
             .filtered = filtered,
             .deflate = deflate,
             .pixelDeflate = pixelDeflate,
+            .libdeflate = compressor,
         };
     }
 
     pub fn deinit(self: Encoder, allocator: std.mem.Allocator) void {
+        if (self.libdeflate) |compressor| compressor.deinit();
         if (self.pixelDeflate) |compressor| compressor.deinit(allocator);
         allocator.destroy(self.deflate);
         allocator.free(self.filtered);
@@ -121,6 +134,7 @@ pub const Encoder = struct {
         const rowBytes = 1 + @as(usize, width) * 4;
         const filtered = self.filtered[0 .. height * rowBytes];
         const length = switch (self.options.compressor) {
+            .libdeflate => try self.libdeflate.?.compress(self.out[data .. self.out.len - 12 - 4], filtered),
             .flate => length: {
                 var output: std.Io.Writer = .fixed(self.out[data .. self.out.len - 12 - 4]);
                 self.deflate.* = try .init(&output, self.window, .zlib, self.options.level);
@@ -400,7 +414,7 @@ test {
 }
 
 test Encoder {
-    for ([_]Compressor{ .flate, .pixels }) |compressor| try expectPng(compressor);
+    for (std.enums.values(Compressor)) |compressor| try expectPng(compressor);
 }
 
 /// Encodes a small image, and checks it unfilters back to the pixels.
@@ -499,7 +513,7 @@ test RowEncoder {
     const height = 9;
     var pixels: [width * height * 4]u8 = undefined;
     for (&pixels, 0..) |*byte, i| byte.* = @intCast(i * 3 % 251);
-    var whole: Encoder = try .init(allocator, width, height, .{ .level = .level_4 });
+    var whole: Encoder = try .init(allocator, width, height, .{ .compressor = .flate, .level = .level_4 });
     defer whole.deinit(allocator);
     var out: Writer.Allocating = .init(allocator);
     defer out.deinit();

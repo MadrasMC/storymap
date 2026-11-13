@@ -25,5 +25,9 @@
             .url = "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.zip",
             .hash = "N-V-__8AAGkrewARcKiSyLfJKsaW0ZoqHh4hzi4mTGwekxjk",
         },
+        .libdeflate = .{
+            .url = "https://github.com/ebiggers/libdeflate/archive/refs/tags/v1.26.tar.gz",
+            .hash = "N-V-__8AAEaRCwCsYb_rSsH72Pb6DNFQLSjdRzTFOVsJWcoB",
+        },
     },
 }

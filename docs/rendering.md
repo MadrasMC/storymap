@@ -127,7 +127,7 @@ Following [TigerBeetle's style](https://github.com/tigerbeetle/tigerbeetle/blob/
 | Block entity data | arbitrary (mods, full chests) | Not set by the format: a per-chunk limit, 2 MiB by default (`Chunk.Decoder.defaultBlockEntityBytes`), with entities over it skipped with a warning. Parsed, block entities take up to 4.6× their raw bytes; the busiest test chunk, a ruin with 659 chiseled blocks and 131 KiB of raw data, needs 601 KiB. |
 | Block and item names (`gamedata`), later assets | the game version and mods | Read once at startup. |
 | Tile height arrays and pixels | the tile size | Fixed per worker, reused for every tile. |
-| PNG encoding (`lib/png`) | the tile size | Each worker's encoder sets up its buffers once, for a full tile; nothing is allocated per tile. |
+| PNG encoding (`lib/png`) | the tile size | Each worker's encoder sets up its buffers once, for a full tile, with libdeflate's working memory from `malloc` (198 KiB at level 1, 653 KiB at levels 2 to 9, 8.6 MiB at 10 to 12); nothing is allocated per tile. |
 | Blocks' sprites | the game and mods | Drawn when the blocks are prepared, and mapped from the prepared blocks file's sprite sections, not allocated. |
 | WebP encoding (`lib/webp`) | the tile size | Each worker's encoder sets up its buffers once, with the working memory libwebp allocates from, 16 MiB for a full tile, where tiles took up to 11.0; what doesn't fit comes from `malloc`. |
 | JPEG XL encoding (`lib/jxl`) | the tile size | The output buffer is set up once; libjxl allocates its working memory for every tile. |

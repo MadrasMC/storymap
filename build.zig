@@ -106,10 +106,40 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // libdeflate's compressor and its zlib wrapping, without the decompressor or gzip.
+    const libdeflate = b.dependency("libdeflate", .{});
+    const libdeflate_lib = b.addLibrary(.{
+        .name = "deflate_compressor",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = .ReleaseFast,
+            .link_libc = true,
+        }),
+    });
+    libdeflate_lib.root_module.addCSourceFiles(.{
+        .root = libdeflate.path("lib"),
+        .files = &.{ "deflate_compress.c", "zlib_compress.c", "adler32.c", "utils.c", "x86/cpu_features.c", "arm/cpu_features.c" },
+    });
+    libdeflate_lib.root_module.addIncludePath(libdeflate.path("."));
+
+    const libdeflate_translate_c = b.addTranslateC(.{
+        .root_source_file = libdeflate.path("libdeflate.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const libdeflate_mod = b.createModule(.{
+        .root_source_file = b.path("lib/libdeflate/libdeflate.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "header", .module = libdeflate_translate_c.createModule() }},
+    });
+    libdeflate_mod.linkLibrary(libdeflate_lib);
+
     const png_mod = b.createModule(.{
         .root_source_file = b.path("lib/png/png.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{.{ .name = "libdeflate", .module = libdeflate_mod }},
     });
 
     // libjxl's fast lossless encoder alone, which needs nothing else of libjxl when standalone.
@@ -353,6 +383,7 @@ pub fn build(b: *std.Build) void {
     const tested = [_]*std.Build.Module{
         args_mod,    sqlite_mod,   protobuf_mod, png_mod, jxl_mod, webp_mod, tiles_mod, world_mod, theme_mod, viewer_mod,
         console_mod, storyblk_mod, renderer_mod, vs_mod,  cli_mod, nbt_mod,  lz4_mod,   mc_mod,
+        libdeflate_mod,
     };
     for (tested) |module| {
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = module })).step);
