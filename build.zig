@@ -106,7 +106,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // libdeflate's compressor and its zlib wrapping, without the decompressor or gzip. Its
+    // libdeflate's compressor, its zlib wrapping and CRC-32, without the decompressor or gzip. Its
     // `deflate_compress.c` is `lib/libdeflate`'s patched copy, which compresses a stream in chunks.
     const libdeflate = b.dependency("libdeflate", .{});
     const libdeflate_lib = b.addLibrary(.{
@@ -119,7 +119,7 @@ pub fn build(b: *std.Build) void {
     });
     libdeflate_lib.root_module.addCSourceFiles(.{
         .root = libdeflate.path("lib"),
-        .files = &.{ "zlib_compress.c", "adler32.c", "utils.c", "x86/cpu_features.c", "arm/cpu_features.c" },
+        .files = &.{ "zlib_compress.c", "adler32.c", "crc32.c", "utils.c", "x86/cpu_features.c", "arm/cpu_features.c" },
     });
     libdeflate_lib.root_module.addCSourceFile(.{ .file = b.path("lib/libdeflate/deflate_compress.c") });
     libdeflate_lib.root_module.addIncludePath(libdeflate.path("."));

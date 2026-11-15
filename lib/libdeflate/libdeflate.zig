@@ -21,6 +21,22 @@ pub fn adler32(adler: u32, data: []const u8) u32 {
     return c.libdeflate_adler32(adler, data.ptr, data.len);
 }
 
+/// `crc`, a running CRC-32 (zlib's and PNG's) that starts at 0, with `data` added.
+pub fn crc32(crc: u32, data: []const u8) u32 {
+    return c.libdeflate_crc32(crc, data.ptr, data.len);
+}
+
+test crc32 {
+    var data: [5000]u8 = undefined;
+    var prng: std.Random.DefaultPrng = .init(3);
+    prng.random().bytes(&data);
+    // Lengths around the vector widths, and a running CRC over two parts.
+    for ([_]usize{ 0, 1, 15, 16, 17, 63, 64, 65, 255, 256, 4999, 5000 }) |length| {
+        try std.testing.expectEqual(std.hash.Crc32.hash(data[0..length]), crc32(0, data[0..length]));
+        try std.testing.expectEqual(std.hash.Crc32.hash(data[0..length]), crc32(crc32(0, data[0 .. length / 3]), data[length / 3 .. length]));
+    }
+}
+
 pub const Options = struct {
     /// From 0 to `maxLevel`.
     level: u4 = 1,

@@ -2,7 +2,7 @@
 
 Deflate compression into zlib streams, for Zig 0.17: [libdeflate 1.26](https://github.com/ebiggers/libdeflate/tree/v1.26)'s compressor (MIT), with a patch that compresses a stream a chunk at a time. A `Compressor` is set up once, for one level; libdeflate allocates its working memory with `malloc` then, and nothing while compressing. It compresses a whole buffer in one call, which suits data held in memory, such as an image's filtered rows, or a stream in chunks, each compressed without the history of the ones before it, which suits data too large to hold, a band of an image's rows at a time.
 
-`build.zig` fetches libdeflate as a dependency and compiles its compressor, its zlib wrapping, Adler-32 and the CPU feature detection, without the decompressor or gzip, optimized in every build mode, and translates `libdeflate.h` for Zig. Its `lib/deflate_compress.c` is replaced by the patched copy here.
+`build.zig` fetches libdeflate as a dependency and compiles its compressor, its zlib wrapping, Adler-32, CRC-32 and the CPU feature detection, without the decompressor or gzip, optimized in every build mode, and translates `libdeflate.h` for Zig. Its `lib/deflate_compress.c` is replaced by the patched copy here.
 
 ## Patch
 
@@ -46,6 +46,7 @@ try writer.writeInt(u32, adler, .big);
 | `maxLevel` | the highest level, 12 |
 | `zlibHeader` | a zlib stream's first two bytes |
 | `adler32(adler, data)` | a running Adler-32, which starts at 1, with `data` added |
+| `crc32(crc, data)` | a running CRC-32, zlib's and PNG's, which starts at 0, with `data` added; with PCLMULQDQ where the processor has it |
 | `Compressor.init(options)` | a compressor at `options.level`, with libdeflate's working memory: 6 KiB at level 0, 198 KiB at 1, 653 KiB at 2 to 9 and 8.6 MiB at 10 to 12; `error.OutOfMemory` if libdeflate can't allocate it |
 | `Compressor.compress(out, data)` | compresses `data` into a zlib stream at the start of `out` and returns its length; `error.NoSpace` if it doesn't fit |
 | `Compressor.zlibBound(bytes)` | the most a zlib stream of `bytes` bytes of data takes: an `out` this long always fits |

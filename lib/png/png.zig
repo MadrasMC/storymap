@@ -146,7 +146,7 @@ pub const Encoder = struct {
         };
         std.mem.writeInt(u32, self.out[end..][0..4], @intCast(length), .big);
         @memcpy(self.out[end + 4 ..][0..4], "IDAT");
-        std.mem.writeInt(u32, self.out[data + length ..][0..4], std.hash.Crc32.hash(self.out[end + 4 .. data + length]), .big);
+        std.mem.writeInt(u32, self.out[data + length ..][0..4], libdeflate.crc32(0, self.out[end + 4 .. data + length]), .big);
         end = data + length + 4;
         end += writeChunk(self.out[end..], "IEND", "");
         return self.out[0..end];
@@ -281,12 +281,10 @@ pub const RowEncoder = struct {
         var prefix: [8]u8 = undefined;
         std.mem.writeInt(u32, prefix[0..4], @intCast(chunk.len), .big);
         @memcpy(prefix[4..8], "IDAT");
-        var crc: std.hash.Crc32 = .init();
-        crc.update(prefix[4..8]);
-        crc.update(chunk);
+        const crc = libdeflate.crc32(libdeflate.crc32(0, prefix[4..8]), chunk);
         try self.out.writeAll(&prefix);
         try self.out.writeAll(chunk);
-        try self.out.writeInt(u32, crc.final(), .big);
+        try self.out.writeInt(u32, crc, .big);
         self.bandEnd = 0;
         self.bandsWritten += 1;
     }
@@ -412,7 +410,7 @@ fn writeChunk(out: []u8, comptime kind: *const [4]u8, data: []const u8) usize {
     std.mem.writeInt(u32, out[0..4], @intCast(data.len), .big);
     @memcpy(out[4..8], kind);
     @memcpy(out[8..][0..data.len], data);
-    std.mem.writeInt(u32, out[8 + data.len ..][0..4], std.hash.Crc32.hash(out[4 .. 8 + data.len]), .big);
+    std.mem.writeInt(u32, out[8 + data.len ..][0..4], libdeflate.crc32(0, out[4 .. 8 + data.len]), .big);
     return 12 + data.len;
 }
 
