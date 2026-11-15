@@ -10,15 +10,17 @@ The isometric view alone, with the script's `--isometric`. Versions up to 0.2.0 
 
 | version | save | end to end | km²/s | chunks/s | drawing | open | peak memory | changes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.3.0 | 442c9598fa0d | 10.066 s | 0.28 | 2900 | 10.039 s | 0.009 s | 253 MiB | – |
+| 0.3.1 | 442c9598fa0d | 9.544 s | 0.29 | 3059 | 9.517 s | 0.009 s | 253 MiB | PNG's CRC-32 with libdeflate's PCLMULQDQ code instead of a byte table, and opaque blocks shrunk without dividing |
+| 0.3.0 | 442c9598fa0d | 10.018 s | 0.28 | 2914 | 9.992 s | 0.009 s | 257 MiB | – |
 
 The top-down view. Versions up to 0.2.0 report no times of their own, so their drawing and open aren't measured (see [Measuring](#measuring)).
 
 | version | save | end to end | km²/s | chunks/s | drawing | open | peak memory | changes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.3.0 | 442c9598fa0d | 0.246 s | 11.34 | 118443 | 0.220 s | 0.009 s | 146 MiB | PNG rows filtered with vector instructions, and tiles compressed with libdeflate instead of std's flate |
-| 0.2.0 | 442c9598fa0d | 0.408 s | 6.85 | 71580 | – | – | 146 MiB | a PNG encoder of its own, set up once per worker, instead of stb_image_write, which allocated for every tile |
-| 0.1.0 | 442c9598fa0d | 0.470 s | 5.95 | 62168 | – | – | 146 MiB | – |
+| 0.3.1 | 442c9598fa0d | 0.240 s | 11.64 | 121560 | 0.214 s | 0.009 s | 145 MiB | PNG's CRC-32 with libdeflate's PCLMULQDQ code instead of a byte table, and opaque blocks shrunk without dividing |
+| 0.3.0 | 442c9598fa0d | 0.247 s | 11.32 | 118291 | 0.220 s | 0.009 s | 145 MiB | PNG rows filtered with vector instructions, and tiles compressed with libdeflate instead of std's flate |
+| 0.2.0 | 442c9598fa0d | 0.419 s | 6.67 | 69720 | – | – | 146 MiB | a PNG encoder of its own, set up once per worker, instead of stb_image_write, which allocated for every tile |
+| 0.1.0 | 442c9598fa0d | 0.473 s | 5.90 | 61685 | – | – | 146 MiB | – |
 
 ## Measuring
 
