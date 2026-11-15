@@ -4,50 +4,61 @@ How fast each tagged version of Storymap renders, measured as in [Measuring](#me
 
 ## Vintage Story 1.22.7
 
-A world of 29,192 chunks, 2.79 km² drawn as 34 tiles in 5 levels. Intel Core Ultra 5 225H, 14 threads, Windows 11; measured 2026-10-23 (UTC).
+A world of 29,192 chunks, 2.79 km² drawn top-down as 34 tiles in 5 levels, and isometric as 4,440 tiles in 9 levels. Intel Xeon E3-1270 v6, 4 cores, 8 threads, Debian 13; tiles written (`--write`); measured 2026-11-14 (UTC).
+
+The isometric view alone, with the script's `--isometric`. Versions up to 0.2.0 have no isometric view of their own to measure.
+
+| version | save | end to end | chunks/s | isometric | open | peak memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.3.0 | 442c9598fa0d | 10.065 s | 2900 | 10.038 s | 0.009 s | 253 MiB |
+
+The top-down view. Versions up to 0.2.0 report no times of their own, so only their end to end, chunks/s and peak memory are measured (see [Measuring](#measuring)).
 
 | version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.2.0 | 442c9598fa0d | 0.224 s | 12.5 | 130209 | 0.210 s | 0.015 s | 146 MiB |
-| 0.1.0 | 442c9598fa0d | 0.278 s | 10.1 | 105016 | 0.260 s | 0.014 s | 162 MiB |
+| 0.3.0 | 442c9598fa0d | 0.246 s | 11.3 | 118429 | 0.220 s | 0.009 s | 145 MiB |
+| 0.2.0 | 442c9598fa0d | 0.414 s | – | 70505 | – | – | 144 MiB |
+| 0.1.0 | 442c9598fa0d | 0.471 s | – | 61970 | – | – | 145 MiB |
 
 ## Measuring
 
 From the project's folder:
 
 ```bash
-zig run scripts/benchmark.zig -- <save-file>
+zig run scripts/benchmark.zig -- <save-file> --write --game <folder> --data <folder>
 ```
 
-[`scripts/benchmark.zig`](../scripts/benchmark.zig) checks out each `v*` tag into its own worktree in `.benchmark/`, builds it with `-Doptimize=ReleaseFast` and renders the save 7 times after one untimed run, as `storymap <save-file> --no-write --json`, taking the median of each time. It prints a table row for each version, newest first, then the save, the world, the machine and each version's time per part of the tile pipeline, summed over all workers: drawing, filtering and compressing the PNGs, writing them and shrinking tiles for the levels above.
+[`scripts/benchmark.zig`](../scripts/benchmark.zig) checks out each `v*` tag into its own worktree in `.benchmark/`, builds it with `-Doptimize=ReleaseFast`, prepares its blocks with its own `prepare` if they aren't prepared yet, and renders the save 7 times after one untimed run, as `storymap <save-file>` with `--json` if the version has it, taking the median of each time. It prints a table row for each version, newest first, then the save, the world, the machine and each version's time per part of the tile pipeline, summed over all workers: drawing, filtering and compressing the PNGs, writing them and shrinking tiles for the levels above.
 
 | option | effect |
 | --- | --- |
 | `--tag v0.1.0` | measures only the tags given; repeatable |
 | `--current` | adds the working tree |
 | `--runs <n>` | renders each version n times, 7 by default |
-| `--isometric` | adds the isometric view, in an isometric column |
-| `--write` | writes the tiles into `.benchmark/out`, so writing them is timed too |
+| `--isometric` | draws the isometric view alone instead (`--views isometric`), in a table of its own; versions without `--views` are left out |
+| `--write` | writes the tiles into `.benchmark/out`, removed before each run, so writing them is timed too; without it, versions up to 0.2.0 are left out, as they render only with their tiles written |
 | `--jpegxl` | encodes the tiles as JPEG XL instead of PNG |
 | `--webp` | encodes the tiles as WebP instead of PNG |
 | `--lossy-from <level>` | with `--webp`, encodes the tiles from this level up as lossy WebP |
+| `--game <folder>`, `--data <folder>` | the game's install and data folders, for preparing each version's blocks into `.benchmark/<tag>.storyblk`, or `.benchmark/<tag>.blocks/` for versions up to 0.2.0; renders don't look for the game, so they don't hash its assets |
 
 Each tag is built by the Zig release its `build.zig.zon` names. The script looks for it in `.benchmark/zig/`, or in `--zigs <folder>`, as its archive unpacks (`zig-x86_64-windows-0.17.0/`), and downloads it there from ziglang.org if it's missing.
 
 | column | contents |
 | --- | --- |
 | save | the first 12 hex digits of the save file's SHA-256 |
-| end to end | a whole render: loading the prepared blocks, opening the save, then every tile, with the PNGs encoded but not written |
+| end to end | a whole render, from starting the process to its exit: loading the prepared blocks, opening the save, then every tile, its PNGs written with `--write` |
 | km²/s | the map's area drawn per second, end to end |
 | chunks/s | all the save's chunks per second, end to end, though only those holding the surface are read |
 | tiles | the top-down view: drawing, encoding and the zoomed-out levels of every tile |
-| isometric | the same for the isometric view, with `--isometric` |
+| isometric | the same for the isometric view, in the table of `--isometric`, which has no km²/s: the isometric view doesn't count its area |
 | open | opening the save, its block list and which tiles it has, and giving it the prepared blocks |
 | peak memory | the most memory a render held at once (Windows' peak working set, elsewhere the peak resident set) |
 
-- **Styles:** renders draw the slowest styles, the Plain theme's with `game:coloured` top-down. 0.2.0 and earlier are measured with their own `storymap bench`, which draws the Printed theme's relief, without loading the prepared blocks, and with the decoding of every chunk in its peak memory; so their rows measure less than later ones, and have no isometric view.
+- **Styles:** every version draws the slowest styles, the Plain theme's with `game:coloured` top-down, from blocks prepared by its own `prepare`.
+- **Versions up to 0.2.0** have no `--json` and no `--no-write`: the script times their whole render, which always writes its tiles, and their km²/s, tiles and open are "–". Their chunks/s takes the save's chunk count from a version that reports it. They have no isometric view.
 - **Runs:** each time is the median of 7 renders after one untimed one. On the world above, the median of 7 consecutive runs stays within 3% of the next 7; 9 runs is no closer, and 3 or 5 are 5–6% apart.
-- **Sittings:** the same build measures up to 8% apart at different times, with the machine's heat, power plan and background work. So a table is measured in one sitting, and a difference under about 5% between rows isn't a change.
+- **Sittings:** on a laptop, the same build measures up to 8% apart at different times, with the machine's heat, power plan and background work; on a machine doing nothing else, two sittings an hour apart came within 1.3% of each other. So a table is measured in one sitting, and on a laptop a difference under about 5% between rows isn't a change.
 - **Small maps:** a render's fixed startup cost of about 60 ms is most of a very small map's time, so its km²/s and chunks/s come out low, and a few milliseconds of noise move them a lot. A table's save should be a large world.
 - **A new version:** measure every tag in the newest table, the new one included, on its save and machine, and replace the table's rows.
 - **A new save,** usually for a new game version: start a new table, measuring every tag that reads that game version (`--tag`).
