@@ -4,16 +4,25 @@
 //! median of each time. From the project's folder:
 //!
 //!     zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current]
-//!         [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]] [--zigs <folder>]
+//!         [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]]
+//!         [--game <folder> [--data <folder>]] [--zigs <folder>]
 //!
 //! Each run is `storymap <save-file> --no-write --json` in the slowest styles, the Plain theme's
-//! with `game:coloured` top-down (`styles`). `--isometric` adds the isometric view, `--write`
-//! writes the tiles into `.benchmark/out`, so writing them is timed too, `--jpegxl` or `--webp`
-//! encodes them as JPEG XL or WebP, and `--lossy-from` makes WebP lossy from a level up. Versions
-//! up to 0.2.0 have their own `storymap bench`, which draws the Printed theme's relief in PNG and
-//! takes the medians itself; they're run with that, without the isometric view. Versions that
-//! keep their prepared blocks in one file each get their own, `.benchmark/<tag>.storyblk`, so
-//! they don't prepare over each other's.
+//! with `game:coloured` top-down (`styles`), drawing the top-down view. `--isometric` draws the
+//! isometric view alone instead (`--views isometric`), `--write` writes the tiles into
+//! `.benchmark/out`, so writing them is timed too, `--jpegxl` or `--webp` encodes them as JPEG XL
+//! or WebP, and `--lossy-from` makes WebP lossy from a level up.
+//!
+//! A run's end to end is its whole process, from starting it to its exit, timed here for every
+//! version. Its other times come from its `--json`; versions up to 0.2.0 have none, and render
+//! only with their tiles written, so they're measured only with `--write`, and their other times
+//! are left blank. A version without what the options ask for (`--views`, the format) is left
+//! out.
+//!
+//! Each version prepares its blocks into its own `.benchmark/<tag>.storyblk`, or
+//! `.benchmark/<tag>.blocks/` for versions that keep them in a folder, with its own `prepare`, from
+//! `--game` and `--data` if they're given and the blocks aren't there yet; renders don't look for
+//! the game, so they don't hash its assets.
 //!
 //! Zig releases are looked for in `--zigs` (`.benchmark/zig` by default) as their archives unpack,
 //! e.g. `zig-x86_64-windows-0.17.0/`, and downloaded there from ziglang.org if missing.
@@ -26,64 +35,53 @@ const Io = std.Io;
 
 const exe = if (builtin.os.tag == .windows) ".exe" else "";
 
-const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]] [--zigs <folder>]\n";
+const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]] [--game <folder> [--data <folder>]] [--zigs <folder>]\n";
 
 const styles = [_][]const u8{ "--theme", "plain", "--style", "game:coloured" };
 const outFolder = ".benchmark/out";
 
-/// One version's medians.
+/// One version's medians. What its `--json` gives is null for versions without one.
 const Result = struct {
     version: []const u8,
-    build: []const u8,
-    threads: usize,
     runs: usize,
-    chunks: usize,
-    tiles: usize,
-    levels: usize,
-    area: usize,
-    seconds: struct { open: f64, tiles: f64, total: f64 },
-    /// The isometric view's tiles; null without it.
-    isometric: ?f64 = null,
+    /// The whole process, from starting it to its exit.
+    total: f64,
     /// The peak memory of a run, in bytes, from the operating system.
-    peak: usize = 0,
-    /// Each view's time per part of the tile pipeline, summed over all workers; null from
-    /// `storymap bench`.
-    work: ?struct { topdown: WorkerSeconds, isometric: ?WorkerSeconds } = null,
+    peak: usize,
+    chunks: ?usize = null,
+    /// The view's tiles, at every level, and its levels.
+    tiles: ?usize = null,
+    levels: ?usize = null,
+    /// The top-down map's area in square metres; null for the isometric view, which has none.
+    area: ?usize = null,
+    /// Opening the save, its block list and which tiles it has.
+    open: ?f64 = null,
+    /// Drawing, encoding and the zoomed-out levels of every tile of the view.
+    view: ?f64 = null,
+    /// The view's time per part of the tile pipeline, summed over all workers.
+    work: ?WorkerSeconds = null,
 };
+
+const ViewKind = enum { topdown, isometric };
 
 /// The keys of `storymap <save-file> --json` this reads.
 const Report = struct {
     version: []const u8,
-    build: []const u8,
-    threads: usize,
     chunks: usize,
-    seconds: struct { open: f64, total: f64 },
-    topdown: View,
+    seconds: struct { open: f64 },
+    topdown: ?View = null,
     isometric: ?View = null,
 
     const View = struct {
         tiles: usize,
         levels: usize,
-        area: usize = 0,
+        area: ?usize = null,
         seconds: f64,
         workerSeconds: WorkerSeconds,
     };
 };
 
 const WorkerSeconds = struct { draw: f64, filter: f64, compress: f64, write: f64, shrink: f64 };
-
-/// The keys of `storymap bench --json`, in versions up to 0.2.0, this reads.
-const BenchReport = struct {
-    version: []const u8,
-    build: []const u8,
-    threads: usize,
-    runs: usize,
-    chunks: usize,
-    tiles: usize,
-    levels: usize,
-    area: usize,
-    seconds: struct { open: f64, tiles: f64, total: f64 },
-};
 
 /// How each run is made.
 const Runs = struct {
@@ -94,6 +92,9 @@ const Runs = struct {
     format: ?[]const u8,
     /// `--lossy-from`'s level, passed on as it's written.
     lossyFrom: ?[]const u8 = null,
+    /// The game's install and data folders, for preparing blocks.
+    game: ?[]const u8 = null,
+    data: ?[]const u8 = null,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -118,16 +119,19 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--jpegxl") or std.mem.eql(u8, arg, "--webp")) {
             if (runs.format != null) fail("--jpegxl and --webp: choose one\n", .{});
             runs.format = arg;
-        } else if (std.mem.eql(u8, arg, "--runs") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--zigs") or std.mem.eql(u8, arg, "--lossy-from")) {
+        } else if (isOneOf(arg, &.{ "--runs", "--tag", "--zigs", "--lossy-from", "--game", "--data" })) {
             i += 1;
             if (i == given.len) fail("{s} needs a value\n" ++ usage, .{arg});
+            const value = given[i];
             if (std.mem.eql(u8, arg, "--runs")) {
-                runs.count = std.fmt.parseInt(usize, given[i], 10) catch 0;
-                if (runs.count == 0) fail("--runs: expected a whole number above 0, not {s}\n", .{given[i]});
+                runs.count = std.fmt.parseInt(usize, value, 10) catch 0;
+                if (runs.count == 0) fail("--runs: expected a whole number above 0, not {s}\n", .{value});
             }
-            if (std.mem.eql(u8, arg, "--tag")) try tags.append(arena, given[i]);
-            if (std.mem.eql(u8, arg, "--zigs")) zigsPath = given[i];
-            if (std.mem.eql(u8, arg, "--lossy-from")) runs.lossyFrom = given[i];
+            if (std.mem.eql(u8, arg, "--tag")) try tags.append(arena, value);
+            if (std.mem.eql(u8, arg, "--zigs")) zigsPath = value;
+            if (std.mem.eql(u8, arg, "--lossy-from")) runs.lossyFrom = value;
+            if (std.mem.eql(u8, arg, "--game")) runs.game = value;
+            if (std.mem.eql(u8, arg, "--data")) runs.data = value;
         } else if (savePath == null and !std.mem.startsWith(u8, arg, "--")) {
             savePath = arg;
         } else fail("unexpected argument {s}\n" ++ usage, .{arg});
@@ -147,54 +151,70 @@ pub fn main(init: std.process.Init) !void {
     const out = &stdout.interface;
     const saveHash = try hashFile(arena, io, save);
     if (runs.isometric) {
-        try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | isometric | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        try out.writeAll("| version | save | end to end | chunks/s | isometric | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- |\n");
     } else {
         try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
     }
     try out.flush();
 
-    // Newest first, as the table lists them.
+    // Newest first, as the table lists them. The save's chunks are the same for every version,
+    // so those who don't count them are given the count of one that did.
     var results: std.ArrayList(Result) = .empty;
+    var saveChunks: ?usize = null;
     if (current) {
         std.debug.print("measuring the working tree\n", .{});
-        var result = try measureBuild(arena, io, try build(arena, io, ".", zigs), ".benchmark/working-tree.storyblk", save, runs);
-        result.version = try std.fmt.allocPrint(arena, "{s} (working tree)", .{result.version});
-        try results.append(arena, result);
-        try writeRow(out, result, runs, saveHash);
+        if (try measureBuild(arena, io, "the working tree", try build(arena, io, ".", zigs), ".benchmark/working-tree", save, runs)) |measured| {
+            var result = measured;
+            result.version = try std.fmt.allocPrint(arena, "{s} (working tree)", .{result.version});
+            try results.append(arena, result);
+            saveChunks = saveChunks orelse result.chunks;
+            try writeRow(out, result, runs, saveHash, saveChunks);
+        }
     }
     for (tags.items) |tag| {
         std.debug.print("measuring {s}\n", .{tag});
-        const result = try measure(arena, io, tag, save, runs, zigs);
+        const result = try measure(arena, io, tag, save, runs, zigs) orelse continue;
         try results.append(arena, result);
-        try writeRow(out, result, runs, saveHash);
+        saveChunks = saveChunks orelse result.chunks;
+        try writeRow(out, result, runs, saveHash, saveChunks);
     }
+    if (results.items.len == 0) fail("no version measured\n", .{});
 
-    const last = results.items[results.items.len - 1];
+    try out.print("\nsave: {s} ({s})\n", .{ std.fs.path.basename(save), saveHash });
+    for (results.items) |result| {
+        const tiles = result.tiles orelse continue;
+        if (runs.isometric) {
+            try out.print("world: {} chunks, isometric: {} tiles in {} levels\n", .{ result.chunks.?, tiles, result.levels.? });
+        } else {
+            try out.print("world: {} chunks, {d:.2} km², {} tiles in {} levels\n", .{ result.chunks.?, @as(f64, @floatFromInt(result.area orelse 0)) / 1e6, tiles, result.levels.? });
+        }
+        break;
+    }
     var date: [10]u8 = undefined;
-    try out.print("\nsave: {s} ({s})\nworld: {} chunks, {d:.2} km², {} tiles in {} levels\n", .{
-        std.fs.path.basename(save), saveHash, last.chunks, @as(f64, @floatFromInt(last.area)) / 1e6, last.tiles, last.levels,
-    });
-    try out.print("machine: {s}, {} threads, {s}; {s} build, median of {} runs{s}{s}, measured {s} UTC\n", .{
-        processorName(arena, io), last.threads, @tagName(builtin.os.tag), last.build, runs.count, if (runs.format) |format| if (std.mem.eql(u8, format, "--webp")) ", WebP tiles" else ", JPEG XL tiles" else "", if (runs.write) ", tiles written" else "", today(io, &date),
+    try out.print("machine: {s}, {} threads, {s}; ReleaseFast builds, median of {} runs{s}{s}, measured {s} UTC\n", .{
+        processorName(arena, io), std.Thread.getCpuCount() catch 0, @tagName(builtin.os.tag), runs.count, if (runs.format) |format| if (std.mem.eql(u8, format, "--webp")) ", WebP tiles" else ", JPEG XL tiles" else "", if (runs.write) ", tiles written" else "", today(io, &date),
     });
     for (results.items) |result| {
         const work = result.work orelse continue;
-        try writeWork(out, result.version, "top-down", work.topdown);
-        if (work.isometric) |isometric| try writeWork(out, result.version, "isometric", isometric);
+        try writeWork(out, result.version, if (runs.isometric) "isometric" else "top-down", work);
     }
     try out.flush();
 }
 
-fn writeRow(out: *Io.Writer, result: Result, runs: Runs, saveHash: []const u8) !void {
-    const area = @as(f64, @floatFromInt(result.area)) / 1e6;
-    const chunksPerSecond = @as(f64, @floatFromInt(result.chunks)) / result.seconds.total;
-    try out.print("| {s} | {s} | {d:.3} s | {d:.1} | {d:.0} | {d:.3} s |", .{
-        result.version, saveHash, result.seconds.total, area / result.seconds.total, chunksPerSecond, result.seconds.tiles,
-    });
-    if (runs.isometric) {
-        if (result.isometric) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
+fn isOneOf(arg: []const u8, options: []const []const u8) bool {
+    for (options) |option| if (std.mem.eql(u8, arg, option)) return true;
+    return false;
+}
+
+fn writeRow(out: *Io.Writer, result: Result, runs: Runs, saveHash: []const u8, saveChunks: ?usize) !void {
+    try out.print("| {s} | {s} | {d:.3} s |", .{ result.version, saveHash, result.total });
+    if (!runs.isometric) {
+        if (result.area) |area| try out.print(" {d:.1} |", .{@as(f64, @floatFromInt(area)) / 1e6 / result.total}) else try out.writeAll(" – |");
     }
-    try out.print(" {d:.3} s | {d:.0} MiB |\n", .{ result.seconds.open, @as(f64, @floatFromInt(result.peak)) / (1 << 20) });
+    if (saveChunks) |chunks| try out.print(" {d:.0} |", .{@as(f64, @floatFromInt(chunks)) / result.total}) else try out.writeAll(" – |");
+    if (result.view) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
+    if (result.open) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
+    try out.print(" {d:.0} MiB |\n", .{@as(f64, @floatFromInt(result.peak)) / (1 << 20)});
     try out.flush();
 }
 
@@ -205,7 +225,8 @@ fn writeWork(out: *Io.Writer, version: []const u8, view: []const u8, work: Worke
 }
 
 /// Checks `tag` out into `.benchmark/<tag>`, builds and benchmarks it, and removes the worktree.
-fn measure(arena: std.mem.Allocator, io: Io, tag: []const u8, save: []const u8, runs: Runs, zigs: []const u8) !Result {
+/// Null for a version left out.
+fn measure(arena: std.mem.Allocator, io: Io, tag: []const u8, save: []const u8, runs: Runs, zigs: []const u8) !?Result {
     const folder = try std.fs.path.join(arena, &.{ ".benchmark", tag });
     // Left over from a run that stopped.
     if (Io.Dir.cwd().access(io, folder, .{})) |_| {
@@ -213,78 +234,108 @@ fn measure(arena: std.mem.Allocator, io: Io, tag: []const u8, save: []const u8, 
     } else |_| {}
     _ = try git(arena, io, &.{ "worktree", "add", "--detach", folder, tag });
     defer _ = git(arena, io, &.{ "worktree", "remove", "--force", folder }) catch {};
-    const blocks = try std.fmt.allocPrint(arena, ".benchmark/{s}.storyblk", .{tag});
-    return measureBuild(arena, io, try build(arena, io, folder, zigs), blocks, save, runs);
+    return measureBuild(arena, io, tag, try build(arena, io, folder, zigs), folder, save, runs);
 }
 
-/// Runs `storymap`, its own `bench` if it has one, with its prepared blocks in `blocks` if it
-/// keeps them in a file.
-fn measureBuild(arena: std.mem.Allocator, io: Io, storymap: []const u8, blocks: []const u8, save: []const u8, runs: Runs) !Result {
+/// Prepares the blocks of `storymap`, named `label` in messages, into `blocksBase` with the
+/// extension its kind of blocks takes, then runs it; null, with a message, if it hasn't what
+/// `runs` asks for.
+fn measureBuild(arena: std.mem.Allocator, io: Io, label: []const u8, storymap: []const u8, blocksBase: []const u8, save: []const u8, runs: Runs) !?Result {
     const help = try run(arena, io, &.{ storymap, "--help" }, ".");
-    if (std.mem.indexOf(u8, help, "storymap bench ") != null) return bench(arena, io, storymap, save, runs);
+    const has = struct {
+        fn f(text: []const u8, option: []const u8) bool {
+            return std.mem.indexOf(u8, text, option) != null;
+        }
+    }.f;
+    if (runs.isometric and !has(help, "--views <views>")) return leftOut(label, "no isometric view of its own");
+    if (runs.format) |format| if (!has(help, format)) return leftOut(label, "no such format");
+    if (runs.lossyFrom != null and !has(help, "--lossy-from")) return leftOut(label, "no --lossy-from");
+    const reports = has(help, "--json");
+    if (!runs.write and !has(help, "--no-write")) return leftOut(label, "renders only with its tiles written: give --write");
+
+    // Versions up to 0.2.0 keep their prepared blocks in a folder, later ones in a file.
+    const blocks: ?[]const u8 = if (has(help, "--blocks <file>"))
+        try std.fmt.allocPrint(arena, "{s}.storyblk", .{blocksBase})
+    else if (has(help, "--blocks <folder>"))
+        try std.fmt.allocPrint(arena, "{s}.blocks", .{blocksBase})
+    else
+        null;
+    if (blocks) |path| if (runs.game) |game| {
+        if (Io.Dir.cwd().access(io, path, .{})) |_| {} else |_| {
+            std.debug.print("preparing the blocks of {s}\n", .{label});
+            var argv: std.ArrayList([]const u8) = .empty;
+            try argv.appendSlice(arena, &.{ storymap, "prepare", path, "--game", game });
+            if (runs.data) |data| try argv.appendSlice(arena, &.{ "--data", data });
+            _ = try run(arena, io, argv.items, ".");
+        }
+    };
 
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(arena, &.{ storymap, save });
-    if (std.mem.indexOf(u8, help, "--blocks <file>") != null) try argv.appendSlice(arena, &.{ "--blocks", blocks });
-    try argv.appendSlice(arena, &styles);
     if (runs.write) try argv.append(arena, outFolder) else try argv.append(arena, "--no-write");
-    if (runs.isometric) {
-        if (std.mem.indexOf(u8, help, "--views <views>") != null) {
-            try argv.appendSlice(arena, &.{ "--views", "topdown+isometric" });
-        } else {
-            try argv.append(arena, "--isometric");
-        }
-    }
+    if (blocks) |path| try argv.appendSlice(arena, &.{ "--blocks", path });
+    try argv.appendSlice(arena, &styles);
+    if (runs.isometric) try argv.appendSlice(arena, &.{ "--views", "isometric" });
     if (runs.format) |format| try argv.append(arena, format);
     if (runs.lossyFrom) |level| try argv.appendSlice(arena, &.{ "--lossy-from", level });
-    try argv.append(arena, "--json");
+    if (reports) try argv.append(arena, "--json");
 
     // The first warms the file cache, and prepares the blocks if they aren't yet.
-    _ = try runJson(Report, arena, io, argv.items);
-    const reports = try arena.alloc(Report, runs.count);
+    _ = try timedRun(arena, io, argv.items, runs.write);
+    const totals = try arena.alloc(f64, runs.count);
     const peaks = try arena.alloc(usize, runs.count);
-    for (reports, peaks) |*report, *peak| report.*, peak.* = try runJson(Report, arena, io, argv.items);
-
-    const first = reports[0];
-    var result: Result = .{
-        .version = first.version,
-        .build = first.build,
-        .threads = first.threads,
-        .runs = runs.count,
-        .chunks = first.chunks,
-        .tiles = first.topdown.tiles,
-        .levels = first.topdown.levels,
-        .area = first.topdown.area,
-        .seconds = .{
-            .open = try median(arena, reports, struct {
-                fn pick(r: Report) f64 {
-                    return r.seconds.open;
-                }
-            }.pick),
-            .tiles = try median(arena, reports, struct {
-                fn pick(r: Report) f64 {
-                    return r.topdown.seconds;
-                }
-            }.pick),
-            .total = try median(arena, reports, struct {
-                fn pick(r: Report) f64 {
-                    return r.seconds.total;
-                }
-            }.pick),
-        },
-        .work = .{ .topdown = try medianWork(arena, reports, .topdown), .isometric = null },
-    };
+    const parsed = try arena.alloc(Report, if (reports) runs.count else 0);
+    for (totals, peaks, 0..) |*total, *peak, n| {
+        const timed = try timedRun(arena, io, argv.items, runs.write);
+        total.*, peak.* = .{ timed.seconds, timed.peak };
+        if (reports) parsed[n] = try lastJson(Report, arena, timed.stdout);
+    }
+    Io.Dir.cwd().deleteTree(io, outFolder) catch {};
+    std.mem.sort(f64, totals, {}, std.sort.asc(f64));
     std.mem.sort(usize, peaks, {}, std.sort.asc(usize));
-    result.peak = peaks[peaks.len / 2];
-    if (first.isometric != null) {
-        result.isometric = try median(arena, reports, struct {
-            fn pick(r: Report) f64 {
-                return r.isometric.?.seconds;
-            }
-        }.pick);
-        result.work.?.isometric = try medianWork(arena, reports, .isometric);
+
+    var result: Result = .{
+        .version = if (reports) parsed[0].version else try versionOf(arena, io, storymap),
+        .runs = runs.count,
+        .total = totals[totals.len / 2],
+        .peak = peaks[peaks.len / 2],
+    };
+    if (reports) {
+        if (runs.isometric) try addView(.isometric, arena, &result, parsed) else try addView(.topdown, arena, &result, parsed);
     }
     return result;
+}
+
+fn leftOut(label: []const u8, reason: []const u8) ?Result {
+    std.debug.print("{s}: {s}; left out\n", .{ label, reason });
+    return null;
+}
+
+/// What `reports`, of runs drawing the `which` view, say beyond the time this measures.
+fn addView(comptime which: ViewKind, arena: std.mem.Allocator, result: *Result, reports: []const Report) !void {
+    const view = viewOf(reports[0], which);
+    result.chunks = reports[0].chunks;
+    result.tiles = view.tiles;
+    result.levels = view.levels;
+    result.area = view.area;
+    result.open = try median(arena, reports, struct {
+        fn pick(r: Report) f64 {
+            return r.seconds.open;
+        }
+    }.pick);
+    result.view = try median(arena, reports, struct {
+        fn pick(r: Report) f64 {
+            return viewOf(r, which).seconds;
+        }
+    }.pick);
+    result.work = try medianWork(arena, reports, which);
+}
+
+fn viewOf(report: Report, comptime which: ViewKind) Report.View {
+    return switch (which) {
+        .topdown => report.topdown.?,
+        .isometric => report.isometric.?,
+    };
 }
 
 /// The median of the times `pick` picks from `reports`.
@@ -296,20 +347,22 @@ fn median(arena: std.mem.Allocator, reports: []const Report, comptime pick: fn (
 }
 
 /// The median of each part of a view's time.
-fn medianWork(arena: std.mem.Allocator, reports: []const Report, comptime view: enum { topdown, isometric }) !WorkerSeconds {
+fn medianWork(arena: std.mem.Allocator, reports: []const Report, comptime which: ViewKind) !WorkerSeconds {
     var work: WorkerSeconds = undefined;
     inline for (@typeInfo(WorkerSeconds).@"struct".field_names) |name| {
         @field(work, name) = try median(arena, reports, struct {
             fn pick(r: Report) f64 {
-                const seconds = switch (view) {
-                    .topdown => r.topdown.workerSeconds,
-                    .isometric => r.isometric.?.workerSeconds,
-                };
-                return @field(seconds, name);
+                return @field(viewOf(r, which).workerSeconds, name);
             }
         }.pick);
     }
     return work;
+}
+
+/// `storymap --version`'s version, for versions without `--json`.
+fn versionOf(arena: std.mem.Allocator, io: Io, storymap: []const u8) ![]const u8 {
+    const text = std.mem.trim(u8, try run(arena, io, &.{ storymap, "--version" }, "."), " \r\n");
+    return if (std.mem.lastIndexOfScalar(u8, text, ' ')) |space| text[space + 1 ..] else text;
 }
 
 fn build(arena: std.mem.Allocator, io: Io, folder: []const u8, zigs: []const u8) ![]const u8 {
@@ -367,26 +420,13 @@ fn get(client: *std.http.Client, url: []const u8) ![]u8 {
     return body.written();
 }
 
-/// Versions up to 0.2.0: their `storymap bench` renders `runs.count` times and takes the medians.
-fn bench(arena: std.mem.Allocator, io: Io, storymap: []const u8, save: []const u8, runs: Runs) !Result {
-    const count = try std.fmt.allocPrint(arena, "{}", .{runs.count});
-    const report, const peak = try runJson(BenchReport, arena, io, &.{ storymap, "bench", save, count, "--json" });
-    return .{
-        .version = report.version,
-        .build = report.build,
-        .threads = report.threads,
-        .runs = report.runs,
-        .chunks = report.chunks,
-        .tiles = report.tiles,
-        .levels = report.levels,
-        .area = report.area,
-        .seconds = .{ .open = report.seconds.open, .tiles = report.seconds.tiles, .total = report.seconds.total },
-        .peak = peak,
-    };
-}
+const Timed = struct { stdout: []const u8, seconds: f64, peak: usize };
 
-/// Runs `argv` and reads the last line it prints as `T`, with the run's peak memory in bytes.
-fn runJson(comptime T: type, arena: std.mem.Allocator, io: Io, argv: []const []const u8) !struct { T, usize } {
+/// Runs `argv`, from starting it to its exit, with the run's peak memory in bytes. With
+/// `writes`, the output folder is removed first, so every run writes its tiles afresh.
+fn timedRun(arena: std.mem.Allocator, io: Io, argv: []const []const u8, writes: bool) !Timed {
+    if (writes) Io.Dir.cwd().deleteTree(io, outFolder) catch {};
+    const start: Io.Timestamp = .now(io, .awake);
     var child = try std.process.spawn(io, .{ .argv = argv, .stdout = .pipe, .stderr = .pipe, .request_resource_usage_statistics = true });
     var buffer: [4096]u8 = undefined;
     var reader = child.stdout.?.reader(io, &buffer);
@@ -394,13 +434,19 @@ fn runJson(comptime T: type, arena: std.mem.Allocator, io: Io, argv: []const []c
     // A render's messages are a few lines, so they fit the pipe while stdout is read first.
     var errorReader = child.stderr.?.reader(io, &buffer);
     const stderr = try errorReader.interface.allocRemaining(arena, .unlimited);
-    if (!(try child.wait(io)).success()) {
+    const term = try child.wait(io);
+    const seconds = @as(f64, @floatFromInt(start.untilNow(io, .awake).nanoseconds)) / 1e9;
+    if (!term.success()) {
         std.debug.print("{s}", .{stderr});
         return error.CommandFailed;
     }
+    return .{ .stdout = stdout, .seconds = seconds, .peak = child.resource_usage_statistics.getMaxRss() orelse 0 };
+}
+
+/// The last line of `stdout`, read as `T`.
+fn lastJson(comptime T: type, arena: std.mem.Allocator, stdout: []const u8) !T {
     const line = std.mem.trim(u8, stdout[(std.mem.lastIndexOfScalar(u8, std.mem.trimEnd(u8, stdout, "\r\n"), '\n') orelse 0)..], " \r\n");
-    const value = try std.json.parseFromSliceLeaky(T, arena, line, .{ .ignore_unknown_fields = true });
-    return .{ value, child.resource_usage_statistics.getMaxRss() orelse 0 };
+    return std.json.parseFromSliceLeaky(T, arena, line, .{ .ignore_unknown_fields = true });
 }
 
 fn git(arena: std.mem.Allocator, io: Io, argv: []const []const u8) ![]const u8 {
