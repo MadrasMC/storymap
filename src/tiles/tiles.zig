@@ -943,8 +943,18 @@ const Pyramid = struct {
 /// pixel averages those it covers, colours weighted by alpha, so transparent pixels make edges
 /// partly transparent rather than darker.
 fn shrink(pixels: *const Pixels, steps: u4, into: []u32, stride: usize) void {
+    switch (steps) {
+        inline 0...Band.maxSteps => |known| shrinkBy(known, pixels, into, stride),
+        else => unreachable,
+    }
+}
+
+fn shrinkBy(comptime steps: u4, pixels: *const Pixels, into: []u32, stride: usize) void {
     const span = @as(usize, 1) << steps;
     const covered: u32 = @intCast(span * span);
+    // Dividing by a constant compiles to a multiply, where a division by `alpha` can't; most
+    // blocks are opaque, and give the same result either way.
+    const opaqueAlpha = 255 * covered;
     for (0..size / span) |y| for (0..size / span) |x| {
         var sum: [4]u32 = .{ 0, 0, 0, 0 };
         for (0..span) |below| for (0..span) |beside| {
@@ -953,7 +963,12 @@ fn shrink(pixels: *const Pixels, steps: u4, into: []u32, stride: usize) void {
             sum[3] += p[3];
         };
         const alpha = sum[3];
-        into[y * stride + x] = if (alpha == 0) transparent else rgba(
+        into[y * stride + x] = if (alpha == 0) transparent else if (alpha == opaqueAlpha) rgba(
+            @intCast((sum[0] + opaqueAlpha / 2) / opaqueAlpha),
+            @intCast((sum[1] + opaqueAlpha / 2) / opaqueAlpha),
+            @intCast((sum[2] + opaqueAlpha / 2) / opaqueAlpha),
+            255,
+        ) else rgba(
             @intCast((sum[0] + alpha / 2) / alpha),
             @intCast((sum[1] + alpha / 2) / alpha),
             @intCast((sum[2] + alpha / 2) / alpha),
@@ -1217,6 +1232,48 @@ test shrink {
     shrink(pixels, 2, &quarter, 128);
     try std.testing.expectEqual(rgba(102, 17, 17, 96), quarter[0]);
     try std.testing.expectEqual(transparent, quarter[1]);
+}
+
+test "shrink gives each step count the alpha-weighted average" {
+    const allocator = std.testing.allocator;
+    const pixels = try allocator.create(Pixels);
+    defer allocator.destroy(pixels);
+    var prng: std.Random.DefaultPrng = .init(4);
+    const random = prng.random();
+    // Bands of 64 rows: opaque, some pixels transparent, and empty, so blocks up to 64 × 64 can
+    // be wholly opaque.
+    for (pixels, 0..) |*pixel, i| {
+        const alpha: u8 = switch (i / size / 64 % 3) {
+            0 => 255,
+            1 => if (random.boolean()) 255 else random.int(u8),
+            else => 0,
+        };
+        pixel.* = rgba(random.int(u8), random.int(u8), random.int(u8), alpha);
+    }
+    const into = try allocator.alloc(u32, size * size);
+    defer allocator.free(into);
+    for (0..Band.maxSteps + 1) |s| {
+        const steps: u4 = @intCast(s);
+        const span = @as(usize, 1) << steps;
+        shrink(pixels, steps, into, size);
+        for (0..size / span) |y| for (0..size / span) |x| {
+            var sum: [4]u32 = .{ 0, 0, 0, 0 };
+            for (0..span) |below| for (0..span) |beside| {
+                const p: [4]u8 = @bitCast(pixels[(y * span + below) * size + x * span + beside]);
+                for (sum[0..3], p[0..3]) |*total, channel| total.* += @as(u32, channel) * p[3];
+                sum[3] += p[3];
+            };
+            const alpha = sum[3];
+            const covered: u32 = @intCast(span * span);
+            const expected = if (alpha == 0) transparent else rgba(
+                @intCast((sum[0] + alpha / 2) / alpha),
+                @intCast((sum[1] + alpha / 2) / alpha),
+                @intCast((sum[2] + alpha / 2) / alpha),
+                @intCast((alpha + covered / 2) / covered),
+            );
+            try std.testing.expectEqual(expected, into[y * size + x]);
+        };
+    }
 }
 
 /// A view whose level-0 tiles are each one colour, from where they are.
