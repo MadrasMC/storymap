@@ -9,15 +9,17 @@
 //!
 //! Each run is `storymap <save-file> --no-write --json` in the slowest styles, the Plain theme's
 //! with `game:coloured` top-down (`styles`), drawing the top-down view. `--isometric` draws the
-//! isometric view alone instead (`--views isometric`), `--write` writes the tiles into
+//! isometric view alone instead (`--views isometric`), with the world's area from one untimed
+//! top-down render for its km²/s, `--write` writes the tiles into
 //! `.benchmark/out`, so writing them is timed too, `--jpegxl` or `--webp` encodes them as JPEG XL
 //! or WebP, and `--lossy-from` makes WebP lossy from a level up.
 //!
 //! A run's end to end is its whole process, from starting it to its exit, timed here for every
 //! version. Its other times come from its `--json`; versions up to 0.2.0 have none, and render
-//! only with their tiles written, so they're measured only with `--write`, and their other times
-//! are left blank. A version without what the options ask for (`--views`, the format) is left
-//! out.
+//! only with their tiles written, so they're measured only with `--write`, their other times
+//! are left blank, and their km²/s and chunks/s take the save's area and chunks from a version
+//! that reports them. A version without what the options ask for (`--views`, the format) is
+//! left out.
 //!
 //! Each version prepares its blocks into its own `.benchmark/<tag>.storyblk`, or
 //! `.benchmark/<tag>.blocks/` for versions that keep them in a folder, with its own `prepare`, from
@@ -150,44 +152,39 @@ pub fn main(init: std.process.Init) !void {
     var stdout = Io.File.stdout().writerStreaming(io, &buffer);
     const out = &stdout.interface;
     const saveHash = try hashFile(arena, io, save);
-    if (runs.isometric) {
-        try out.writeAll("| version | save | end to end | chunks/s | isometric | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- |\n");
-    } else {
-        try out.writeAll("| version | save | end to end | km²/s | chunks/s | tiles | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
-    }
+    try out.writeAll("| version | save | end to end | km²/s | chunks/s | drawing | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
     try out.flush();
 
-    // Newest first, as the table lists them. The save's chunks are the same for every version,
-    // so those who don't count them are given the count of one that did.
+    // Newest first, as the table lists them. The save's chunks and the area its top-down view
+    // draws are the same for every version, so those who don't report them take them from one
+    // that did.
     var results: std.ArrayList(Result) = .empty;
-    var saveChunks: ?usize = null;
+    var known: Save = .{};
     if (current) {
         std.debug.print("measuring the working tree\n", .{});
         if (try measureBuild(arena, io, "the working tree", try build(arena, io, ".", zigs), ".benchmark/working-tree", save, runs)) |measured| {
             var result = measured;
             result.version = try std.fmt.allocPrint(arena, "{s} (working tree)", .{result.version});
             try results.append(arena, result);
-            saveChunks = saveChunks orelse result.chunks;
-            try writeRow(out, result, runs, saveHash, saveChunks);
+            known.learn(result);
+            try writeRow(out, result, saveHash, known);
         }
     }
     for (tags.items) |tag| {
         std.debug.print("measuring {s}\n", .{tag});
         const result = try measure(arena, io, tag, save, runs, zigs) orelse continue;
         try results.append(arena, result);
-        saveChunks = saveChunks orelse result.chunks;
-        try writeRow(out, result, runs, saveHash, saveChunks);
+        known.learn(result);
+        try writeRow(out, result, saveHash, known);
     }
     if (results.items.len == 0) fail("no version measured\n", .{});
 
     try out.print("\nsave: {s} ({s})\n", .{ std.fs.path.basename(save), saveHash });
     for (results.items) |result| {
         const tiles = result.tiles orelse continue;
-        if (runs.isometric) {
-            try out.print("world: {} chunks, isometric: {} tiles in {} levels\n", .{ result.chunks.?, tiles, result.levels.? });
-        } else {
-            try out.print("world: {} chunks, {d:.2} km², {} tiles in {} levels\n", .{ result.chunks.?, @as(f64, @floatFromInt(result.area orelse 0)) / 1e6, tiles, result.levels.? });
-        }
+        try out.print("world: {} chunks, {d:.2} km², {s}: {} tiles in {} levels\n", .{
+            result.chunks.?, @as(f64, @floatFromInt(result.area orelse 0)) / 1e6, if (runs.isometric) "isometric" else "top-down", tiles, result.levels.?,
+        });
         break;
     }
     var date: [10]u8 = undefined;
@@ -206,12 +203,21 @@ fn isOneOf(arg: []const u8, options: []const []const u8) bool {
     return false;
 }
 
-fn writeRow(out: *Io.Writer, result: Result, runs: Runs, saveHash: []const u8, saveChunks: ?usize) !void {
-    try out.print("| {s} | {s} | {d:.3} s |", .{ result.version, saveHash, result.total });
-    if (!runs.isometric) {
-        if (result.area) |area| try out.print(" {d:.1} |", .{@as(f64, @floatFromInt(area)) / 1e6 / result.total}) else try out.writeAll(" – |");
+/// What's known of the save from the versions that report it.
+const Save = struct {
+    chunks: ?usize = null,
+    area: ?usize = null,
+
+    fn learn(self: *Save, result: Result) void {
+        self.chunks = self.chunks orelse result.chunks;
+        self.area = self.area orelse result.area;
     }
-    if (saveChunks) |chunks| try out.print(" {d:.0} |", .{@as(f64, @floatFromInt(chunks)) / result.total}) else try out.writeAll(" – |");
+};
+
+fn writeRow(out: *Io.Writer, result: Result, saveHash: []const u8, save: Save) !void {
+    try out.print("| {s} | {s} | {d:.3} s |", .{ result.version, saveHash, result.total });
+    if (result.area orelse save.area) |area| try out.print(" {d:.2} |", .{@as(f64, @floatFromInt(area)) / 1e6 / result.total}) else try out.writeAll(" – |");
+    if (result.chunks orelse save.chunks) |chunks| try out.print(" {d:.0} |", .{@as(f64, @floatFromInt(chunks)) / result.total}) else try out.writeAll(" – |");
     if (result.view) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
     if (result.open) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
     try out.print(" {d:.0} MiB |\n", .{@as(f64, @floatFromInt(result.peak)) / (1 << 20)});
@@ -302,6 +308,16 @@ fn measureBuild(arena: std.mem.Allocator, io: Io, label: []const u8, storymap: [
     };
     if (reports) {
         if (runs.isometric) try addView(.isometric, arena, &result, parsed) else try addView(.topdown, arena, &result, parsed);
+    }
+    if (runs.isometric and reports) {
+        // The isometric view doesn't count the area it draws, so it's taken from an untimed
+        // top-down render of the same world.
+        var topdown: std.ArrayList([]const u8) = .empty;
+        try topdown.appendSlice(arena, &.{ storymap, save, "--no-write" });
+        if (blocks) |path| try topdown.appendSlice(arena, &.{ "--blocks", path });
+        try topdown.appendSlice(arena, &styles);
+        try topdown.appendSlice(arena, &.{ "--views", "topdown", "--json" });
+        result.area = (try lastJson(Report, arena, (try timedRun(arena, io, topdown.items, false)).stdout)).topdown.?.area;
     }
     return result;
 }
