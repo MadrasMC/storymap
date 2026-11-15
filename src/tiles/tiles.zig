@@ -943,9 +943,62 @@ const Pyramid = struct {
 /// pixel averages those it covers, colours weighted by alpha, so transparent pixels make edges
 /// partly transparent rather than darker.
 fn shrink(pixels: *const Pixels, steps: u4, into: []u32, stride: usize) void {
+    // The vector code reads a pixel's channels from its bits, as they lie in little-endian.
+    if (steps == 1 and builtin.cpu.arch.endian() == .little) return shrinkPairs(pixels, into, stride);
     switch (steps) {
         inline 0...Band.maxSteps => |known| shrinkBy(known, pixels, into, stride),
         else => unreachable,
+    }
+}
+
+/// `shrinkBy(1, …)`, 8 pixels at a time with vector instructions. Vectors divide floats but not
+/// integers; the quotients floored are integer division's, as no sum of a 2 × 2 block is past
+/// the 2^24 a float holds exactly, and none comes near enough to the next integer to round to it
+/// (checked for every sum).
+fn shrinkPairs(pixels: *const Pixels, into: []u32, stride: usize) void {
+    const lanes = 8;
+    const Row = @Vector(2 * lanes, u32);
+    const Sums = @Vector(lanes, u32);
+    const Floats = @Vector(lanes, f32);
+    const evens, const odds = comptime masks: {
+        var evens: [lanes]i32 = undefined;
+        var odds: [lanes]i32 = undefined;
+        for (&evens, &odds, 0..) |*even, *odd, i| {
+            even.* = 2 * i;
+            odd.* = 2 * i + 1;
+        }
+        break :masks .{ evens, odds };
+    };
+    const byte: Row = @splat(0xff);
+    const pairs = struct {
+        /// Each two neighbouring lanes added.
+        fn add(row: Row) Sums {
+            return @shuffle(u32, row, undefined, evens) + @shuffle(u32, row, undefined, odds);
+        }
+    }.add;
+    for (0..half) |y| {
+        const top = pixels[2 * y * size ..][0..size];
+        const bottom = pixels[(2 * y + 1) * size ..][0..size];
+        var x: usize = 0;
+        while (x < half) : (x += lanes) {
+            const above: Row = top[2 * x ..][0 .. 2 * lanes].*;
+            const below: Row = bottom[2 * x ..][0 .. 2 * lanes].*;
+            const aboveAlpha = above >> @splat(24);
+            const belowAlpha = below >> @splat(24);
+            const alpha = pairs(aboveAlpha + belowAlpha);
+            const red = pairs((above & byte) * aboveAlpha + (below & byte) * belowAlpha);
+            const green = pairs((above >> @splat(8) & byte) * aboveAlpha + (below >> @splat(8) & byte) * belowAlpha);
+            const blue = pairs((above >> @splat(16) & byte) * aboveAlpha + (below >> @splat(16) & byte) * belowAlpha);
+            // A transparent block's quotients are thrown away, but mustn't divide by 0.
+            const divisor: Floats = @floatFromInt(@max(alpha, @as(Sums, @splat(1))));
+            const rounding = alpha / @as(Sums, @splat(2));
+            const r: Sums = @intFromFloat(@floor(@as(Floats, @floatFromInt(red + rounding)) / divisor));
+            const g: Sums = @intFromFloat(@floor(@as(Floats, @floatFromInt(green + rounding)) / divisor));
+            const b: Sums = @intFromFloat(@floor(@as(Floats, @floatFromInt(blue + rounding)) / divisor));
+            const a = (alpha + @as(Sums, @splat(2))) >> @splat(2);
+            const averaged = r | g << @splat(8) | b << @splat(16) | a << @splat(24);
+            into[y * stride + x ..][0..lanes].* = @select(u32, alpha == @as(Sums, @splat(0)), @as(Sums, @splat(transparent)), averaged);
+        }
     }
 }
 
