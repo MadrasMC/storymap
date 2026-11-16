@@ -37,6 +37,7 @@
 //!   the `game` style, `tint(*Reader, id: i32, x: i64, y: i64, z: i64) !world.Rgb`, the colour
 //!   multiplied into a tinted block's colour, or its faces' tinted layers, where it is.
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const world = @import("world");
 const tiles = @import("tiles");
@@ -584,6 +585,12 @@ const light = std.EnumArray(Face, u16).init(.{ .none = 0, .top = 256, .left = 20
 /// each pixel shows in the view's coordinates, larger nearer.
 const depthSteps = 256;
 
+/// A tile's depth buffer, each pixel's depth counted from the tile's base (`Worker.depthBase`).
+const Depths = [tiles.size * tiles.size]i32;
+
+/// The depth of a pixel nothing is drawn on yet.
+const emptyDepth = std.math.minInt(i32);
+
 /// How many pixels lower than its place's the top of a cube `sixteenths` high is.
 fn dropOf(sixteenths: u8) u8 {
     return @intCast((16 - @as(usize, @min(sixteenths, 16))) * below / 16);
@@ -604,7 +611,7 @@ fn loweredPixel(row: usize, column: usize, drop: usize) ?CubePixel {
 }
 
 /// How much farther back a top `drop` pixels lower is, in `depthSteps`ths.
-fn dropDepth(drop: usize) i64 {
+fn dropDepth(drop: usize) i32 {
     return @intCast(drop * depthSteps / below);
 }
 
@@ -791,6 +798,118 @@ fn blend(plain: u32, layer: u32, tint: world.Rgb) u32 {
         channel.* = @intCast((tinted * a + @as(u32, p) * (255 - a)) / 255);
     }
     return tiles.rgba(out[0], out[1], out[2], 255);
+}
+
+/// One row of a sprite's layers, or the part of it on a tile.
+const SpriteRow = struct {
+    plain: []const u32,
+    tinted: ?[]const u32,
+    depths: []const i16,
+};
+
+/// Draws `span`, its depths counted from `base`, over the same number of `pixels` and their
+/// `depths`, on each pixel where it shows something nearer than what's there; its tinted layer
+/// tinted by `tint`. Returns whether it drew any.
+fn drawSpriteRow(span: SpriteRow, base: i32, tint: world.Rgb, pixels: []u32, depths: []i32) bool {
+    var any = false;
+    var i: usize = 0;
+    // The vector code reads a pixel's channels from its bits, as they lie in little-endian.
+    if (builtin.cpu.arch.endian() == .little) {
+        const lanes = 8;
+        const Colours = @Vector(lanes, u32);
+        const Depths8 = @Vector(lanes, i32);
+        while (i + lanes <= pixels.len) : (i += lanes) {
+            const plain: Colours = span.plain[i..][0..lanes].*;
+            const spriteDepths: @Vector(lanes, i16) = span.depths[i..][0..lanes].*;
+            const point = @as(Depths8, @splat(base)) + @as(Depths8, spriteDepths);
+            var colour = plain;
+            var alphas = plain;
+            if (span.tinted) |layer| {
+                const tinted: Colours = layer[i..][0..lanes].*;
+                colour = blendLanes(lanes, plain, tinted, tint);
+                alphas |= tinted;
+            }
+            // Where it shows nothing, its depth can't beat even an empty pixel's, and what's
+            // behind it shows.
+            const shows = alphas >> @splat(24) != @as(Colours, @splat(0));
+            const old: Depths8 = depths[i..][0..lanes].*;
+            const nearer = @select(i32, shows, point, @as(Depths8, @splat(emptyDepth))) > old;
+            if (!@reduce(.Or, nearer)) continue;
+            depths[i..][0..lanes].* = @select(i32, nearer, point, old);
+            pixels[i..][0..lanes].* = @select(u32, nearer, colour, @as(Colours, pixels[i..][0..lanes].*));
+            any = true;
+        }
+    }
+    while (i < pixels.len) : (i += 1) {
+        const shows = span.plain[i] & 0xff000000 != 0 or if (span.tinted) |layer| layer[i] & 0xff000000 != 0 else false;
+        if (!shows) continue;
+        const point = base + span.depths[i];
+        if (point <= depths[i]) continue;
+        depths[i] = point;
+        pixels[i] = if (span.tinted) |layer| blend(span.plain[i], layer[i], tint) else span.plain[i];
+        any = true;
+    }
+    return any;
+}
+
+/// `blend` on `lanes` pixels at once. Dividing by 255 is `(x + 1 + (x >> 8)) >> 8`, exact for
+/// every x up to 65,534, and `blend` divides at most 255 × 255.
+fn blendLanes(comptime lanes: usize, plain: @Vector(lanes, u32), layer: @Vector(lanes, u32), tint: world.Rgb) @Vector(lanes, u32) {
+    const Colours = @Vector(lanes, u32);
+    const byte: Colours = @splat(0xff);
+    const div255 = struct {
+        fn f(x: Colours) Colours {
+            return (x + @as(Colours, @splat(1)) + (x >> @splat(8))) >> @splat(8);
+        }
+    }.f;
+    const a = layer >> @splat(24);
+    const rest = @as(Colours, @splat(255)) - a;
+    var out: Colours = @splat(0xff000000);
+    inline for (0..3) |k| {
+        const channelShift: Colours = @splat(8 * k);
+        const tinted = div255((layer >> channelShift & byte) * @as(Colours, @splat(tint[k])));
+        out |= div255(tinted * a + (plain >> channelShift & byte) * rest) << channelShift;
+    }
+    return @select(u32, a == @as(Colours, @splat(0)), plain, out);
+}
+
+test drawSpriteRow {
+    // Rows of 21 pixels, past two vectors, with random plain and tinted layers, alphas often 0,
+    // and depths around what's already there: the same as drawing each pixel on its own.
+    var prng: std.Random.DefaultPrng = .init(5);
+    const random = prng.random();
+    for (0..200) |_| {
+        var plain: [21]u32 = undefined;
+        var tinted: [21]u32 = undefined;
+        var spriteDepths: [21]i16 = undefined;
+        var pixels: [21]u32 = undefined;
+        var depths: [21]i32 = undefined;
+        for (&plain, &tinted, &spriteDepths, &pixels, &depths) |*p, *t, *d, *pixel, *depth| {
+            p.* = random.int(u32) & if (random.boolean()) @as(u32, 0x00ffffff) else 0xffffffff;
+            t.* = random.int(u32) & if (random.boolean()) @as(u32, 0x00ffffff) else 0xffffffff;
+            d.* = random.intRangeAtMost(i16, -300, 300);
+            pixel.* = random.int(u32);
+            depth.* = if (random.uintLessThan(u8, 4) == 0) emptyDepth else random.intRangeAtMost(i32, 900, 1300);
+        }
+        const tint: world.Rgb = .{ random.int(u8), random.int(u8), random.int(u8) };
+        for ([_]?[]const u32{ null, &tinted }) |layer| {
+            const span: SpriteRow = .{ .plain = &plain, .tinted = layer, .depths = &spriteDepths };
+            var expectedPixels = pixels;
+            var expectedDepths = depths;
+            for (0..plain.len) |i| {
+                const shows = plain[i] & 0xff000000 != 0 or if (layer) |l| l[i] & 0xff000000 != 0 else false;
+                const point = 1000 + @as(i32, spriteDepths[i]);
+                if (!shows or point <= depths[i]) continue;
+                expectedDepths[i] = point;
+                expectedPixels[i] = if (layer) |l| blend(plain[i], l[i], tint) else plain[i];
+            }
+            var gotPixels = pixels;
+            var gotDepths = depths;
+            _ = drawSpriteRow(span, 1000, tint, &gotPixels, &gotDepths);
+            try std.testing.expectEqualSlices(u32, &expectedPixels, &gotPixels);
+            try std.testing.expectEqualSlices(i32, &expectedDepths, &gotDepths);
+        }
+    }
 }
 
 /// `colour` multiplied by `tint`, each channel rounded down, as the game tints.
@@ -1853,8 +1972,10 @@ fn View(comptime Source: type) type {
             slot: *ChunkCache.Slot,
             cache: ChunkCache,
             /// The depth of what each pixel shows: x + y + z of its point, in `depthSteps`ths of
-            /// a block, larger nearer.
-            depth: *[tiles.size * tiles.size]i64,
+            /// a block, larger nearer, less `depthBase`.
+            depth: *Depths,
+            /// The tile's depths are counted from it, so they fit an `i32` in any world.
+            depthBase: i64 = 0,
             /// The tile's see-through blocks with something to show, painted once its other blocks
             /// are drawn (`paintSeeThrough`), the first `seeThroughCount` of them.
             seeThrough: *[maxSeeThroughBlocks]SeeThroughBlock,
@@ -1871,7 +1992,7 @@ fn View(comptime Source: type) type {
                 errdefer allocator.destroy(slot);
                 var cache: ChunkCache = try .init(allocator, ChunkCache.defaultChunks, ChunkCache.defaultChunksWithBlocks);
                 errdefer cache.deinit(allocator);
-                const depth = try allocator.create([tiles.size * tiles.size]i64);
+                const depth = try allocator.create(Depths);
                 errdefer allocator.destroy(depth);
                 const seeThrough = try allocator.create([maxSeeThroughBlocks]SeeThroughBlock);
                 return .{ .view = view, .reader = reader, .chunk = chunk, .slot = slot, .cache = cache, .depth = depth, .seeThrough = seeThrough };
@@ -1890,10 +2011,13 @@ fn View(comptime Source: type) type {
             /// none has one.
             pub fn draw(self: *Worker, tile: tiles.Tile, pixels: *tiles.Pixels) !bool {
                 @memset(pixels, tiles.transparent);
-                @memset(self.depth, std.math.minInt(i64));
+                @memset(self.depth, emptyDepth);
                 self.seeThroughCount = 0;
                 const x0 = @as(i64, tile.x) * tiles.size;
                 const y0 = @as(i64, tile.y) * tiles.size;
+                // The depth of a line through the tile's top, at height 0; the tile's lines and
+                // heights stay within a few thousand blocks of it.
+                self.depthBase = @divFloor(y0, down) * depthSteps;
                 var any = false;
                 // The lines whose squares fall on the tile (`Line.square`), or near enough for
                 // a shape on them to reach into it.
@@ -1935,7 +2059,7 @@ fn View(comptime Source: type) type {
                 var any = false;
                 for (blocks) |*block| {
                     const sprites = self.view.sprites.?;
-                    if (paintBlock(block, sprites.entries[block.sprite], sprites.layersOf(block.sprite), pixels, self.depth)) any = true;
+                    if (paintBlock(block, sprites.entries[block.sprite], sprites.layersOf(block.sprite), self.depthBase, pixels, self.depth)) any = true;
                 }
                 return any;
             }
@@ -2213,6 +2337,7 @@ fn View(comptime Source: type) type {
             /// `depth`, x + y + z of the block in `depthSteps`ths, on each pixel where what it
             /// shows is nearer than what's there. Returns whether it drew any.
             fn drawBlock(self: *Worker, left: i64, top: i64, depth: i64, paint: Paint, pixels: *tiles.Pixels) bool {
+                const base: i32 = @intCast(depth - self.depthBase);
                 var any = false;
                 switch (paint) {
                     .sprite => |from| {
@@ -2229,7 +2354,7 @@ fn View(comptime Source: type) type {
                                     const at = pixel.row * sprite.width + pixel.column;
                                     if (!layers.shows(at)) continue;
                                     const p: usize = @intCast(py * tiles.size + px);
-                                    const pointDepth = depth + layers.depths[at] - if (pixel.face == .top) dropDepth(from.drop) else 0;
+                                    const pointDepth = base + layers.depths[at] - if (pixel.face == .top) dropDepth(from.drop) else 0;
                                     if (pointDepth <= self.depth[p]) continue;
                                     self.depth[p] = pointDepth;
                                     pixels[p] = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], from.tint) else layers.plain[at];
@@ -2238,22 +2363,23 @@ fn View(comptime Source: type) type {
                             }
                             return any;
                         }
+                        const spriteLeft = left + sprite.left;
+                        // The sprite's columns on the tile, the same for every row.
+                        const first: usize = @intCast(std.math.clamp(-spriteLeft, 0, sprite.width));
+                        const end: usize = @intCast(std.math.clamp(tiles.size - spriteLeft, 0, sprite.width));
+                        if (first >= end) return false;
+                        const count = end - first;
                         for (0..sprite.height) |row| {
                             const py = top + sprite.top + @as(i64, @intCast(row));
                             if (py < 0 or py >= tiles.size) continue;
-                            for (0..sprite.width) |column| {
-                                const px = left + sprite.left + @as(i64, @intCast(column));
-                                if (px < 0 or px >= tiles.size) continue;
-                                const at = row * sprite.width + column;
-                                // Where it shows nothing, what's behind it does.
-                                if (!layers.shows(at)) continue;
-                                const p: usize = @intCast(py * tiles.size + px);
-                                const pointDepth = depth + layers.depths[at];
-                                if (pointDepth <= self.depth[p]) continue;
-                                self.depth[p] = pointDepth;
-                                pixels[p] = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], from.tint) else layers.plain[at];
-                                any = true;
-                            }
+                            const at = row * sprite.width + first;
+                            const p: usize = @intCast(py * tiles.size + spriteLeft + @as(i64, @intCast(first)));
+                            const span: SpriteRow = .{
+                                .plain = layers.plain[at..][0..count],
+                                .tinted = if (layers.tinted) |tinted| tinted[at..][0..count] else null,
+                                .depths = layers.depths[at..][0..count],
+                            };
+                            if (drawSpriteRow(span, base, from.tint, pixels[p..][0..count], self.depth[p..][0..count])) any = true;
                         }
                     },
                     .faces => |colours| for (0..blockWidth) |row| {
@@ -2265,7 +2391,7 @@ fn View(comptime Source: type) type {
                             const face = faces[row][column];
                             if (face == .none) continue;
                             const p: usize = @intCast(py * tiles.size + px);
-                            const pointDepth = depth + cubeDepths[row][column];
+                            const pointDepth = base + cubeDepths[row][column];
                             if (pointDepth <= self.depth[p]) continue;
                             self.depth[p] = pointDepth;
                             pixels[p] = colours[@backingInt(face) - 1];
@@ -2304,8 +2430,9 @@ const maxSeeThroughBlocks = 16384;
 /// Mixes `block`'s `sprite` over `pixels`: a cube's exposed faces, each pixel by how far behind it
 /// what it covers is, or a shape's pixels by how opaque they are. Where nothing is behind, it's
 /// taken as it is, and a pixel behind what's there is left out. `depths` then holds its depth, for
-/// what's painted over it next. Returns whether any pixel was painted.
-fn paintBlock(block: *const SeeThroughBlock, sprite: Sprite, layers: SpriteLayers, pixels: *tiles.Pixels, depths: *[tiles.size * tiles.size]i64) bool {
+/// what's painted over it next, counted from `depthBase`. Returns whether any pixel was painted.
+fn paintBlock(block: *const SeeThroughBlock, sprite: Sprite, layers: SpriteLayers, depthBase: i64, pixels: *tiles.Pixels, depths: *Depths) bool {
+    const base: i32 = @intCast(@as(i64, block.depth) * depthSteps - depthBase);
     var any = false;
     for (0..sprite.height) |row| {
         const py = @as(i64, block.top) + sprite.top + @as(i64, @intCast(row));
@@ -2314,7 +2441,7 @@ fn paintBlock(block: *const SeeThroughBlock, sprite: Sprite, layers: SpriteLayer
             const px = @as(i64, block.left) + sprite.left + @as(i64, @intCast(column));
             if (px < 0 or px >= tiles.size) continue;
             var at = row * sprite.width + column;
-            var lowered: i64 = 0;
+            var lowered: i32 = 0;
             if (block.inShape) {
                 if (!layers.shows(at)) continue;
             } else {
@@ -2324,10 +2451,10 @@ fn paintBlock(block: *const SeeThroughBlock, sprite: Sprite, layers: SpriteLayer
                 if (pixel.face == .top) lowered = dropDepth(block.drop);
             }
             const p: usize = @intCast(py * tiles.size + px);
-            const pointDepth = @as(i64, block.depth) * depthSteps + layers.depths[at] - lowered;
+            const pointDepth = base + layers.depths[at] - lowered;
             if (pointDepth <= depths[p]) continue;
             const colour = if (layers.tinted) |tinted| blend(layers.plain[at], tinted[at], block.tint) else layers.plain[at];
-            if (depths[p] == std.math.minInt(i64)) {
+            if (depths[p] == emptyDepth) {
                 pixels[p] = colour;
             } else {
                 const opacity: u8 = if (block.inShape) @truncate(layers.plain[at] >> 24) else surfaceOpacity(pointDepth - depths[p]);
@@ -2344,10 +2471,10 @@ test paintBlock {
     const gpa = std.testing.allocator;
     const pixels = try gpa.create(tiles.Pixels);
     defer gpa.destroy(pixels);
-    const depths = try gpa.create([tiles.size * tiles.size]i64);
+    const depths = try gpa.create(Depths);
     defer gpa.destroy(depths);
     @memset(pixels, tiles.transparent);
-    @memset(depths, std.math.minInt(i64));
+    @memset(depths, emptyDepth);
 
     const opaqueDepths: *const [blockWidth * blockWidth]i16 = @ptrCast(&cubeDepths);
     const water: [blockWidth * blockWidth]u32 = @splat(tiles.rgba(0, 0, 200, 255));
@@ -2363,36 +2490,36 @@ test paintBlock {
 
     // Nothing behind it: as it is, and it says where it is.
     var cube: SeeThroughBlock = .{ .sprite = 0, .left = 0, .top = 0, .depth = 10, .tint = @splat(255), .exposed = .initMany(&.{.left}) };
-    try std.testing.expect(paintBlock(&cube, square, waterLayers, pixels, depths));
+    try std.testing.expect(paintBlock(&cube, square, waterLayers, 0, pixels, depths));
     try std.testing.expectEqual(tiles.rgba(0, 0, 200, 255), pixels[south]);
     // Only the faces it shows.
     try std.testing.expectEqual(tiles.transparent, pixels[top]);
 
     // Three layers over a solid pixel: each mixes over the last, by the depth from it.
     const sand = tiles.rgba(200, 100, 0, 255);
-    const sandDepth: i64 = 8 * depthSteps;
+    const sandDepth: i32 = 8 * depthSteps;
     pixels[top] = sand;
     depths[top] = sandDepth;
     cube.exposed = all;
-    try std.testing.expect(paintBlock(&cube, square, waterLayers, pixels, depths));
-    const waterDepth = 10 * depthSteps + @as(i64, topDepth);
+    try std.testing.expect(paintBlock(&cube, square, waterLayers, 0, pixels, depths));
+    const waterDepth = 10 * depthSteps + @as(i32, topDepth);
     const overSand = mix(sand, water[0], surfaceOpacity(waterDepth - sandDepth));
     try std.testing.expectEqual(overSand, pixels[top]);
     try std.testing.expectEqual(waterDepth, depths[top]);
     cube.depth = 11;
-    try std.testing.expect(paintBlock(&cube, square, iceLayers, pixels, depths));
-    const iceDepth = 11 * depthSteps + @as(i64, topDepth);
+    try std.testing.expect(paintBlock(&cube, square, iceLayers, 0, pixels, depths));
+    const iceDepth = 11 * depthSteps + @as(i32, topDepth);
     const overWater = mix(overSand, ice[0], surfaceOpacity(iceDepth - waterDepth));
     try std.testing.expectEqual(overWater, pixels[top]);
     cube.depth = 12;
-    try std.testing.expect(paintBlock(&cube, square, waterLayers, pixels, depths));
+    try std.testing.expect(paintBlock(&cube, square, waterLayers, 0, pixels, depths));
     try std.testing.expectEqual(mix(overWater, water[0], surfaceOpacity(depthSteps)), pixels[top]);
 
     // Behind what's there: a solid block in front of it stays as it is.
     const before = pixels[top];
-    depths[top] = std.math.maxInt(i64);
+    depths[top] = std.math.maxInt(i32);
     cube.depth = 13;
-    _ = paintBlock(&cube, square, iceLayers, pixels, depths);
+    _ = paintBlock(&cube, square, iceLayers, 0, pixels, depths);
     try std.testing.expectEqual(before, pixels[top]);
 
     // A shape's pixels say how opaque they are, however far behind it what they cover is, and
@@ -2407,7 +2534,7 @@ test paintBlock {
         pixels[p] = sand;
         depths[p] = sandDepth;
     }
-    try std.testing.expect(paintBlock(&glassy, paneSprite, paneLayers, pixels, depths));
+    try std.testing.expect(paintBlock(&glassy, paneSprite, paneLayers, 0, pixels, depths));
     try std.testing.expectEqual(mix(sand, pane[0], 51), pixels[glassAt]);
     try std.testing.expectEqual(tiles.rgba(0, 0, 0, 255), pixels[glassAt + 1]);
     try std.testing.expectEqual(sand, pixels[glassAt + tiles.size]);
@@ -2415,14 +2542,14 @@ test paintBlock {
     // A cube whose top is 2 pixels lower: its top's first rows are left as they were, the top is
     // painted 2 rows down, that much farther back, and its sides start lower.
     @memset(pixels, tiles.transparent);
-    @memset(depths, std.math.minInt(i64));
+    @memset(depths, emptyDepth);
     const lowered: SeeThroughBlock = .{ .sprite = 0, .left = 0, .top = 0, .depth = 10, .tint = @splat(255), .exposed = all, .drop = 2 };
-    try std.testing.expect(paintBlock(&lowered, square, waterLayers, pixels, depths));
+    try std.testing.expect(paintBlock(&lowered, square, waterLayers, 0, pixels, depths));
     try std.testing.expectEqual(tiles.transparent, pixels[1 * tiles.size + w / 2]);
     try std.testing.expectEqual(tiles.rgba(0, 0, 200, 255), pixels[top + 2 * tiles.size]);
-    try std.testing.expectEqual(10 * depthSteps + @as(i64, topDepth) - dropDepth(2), depths[top + 2 * tiles.size]);
+    try std.testing.expectEqual(10 * depthSteps + @as(i32, topDepth) - dropDepth(2), depths[top + 2 * tiles.size]);
     try std.testing.expectEqual(tiles.transparent, pixels[(w / 4 + 1) * tiles.size]);
-    try std.testing.expectEqual(10 * depthSteps + @as(i64, opaqueDepths[(w * 5 / 8) * w + w / 4]), depths[south]);
+    try std.testing.expectEqual(10 * depthSteps + @as(i32, opaqueDepths[(w * 5 / 8) * w + w / 4]), depths[south]);
 }
 
 test SeeThroughBlock {
