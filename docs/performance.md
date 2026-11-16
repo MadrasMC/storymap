@@ -4,23 +4,25 @@ How fast each tagged version of Storymap renders, measured as in [Measuring](#me
 
 ## Vintage Story 1.22.7
 
-A world of 29,192 chunks, 2.79 km², 256 blocks high, the game's default height, which nearly every world has; so km²/s tells how fast a world of that height renders. Drawn top-down as 34 tiles in 5 levels, and isometric as 4,440 tiles in 9 levels. Intel Xeon E3-1270 v6, 4 cores, 8 threads, Debian 13; tiles written (`--write`); measured 2026-11-15 (UTC).
+A world of 29,192 chunks, 2.79 km², 256 blocks high, the game's default height, which nearly every world has; so km²/s tells how fast a world of that height renders. Drawn top-down as 34 tiles in 5 levels, and isometric as 4,440 tiles in 9 levels. Intel Xeon E3-1270 v6, 4 cores, 8 threads, Debian 13; tiles written (`--write`); measured 2026-11-16 (UTC).
 
 The isometric view alone, with the script's `--isometric`. Versions up to 0.2.0 have no isometric view of their own to measure.
 
 | version | save | end to end | km²/s | chunks/s | drawing | open | peak memory | changes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.3.1 | 442c9598fa0d | 9.544 s | 0.29 | 3059 | 9.517 s | 0.009 s | 253 MiB | PNG's CRC-32 with libdeflate's PCLMULQDQ code instead of a byte table, and opaque blocks shrunk without dividing |
-| 0.3.0 | 442c9598fa0d | 10.018 s | 0.28 | 2914 | 9.992 s | 0.009 s | 257 MiB | – |
+| 0.3.2 | 442c9598fa0d | 7.644 s | 0.37 | 3819 | 7.617 s | 0.009 s | 245 MiB | sprite rows drawn and 2 × 2 blocks shrunk 8 pixels at a time with vector instructions |
+| 0.3.1 | 442c9598fa0d | 9.541 s | 0.29 | 3060 | 9.515 s | 0.009 s | 257 MiB | PNG's CRC-32 with libdeflate's PCLMULQDQ code instead of a byte table, and opaque blocks shrunk without dividing |
+| 0.3.0 | 442c9598fa0d | 10.067 s | 0.28 | 2900 | 10.040 s | 0.009 s | 253 MiB | – |
 
 The top-down view. Versions up to 0.2.0 report no times of their own, so their drawing and open aren't measured (see [Measuring](#measuring)).
 
 | version | save | end to end | km²/s | chunks/s | drawing | open | peak memory | changes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.3.1 | 442c9598fa0d | 0.240 s | 11.64 | 121560 | 0.214 s | 0.009 s | 145 MiB | PNG's CRC-32 with libdeflate's PCLMULQDQ code instead of a byte table, and opaque blocks shrunk without dividing |
-| 0.3.0 | 442c9598fa0d | 0.247 s | 11.32 | 118291 | 0.220 s | 0.009 s | 145 MiB | PNG rows filtered with vector instructions, and tiles compressed with libdeflate instead of std's flate |
-| 0.2.0 | 442c9598fa0d | 0.419 s | 6.67 | 69720 | – | – | 146 MiB | a PNG encoder of its own, set up once per worker, instead of stb_image_write, which allocated for every tile |
-| 0.1.0 | 442c9598fa0d | 0.473 s | 5.90 | 61685 | – | – | 146 MiB | – |
+| 0.3.2 | 442c9598fa0d | 0.242 s | 11.52 | 120389 | 0.216 s | 0.009 s | 145 MiB | – |
+| 0.3.1 | 442c9598fa0d | 0.241 s | 11.59 | 121074 | 0.215 s | 0.009 s | 145 MiB | PNG's CRC-32 with libdeflate's PCLMULQDQ code instead of a byte table, and opaque blocks shrunk without dividing |
+| 0.3.0 | 442c9598fa0d | 0.246 s | 11.35 | 118559 | 0.220 s | 0.009 s | 145 MiB | PNG rows filtered with vector instructions, and tiles compressed with libdeflate instead of std's flate |
+| 0.2.0 | 442c9598fa0d | 0.414 s | 6.75 | 70505 | – | – | 144 MiB | a PNG encoder of its own, set up once per worker, instead of stb_image_write, which allocated for every tile |
+| 0.1.0 | 442c9598fa0d | 0.471 s | 5.94 | 62022 | – | – | 146 MiB | – |
 
 ## Measuring
 
