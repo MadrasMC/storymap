@@ -3,7 +3,7 @@
 //! Zig release its build.zig.zon names, and run `--runs` times after one untimed run, taking the
 //! median of each time. From the project's folder:
 //!
-//!     zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current]
+//!     zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ... | --since v0.1.0] [--current]
 //!         [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]]
 //!         [--game <folder> [--data <folder>]] [--zigs <folder>]
 //!
@@ -37,7 +37,7 @@ const Io = std.Io;
 
 const exe = if (builtin.os.tag == .windows) ".exe" else "";
 
-const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ...] [--current] [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]] [--game <folder> [--data <folder>]] [--zigs <folder>]\n";
+const usage = "usage: zig run scripts/benchmark.zig -- <save-file> [--runs 7] [--tag v0.1.0 ... | --since v0.1.0] [--current] [--isometric] [--write] [--jpegxl | --webp [--lossy-from <level>]] [--game <folder> [--data <folder>]] [--zigs <folder>]\n";
 
 const styles = [_][]const u8{ "--theme", "plain", "--style", "game:coloured" };
 const outFolder = ".benchmark/out";
@@ -107,6 +107,7 @@ pub fn main(init: std.process.Init) !void {
     var savePath: ?[]const u8 = null;
     var runs: Runs = .{ .count = 7, .isometric = false, .write = false, .format = null };
     var tags: std.ArrayList([]const u8) = .empty;
+    var since: ?[]const u8 = null;
     var current = false;
     var zigsPath: []const u8 = ".benchmark/zig";
     var i: usize = 1;
@@ -121,7 +122,7 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--jpegxl") or std.mem.eql(u8, arg, "--webp")) {
             if (runs.format != null) fail("--jpegxl and --webp: choose one\n", .{});
             runs.format = arg;
-        } else if (isOneOf(arg, &.{ "--runs", "--tag", "--zigs", "--lossy-from", "--game", "--data" })) {
+        } else if (isOneOf(arg, &.{ "--runs", "--tag", "--since", "--zigs", "--lossy-from", "--game", "--data" })) {
             i += 1;
             if (i == given.len) fail("{s} needs a value\n" ++ usage, .{arg});
             const value = given[i];
@@ -130,6 +131,7 @@ pub fn main(init: std.process.Init) !void {
                 if (runs.count == 0) fail("--runs: expected a whole number above 0, not {s}\n", .{value});
             }
             if (std.mem.eql(u8, arg, "--tag")) try tags.append(arena, value);
+            if (std.mem.eql(u8, arg, "--since")) since = value;
             if (std.mem.eql(u8, arg, "--zigs")) zigsPath = value;
             if (std.mem.eql(u8, arg, "--lossy-from")) runs.lossyFrom = value;
             if (std.mem.eql(u8, arg, "--game")) runs.game = value;
@@ -145,14 +147,23 @@ pub fn main(init: std.process.Init) !void {
     if (tags.items.len == 0) {
         var list = std.mem.tokenizeAny(u8, try git(arena, io, &.{ "tag", "--list", "v*", "--sort=-v:refname" }), "\r\n");
         while (list.next()) |tag| try tags.append(arena, tag);
-    }
+        // Newest first, so the tags from `since` up are the first ones.
+        if (since) |oldest| {
+            const at = for (tags.items, 0..) |tag, n| {
+                if (std.mem.eql(u8, tag, oldest)) break n;
+            } else fail("--since: no tag {s}\n", .{oldest});
+            tags.shrinkRetainingCapacity(at + 1);
+        }
+    } else if (since != null) fail("--tag and --since: choose one\n", .{});
     if (tags.items.len == 0 and !current) fail("no tags to measure\n", .{});
 
     var buffer: [1024]u8 = undefined;
     var stdout = Io.File.stdout().writerStreaming(io, &buffer);
     const out = &stdout.interface;
     const saveHash = try hashFile(arena, io, save);
-    try out.writeAll("| version | save | end to end | km²/s | chunks/s | drawing | open | peak memory |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    var date: [10]u8 = undefined;
+    const measured = today(io, &date);
+    try out.writeAll("| version | end to end | km²/s | chunks/s | drawing | open | peak memory | measured |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
     try out.flush();
 
     // Newest first, as the table lists them. The save's chunks and the area its top-down view
@@ -162,12 +173,12 @@ pub fn main(init: std.process.Init) !void {
     var known: Save = .{};
     if (current) {
         std.debug.print("measuring the working tree\n", .{});
-        if (try measureBuild(arena, io, "the working tree", try build(arena, io, ".", zigs), ".benchmark/working-tree", save, runs)) |measured| {
-            var result = measured;
+        if (try measureBuild(arena, io, "the working tree", try build(arena, io, ".", zigs), ".benchmark/working-tree", save, runs)) |found| {
+            var result = found;
             result.version = try std.fmt.allocPrint(arena, "{s} (working tree)", .{result.version});
             try results.append(arena, result);
             known.learn(result);
-            try writeRow(out, result, saveHash, known);
+            try writeRow(out, result, known, measured);
         }
     }
     for (tags.items) |tag| {
@@ -175,7 +186,7 @@ pub fn main(init: std.process.Init) !void {
         const result = try measure(arena, io, tag, save, runs, zigs) orelse continue;
         try results.append(arena, result);
         known.learn(result);
-        try writeRow(out, result, saveHash, known);
+        try writeRow(out, result, known, measured);
     }
     if (results.items.len == 0) fail("no version measured\n", .{});
 
@@ -187,9 +198,8 @@ pub fn main(init: std.process.Init) !void {
         });
         break;
     }
-    var date: [10]u8 = undefined;
     try out.print("machine: {s}, {} threads, {s}; ReleaseFast builds, median of {} runs{s}{s}, measured {s} UTC\n", .{
-        processorName(arena, io), std.Thread.getCpuCount() catch 0, @tagName(builtin.os.tag), runs.count, if (runs.format) |format| if (std.mem.eql(u8, format, "--webp")) ", WebP tiles" else ", JPEG XL tiles" else "", if (runs.write) ", tiles written" else "", today(io, &date),
+        processorName(arena, io), std.Thread.getCpuCount() catch 0, @tagName(builtin.os.tag), runs.count, if (runs.format) |format| if (std.mem.eql(u8, format, "--webp")) ", WebP tiles" else ", JPEG XL tiles" else "", if (runs.write) ", tiles written" else "", measured,
     });
     for (results.items) |result| {
         const work = result.work orelse continue;
@@ -214,13 +224,13 @@ const Save = struct {
     }
 };
 
-fn writeRow(out: *Io.Writer, result: Result, saveHash: []const u8, save: Save) !void {
-    try out.print("| {s} | {s} | {d:.3} s |", .{ result.version, saveHash, result.total });
+fn writeRow(out: *Io.Writer, result: Result, save: Save, measured: []const u8) !void {
+    try out.print("| {s} | {d:.3} s |", .{ result.version, result.total });
     if (result.area orelse save.area) |area| try out.print(" {d:.2} |", .{@as(f64, @floatFromInt(area)) / 1e6 / result.total}) else try out.writeAll(" – |");
     if (result.chunks orelse save.chunks) |chunks| try out.print(" {d:.0} |", .{@as(f64, @floatFromInt(chunks)) / result.total}) else try out.writeAll(" – |");
     if (result.view) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
     if (result.open) |seconds| try out.print(" {d:.3} s |", .{seconds}) else try out.writeAll(" – |");
-    try out.print(" {d:.0} MiB |\n", .{@as(f64, @floatFromInt(result.peak)) / (1 << 20)});
+    try out.print(" {d:.0} MiB | {s} |\n", .{ @as(f64, @floatFromInt(result.peak)) / (1 << 20), measured });
     try out.flush();
 }
 
