@@ -52,13 +52,13 @@ Tested with saves from Vintage Story 1.19 and 1.22.7.
 
 <h2 align="center">Performance</h2>
 
-A render of a 1.22.7 world (29,192 chunks, 2.79 km² drawn as 34 tiles in 5 levels) by Storymap 0.3.2, ReleaseFast on a 4-core, 8-thread machine, the median of 7 runs:
+A render of a 1.22.7 world (29,192 chunks, 2.79 km² drawn as 34 tiles in 5 levels) by Storymap 0.3.3, ReleaseFast on a 4-core, 8-thread machine, the median of 7 runs:
 
 | Stage | Time |
 | --- | --- |
 | Opening the save | 0.009 s |
-| Drawing every tile: reading the surface, shading, building the zoomed-out levels, encoding the PNGs and writing them | 0.22 s |
-| End to end | 0.24 s (11.5 km²/s, 120,400 chunks/s) |
+| Drawing every tile: reading the surface, shading, building the zoomed-out levels, encoding the PNGs and writing them | 0.21 s |
+| End to end | 0.24 s (11.7 km²/s, 122,500 chunks/s) |
 
 Each version's numbers are in [docs/performance.md](docs/performance.md).
 
